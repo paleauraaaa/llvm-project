@@ -18,8 +18,10 @@
 #include "llvm/Support/Error.h"
 #include "llvm/Support/SwapByteOrder.h"
 
+#ifndef _MSC_VER
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wmicrosoft-enum-value"
+#endif // _MSC_VER
 
 namespace llvm {
 
@@ -2425,6 +2427,8 @@ enum LinkerOptimizationHintKind {
 } // end namespace MachO
 } // end namespace llvm
 
+#ifndef _MSC_VER
 #pragma clang diagnostic pop
+#endif // _MSC_VER
 
 #endif

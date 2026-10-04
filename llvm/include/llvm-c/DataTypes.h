@@ -58,7 +58,7 @@
 #endif
 #include <sys/types.h>
 
-#if defined(_WIN64)
+#if defined(_WIN64) && !defined(_MSC_VER)
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wlanguage-extension-token"
 typedef signed __int64 ssize_t;

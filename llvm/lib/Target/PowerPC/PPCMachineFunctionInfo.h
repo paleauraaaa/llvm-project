@@ -137,13 +137,12 @@ private:
   /// registers.
   SmallVector<ParamType, 32> ParamtersType;
 
-  /// CRSpillFrameIndex - FrameIndex for CR spill slot for 32-bit SVR4.
+  /// CRSpillFrameIndex - FrameIndex for the shared CR spill slot.
   int CRSpillFrameIndex = 0;
 
-  /// If any of CR[2-4] need to be saved in the prologue and restored in the
-  /// epilogue then they are added to this array. This is used for the
-  /// 64-bit SVR4 ABI.
-  SmallVector<Register, 3> MustSaveCRs;
+  /// If any nonvolatile CR fields need to be saved in the prologue and
+  /// restored in the epilogue then they are added to this array.
+  SmallVector<Register, 4> MustSaveCRs;
 
   /// Whether this uses the PIC Base register or not.
   bool UsesPICBase = false;

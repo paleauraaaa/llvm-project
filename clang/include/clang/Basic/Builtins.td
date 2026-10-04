@@ -2678,11 +2678,11 @@ def FastFail : MSLangBuiltin {
   let Prototype = "void(unsigned int)";
 }
 
-def Emit : MSLangBuiltin {
-  let Spellings = ["__emit"];
-  let Attributes = [];
-  let Prototype = "void(uint32_t)";
-}
+// def Emit : MSLangBuiltin {
+//   let Spellings = ["__emit"];
+//   let Attributes = [];
+//   let Prototype = "void(uint32_t)";
+// }
 
 // Microsoft library builtins.
 def SetJmpEx : MSLibBuiltin<"setjmpex.h"> {

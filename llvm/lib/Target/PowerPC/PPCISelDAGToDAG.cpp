@@ -642,14 +642,15 @@ static bool isOpcWithIntImmediate(SDNode *N, unsigned Opc, unsigned& Imm) {
 void PPCDAGToDAGISel::selectFrameIndex(SDNode *SN, SDNode *N, int64_t Offset) {
   SDLoc dl(SN);
   int FI = cast<FrameIndexSDNode>(N)->getIndex();
-  SDValue TFI = CurDAG->getTargetFrameIndex(FI, N->getValueType(0));
-  unsigned Opc = N->getValueType(0) == MVT::i32 ? PPC::ADDI : PPC::ADDI8;
+  EVT VT = N->getValueType(0);
+  SDValue TFI = CurDAG->getTargetFrameIndex(FI, VT);
+  unsigned Opc = VT == MVT::i32 ? PPC::ADDI : PPC::ADDI8;
+  SDValue Imm = getSmallIPtrImm(Offset, dl);
+
   if (SN->hasOneUse())
-    CurDAG->SelectNodeTo(SN, Opc, N->getValueType(0), TFI,
-                         getSmallIPtrImm(Offset, dl));
+    CurDAG->SelectNodeTo(SN, Opc, VT, TFI, Imm);
   else
-    ReplaceNode(SN, CurDAG->getMachineNode(Opc, dl, N->getValueType(0), TFI,
-                                           getSmallIPtrImm(Offset, dl)));
+    ReplaceNode(SN, CurDAG->getMachineNode(Opc, dl, VT, TFI, Imm));
 }
 
 bool PPCDAGToDAGISel::isRotateAndMask(SDNode *N, unsigned Mask,

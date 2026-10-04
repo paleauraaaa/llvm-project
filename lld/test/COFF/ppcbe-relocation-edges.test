@@ -1,0 +1,280 @@
+# RUN: split-file %s %t.dir
+# RUN: yaml2obj %t.dir/pair-addend.yaml -o %t.pair.obj
+# RUN: lld-link /machine:ppcbe /entry:main /base:0x10000 /out:%t.pair.exe %t.pair.obj
+# RUN: llvm-objdump -s --section=.text %t.pair.exe | FileCheck --check-prefix=PAIR %s
+# RUN: yaml2obj %t.dir/pair-invalid.yaml -o %t.pair-invalid.obj
+# RUN: not lld-link /machine:ppcbe /entry:main /out:%t.pair-invalid.exe %t.pair-invalid.obj 2>&1 | FileCheck --check-prefix=PAIR-ERROR %s
+# RUN: yaml2obj %t.dir/branch-errors.yaml -o %t.branch-errors.obj
+# RUN: not lld-link /machine:ppcbe /entry:main /base:0x4000000 /out:%t.branch-errors.exe %t.branch-errors.obj 2>&1 | FileCheck --check-prefix=BRANCH-ERROR %s
+# RUN: llvm-mc -filetype=obj -triple=ppc64-ibm-xbox360 %t.dir/secrel16-overflow.s -o %t.secrel16-overflow.obj
+# RUN: not lld-link /machine:ppcbe /entry:main /out:%t.secrel16-overflow.exe %t.secrel16-overflow.obj 2>&1 | FileCheck --check-prefix=SECREL16-ERROR %s
+# RUN: yaml2obj %t.dir/pair-icf.yaml -o %t.pair-icf.obj
+# RUN: lld-link /machine:ppcbe /entry:foo /include:bar /include:baz /opt:icf /base:0x10000 /out:%t.pair-icf.exe %t.pair-icf.obj
+# RUN: llvm-objdump -s --section=.text %t.pair-icf.exe | FileCheck --check-prefix=PAIR-ICF %s
+
+# PAIR: 11000 3c60ffff 4e800020
+
+# PAIR-ERROR: IMAGE_REL_PPC_PAIR relocation is not preceded by REFHI
+# PAIR-ERROR: IMAGE_REL_PPC_PAIR relocation is not preceded by REFHI
+
+# BRANCH-ERROR: misaligned IMAGE_REL_PPC_REL24 relocation
+# BRANCH-ERROR: misaligned IMAGE_REL_PPC_REL14 relocation
+# BRANCH-ERROR: misaligned IMAGE_REL_PPC_ADDR24 relocation
+# BRANCH-ERROR: misaligned IMAGE_REL_PPC_ADDR14 relocation
+# BRANCH-ERROR: IMAGE_REL_PPC_REL24 relocation out of range
+# BRANCH-ERROR: IMAGE_REL_PPC_REL14 relocation out of range
+# BRANCH-ERROR: IMAGE_REL_PPC_ADDR24 relocation out of range
+# BRANCH-ERROR: IMAGE_REL_PPC_ADDR14 relocation out of range
+
+# SECREL16-ERROR: overflow in IMAGE_REL_PPC_SECREL16 relocation
+
+# PAIR-ICF: 11000 3c600000 4e800020 3c60ffff 4e800020
+
+#--- pair-addend.yaml
+--- !COFF
+header:
+  Machine: IMAGE_FILE_MACHINE_PPCBE
+  Characteristics: []
+sections:
+  - Name: .text
+    Characteristics: [ IMAGE_SCN_CNT_CODE, IMAGE_SCN_MEM_EXECUTE, IMAGE_SCN_MEM_READ ]
+    Alignment: 4
+    SectionData: 3C6000004E800020
+    Relocations:
+      - VirtualAddress: 0
+        SymbolName: target
+        Type: 16
+      - VirtualAddress: 0
+        SymbolTableIndex: 65534
+        Type: 18
+symbols:
+  - Name: main
+    Value: 0
+    SectionNumber: 1
+    SimpleType: IMAGE_SYM_TYPE_NULL
+    ComplexType: IMAGE_SYM_DTYPE_FUNCTION
+    StorageClass: IMAGE_SYM_CLASS_EXTERNAL
+  - Name: target
+    Value: 4
+    SectionNumber: 1
+    SimpleType: IMAGE_SYM_TYPE_NULL
+    ComplexType: IMAGE_SYM_DTYPE_NULL
+    StorageClass: IMAGE_SYM_CLASS_EXTERNAL
+...
+
+#--- pair-invalid.yaml
+--- !COFF
+header:
+  Machine: IMAGE_FILE_MACHINE_PPCBE
+  Characteristics: []
+sections:
+  - Name: .text
+    Characteristics: [ IMAGE_SCN_CNT_CODE, IMAGE_SCN_MEM_EXECUTE, IMAGE_SCN_MEM_READ ]
+    Alignment: 4
+    SectionData: 3C6000003C6000003C600000
+    Relocations:
+      - VirtualAddress: 0
+        SymbolTableIndex: 0
+        Type: 18
+      - VirtualAddress: 4
+        SymbolName: target
+        Type: 16
+      - VirtualAddress: 8
+        SymbolTableIndex: 4660
+        Type: 18
+symbols:
+  - Name: main
+    Value: 0
+    SectionNumber: 1
+    SimpleType: IMAGE_SYM_TYPE_NULL
+    ComplexType: IMAGE_SYM_DTYPE_FUNCTION
+    StorageClass: IMAGE_SYM_CLASS_EXTERNAL
+  - Name: target
+    Value: 8
+    SectionNumber: 1
+    SimpleType: IMAGE_SYM_TYPE_NULL
+    ComplexType: IMAGE_SYM_DTYPE_NULL
+    StorageClass: IMAGE_SYM_CLASS_EXTERNAL
+...
+
+#--- branch-errors.yaml
+--- !COFF
+header:
+  Machine: IMAGE_FILE_MACHINE_PPCBE
+  Characteristics: []
+sections:
+  - Name: .text
+    Characteristics: [ IMAGE_SCN_CNT_CODE, IMAGE_SCN_MEM_EXECUTE, IMAGE_SCN_MEM_READ ]
+    Alignment: 4
+    SectionData: 48000000418200004800000241820002480000004182000048000002418200020000
+    Relocations:
+      - VirtualAddress: 0
+        SymbolName: target-odd
+        Type: 6
+      - VirtualAddress: 4
+        SymbolName: target-odd
+        Type: 7
+      - VirtualAddress: 8
+        SymbolName: target-odd
+        Type: 3
+      - VirtualAddress: 12
+        SymbolName: target-odd
+        Type: 5
+      - VirtualAddress: 16
+        SymbolName: far
+        Type: 6
+      - VirtualAddress: 20
+        SymbolName: far
+        Type: 7
+      - VirtualAddress: 24
+        SymbolName: target-aligned
+        Type: 3
+      - VirtualAddress: 28
+        SymbolName: target-aligned
+        Type: 5
+symbols:
+  - Name: main
+    Value: 0
+    SectionNumber: 1
+    SimpleType: IMAGE_SYM_TYPE_NULL
+    ComplexType: IMAGE_SYM_DTYPE_FUNCTION
+    StorageClass: IMAGE_SYM_CLASS_EXTERNAL
+  - Name: target-aligned
+    Value: 32
+    SectionNumber: 1
+    SimpleType: IMAGE_SYM_TYPE_NULL
+    ComplexType: IMAGE_SYM_DTYPE_NULL
+    StorageClass: IMAGE_SYM_CLASS_EXTERNAL
+  - Name: target-odd
+    Value: 33
+    SectionNumber: 1
+    SimpleType: IMAGE_SYM_TYPE_NULL
+    ComplexType: IMAGE_SYM_DTYPE_NULL
+    StorageClass: IMAGE_SYM_CLASS_EXTERNAL
+  - Name: far
+    Value: 1073741824
+    SectionNumber: -1
+    SimpleType: IMAGE_SYM_TYPE_NULL
+    ComplexType: IMAGE_SYM_DTYPE_NULL
+    StorageClass: IMAGE_SYM_CLASS_EXTERNAL
+...
+
+#--- secrel16-overflow.s
+.text
+.globl main
+main:
+  blr
+  .space 65536
+target:
+  blr
+.data
+  .short 0
+  .reloc 0, IMAGE_REL_PPC_SECREL16, target
+
+#--- pair-icf.yaml
+--- !COFF
+header:
+  Machine: IMAGE_FILE_MACHINE_PPCBE
+  Characteristics: []
+sections:
+  - Name: .text$foo
+    Characteristics: [ IMAGE_SCN_CNT_CODE, IMAGE_SCN_LNK_COMDAT, IMAGE_SCN_MEM_EXECUTE, IMAGE_SCN_MEM_READ ]
+    Alignment: 4
+    SectionData: 3C6000004E800020
+    Relocations:
+      - VirtualAddress: 0
+        SymbolName: target
+        Type: 16
+      - VirtualAddress: 0
+        SymbolTableIndex: 65535
+        Type: 18
+  - Name: .text$bar
+    Characteristics: [ IMAGE_SCN_CNT_CODE, IMAGE_SCN_LNK_COMDAT, IMAGE_SCN_MEM_EXECUTE, IMAGE_SCN_MEM_READ ]
+    Alignment: 4
+    SectionData: 3C6000004E800020
+    Relocations:
+      - VirtualAddress: 0
+        SymbolName: target
+        Type: 16
+      - VirtualAddress: 0
+        SymbolTableIndex: 65535
+        Type: 18
+  - Name: .text$baz
+    Characteristics: [ IMAGE_SCN_CNT_CODE, IMAGE_SCN_LNK_COMDAT, IMAGE_SCN_MEM_EXECUTE, IMAGE_SCN_MEM_READ ]
+    Alignment: 4
+    SectionData: 3C6000004E800020
+    Relocations:
+      - VirtualAddress: 0
+        SymbolName: target
+        Type: 16
+      - VirtualAddress: 0
+        SymbolTableIndex: 65534
+        Type: 18
+  - Name: .data
+    Characteristics: [ IMAGE_SCN_CNT_INITIALIZED_DATA, IMAGE_SCN_MEM_READ, IMAGE_SCN_MEM_WRITE ]
+    Alignment: 4
+    SectionData: 00000000
+symbols:
+  - Name: .text$foo
+    Value: 0
+    SectionNumber: 1
+    SimpleType: IMAGE_SYM_TYPE_NULL
+    ComplexType: IMAGE_SYM_DTYPE_NULL
+    StorageClass: IMAGE_SYM_CLASS_STATIC
+    SectionDefinition:
+      Length: 8
+      NumberOfRelocations: 2
+      NumberOfLinenumbers: 0
+      CheckSum: 0
+      Number: 1
+      Selection: IMAGE_COMDAT_SELECT_ANY
+  - Name: .text$bar
+    Value: 0
+    SectionNumber: 2
+    SimpleType: IMAGE_SYM_TYPE_NULL
+    ComplexType: IMAGE_SYM_DTYPE_NULL
+    StorageClass: IMAGE_SYM_CLASS_STATIC
+    SectionDefinition:
+      Length: 8
+      NumberOfRelocations: 2
+      NumberOfLinenumbers: 0
+      CheckSum: 0
+      Number: 2
+      Selection: IMAGE_COMDAT_SELECT_ANY
+  - Name: .text$baz
+    Value: 0
+    SectionNumber: 3
+    SimpleType: IMAGE_SYM_TYPE_NULL
+    ComplexType: IMAGE_SYM_DTYPE_NULL
+    StorageClass: IMAGE_SYM_CLASS_STATIC
+    SectionDefinition:
+      Length: 8
+      NumberOfRelocations: 2
+      NumberOfLinenumbers: 0
+      CheckSum: 0
+      Number: 3
+      Selection: IMAGE_COMDAT_SELECT_ANY
+  - Name: foo
+    Value: 0
+    SectionNumber: 1
+    SimpleType: IMAGE_SYM_TYPE_NULL
+    ComplexType: IMAGE_SYM_DTYPE_FUNCTION
+    StorageClass: IMAGE_SYM_CLASS_EXTERNAL
+  - Name: bar
+    Value: 0
+    SectionNumber: 2
+    SimpleType: IMAGE_SYM_TYPE_NULL
+    ComplexType: IMAGE_SYM_DTYPE_FUNCTION
+    StorageClass: IMAGE_SYM_CLASS_EXTERNAL
+  - Name: baz
+    Value: 0
+    SectionNumber: 3
+    SimpleType: IMAGE_SYM_TYPE_NULL
+    ComplexType: IMAGE_SYM_DTYPE_FUNCTION
+    StorageClass: IMAGE_SYM_CLASS_EXTERNAL
+  - Name: target
+    Value: 0
+    SectionNumber: 4
+    SimpleType: IMAGE_SYM_TYPE_NULL
+    ComplexType: IMAGE_SYM_DTYPE_NULL
+    StorageClass: IMAGE_SYM_CLASS_EXTERNAL

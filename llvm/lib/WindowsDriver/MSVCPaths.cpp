@@ -59,8 +59,10 @@ _COM_SMARTPTR_TYPEDEF(ISetupInstance, __uuidof(ISetupInstance));
 _COM_SMARTPTR_TYPEDEF(ISetupInstance2, __uuidof(ISetupInstance2));
 #endif
 
+#ifdef __clang__
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wlanguage-extension-token"
+#endif // __clang__
 
 static std::string
 getHighestNumericTupleInDirectory(llvm::vfs::FileSystem &VFS,
@@ -737,4 +739,6 @@ bool findVCToolChainViaRegistry(std::string &Path, ToolsetLayout &VSLayout) {
 
 } // namespace llvm
 
+#ifdef __clang__
 #pragma clang diagnostic pop
+#endif // __clang__

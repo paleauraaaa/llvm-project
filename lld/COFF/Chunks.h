@@ -244,7 +244,12 @@ public:
   public:
     symbol_iterator() = default;
 
-    Symbol *operator*() const { return file->getSymbol(I->SymbolTableIndex); }
+    Symbol *operator*() const {
+      if (file->getMachineType() == llvm::COFF::IMAGE_FILE_MACHINE_PPCBE &&
+          I->Type == llvm::COFF::IMAGE_REL_PPC_PAIR)
+        return nullptr;
+      return file->getSymbol(I->SymbolTableIndex);
+    }
   };
 
   SectionChunk(ObjFile *file, const coff_section *header, Kind k = SectionKind);
@@ -562,7 +567,7 @@ static const uint8_t importThunkARM64EC[] = {
 };
 
 static const uint8_t importThunkPPCBE[] = {
-    0x3d, 0x8c, 0x00, 0x00, // addis r12, r12, 0
+  0x3d, 0x80, 0x00, 0x00, // addis r12, 0, 0
     0x81, 0x8c, 0x00, 0x00, // lwz r12, 0(r12)
     0x7d, 0x89, 0x03, 0xa6, // mtctr r12
     0x4e, 0x80, 0x04, 0x20, // bctr

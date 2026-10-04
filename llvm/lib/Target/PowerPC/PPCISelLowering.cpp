@@ -3376,6 +3376,9 @@ SDValue PPCTargetLowering::LowerBlockAddress(SDValue Op,
 
 SDValue PPCTargetLowering::LowerGlobalTLSAddress(SDValue Op,
                                               SelectionDAG &DAG) const {
+  if (Subtarget.getTargetTriple().isXbox360())
+    llvm_unreachable("TLS unimplemented for Xbox 360.");
+
   if (Subtarget.isAIXABI())
     return LowerGlobalTLSAddressAIX(Op, DAG);
 
@@ -5329,15 +5332,26 @@ static void LowerMemOpCallTo(
     bool isTailCall, bool isVector, SmallVectorImpl<SDValue> &MemOpChains,
     SmallVectorImpl<TailCallArgumentInfo> &TailCallArguments, const SDLoc &dl) {
   EVT RegVT = isPPC64 ? MVT::i64 : MVT::i32;
+  const PPCSubtarget &Subtarget = MF.getSubtarget<PPCSubtarget>();
   if (!isTailCall) {
     if (isVector) {
       SDValue StackPtr;
-      if (isPPC64)
+      EVT PtrVT;
+      if (isPPC64 && !Subtarget.isTargetXbox360()) {
         StackPtr = DAG.getRegister(PPC::X1, MVT::i64);
-      else
+        PtrVT = MVT::i64;
+      } else {
+        // Keep Xbox stack address arithmetic in its 32-bit pointer width.
         StackPtr = DAG.getRegister(PPC::R1, MVT::i32);
-      PtrOff = DAG.getNode(ISD::ADD, dl, RegVT, StackPtr,
-                           DAG.getConstant(ArgOffset, dl, RegVT));
+        PtrVT = MVT::i32;
+      }
+      // Create the ADD node with explicit type to ensure correct pattern selection
+      // (ADDI8 for 64-bit, ADDI for 32-bit)
+      SDValue Offset = DAG.getConstant(ArgOffset, dl, PtrVT);
+      PtrOff = DAG.getNode(ISD::ADD, dl, PtrVT, StackPtr, Offset);
+      // Indexed vector stores use the 64-bit pointer register class.
+      if (isPPC64 && Subtarget.isTargetXbox360())
+        PtrOff = DAG.getNode(ISD::ZERO_EXTEND, dl, MVT::i64, PtrOff);
     }
     MemOpChains.push_back(
         DAG.getStore(Chain, dl, Arg, PtrOff, MachinePointerInfo()));
@@ -7199,24 +7213,6 @@ static unsigned mapArgRegToOffsetAIX(unsigned Reg, const PPCFrameLowering *FL) {
   llvm_unreachable("Only general purpose registers expected.");
 }
 
-static unsigned mapArgRegToOffsetXbox360(unsigned Reg, const PPCFrameLowering *FL) {
-  const unsigned LASize = FL->getLinkageSize();
-
-  if (PPC::GPRCRegClass.contains(Reg)) {
-    assert(Reg >= PPC::R3 && Reg <= PPC::R10 &&
-           "Reg must be a valid argument register!");
-    return LASize + 4 * (Reg - PPC::R3);
-  }
-
-  if (PPC::G8RCRegClass.contains(Reg)) {
-    assert(Reg >= PPC::X3 && Reg <= PPC::X10 &&
-           "Reg must be a valid argument register!");
-    return LASize + 8 * (Reg - PPC::X3);
-  }
-
-  llvm_unreachable("Only general purpose registers expected.");
-}
-
 SDValue PPCTargetLowering::LowerCall_Xbox360(
     SDValue Chain, SDValue Callee, CallFlags CFlags,
     const SmallVectorImpl<ISD::OutputArg> &Outs,
@@ -7248,16 +7244,8 @@ SDValue PPCTargetLowering::LowerCall_Xbox360(
     assert(!(IsFastCall && CFlags.IsVarArg) &&
         "fastcc not supported on varargs functions");
 
-    // Note that, regardless of whether the stack frame has a linkage area,
-    // Xbox 360's ABI reserves 8 bytes of space before the argument area.
     unsigned LinkageSize = Subtarget.getFrameLowering()->getLinkageSize();
-    // TODO: implement IsLeaf and CanUseRedZone checks.
-    bool IsLeaf = false;
-    bool CanUseRedZone = false;
-    unsigned PreParamAreaSize = 8;
-    if (!IsLeaf || !CanUseRedZone)
-        PreParamAreaSize += LinkageSize;
-    unsigned NumBytes = PreParamAreaSize;
+    unsigned NumBytes = LinkageSize;
     unsigned GPR_idx = 0, FPR_idx = 0, VR_idx = 0;
 
     static const MCPhysReg GPR[] = {
@@ -7265,16 +7253,21 @@ SDValue PPCTargetLowering::LowerCall_Xbox360(
         PPC::X7, PPC::X8, PPC::X9, PPC::X10,
     };
 
+    static const MCPhysReg FPR[] = {
+        PPC::F1, PPC::F2, PPC::F3,  PPC::F4,  PPC::F5,  PPC::F6, PPC::F7,
+        PPC::F8, PPC::F9, PPC::F10, PPC::F11, PPC::F12, PPC::F13,
+    };
+
     static const MCPhysReg VR[] = {
-        PPC::V2, PPC::V3, PPC::V4, PPC::V5, PPC::V6, PPC::V7, PPC::V8,
-        PPC::V9, PPC::V10, PPC::V11, PPC::V12, PPC::V13
+        PPC::V1, PPC::V2, PPC::V3,  PPC::V4,  PPC::V5,  PPC::V6, PPC::V7,
+        PPC::V8, PPC::V9, PPC::V10, PPC::V11, PPC::V12, PPC::V13
     };
 
     const unsigned NumGPRs = std::size(GPR);
-    const unsigned NumFPRs = useSoftFloat() ? 0 : 13;
+    const unsigned NumFPRs = std::size(FPR);
     const unsigned NumVRs = std::size(VR);
 
-    bool HasParameterArea = CFlags.IsVarArg || IsFastCall;
+    bool HasParameterArea = true;
     if (!HasParameterArea) {
         unsigned ParamAreaSize = NumGPRs * RegByteSize;
         unsigned AvailableFPRs = NumFPRs;
@@ -7287,7 +7280,7 @@ SDValue PPCTargetLowering::LowerCall_Xbox360(
                                RegByteSize, NumBytes, ParamAreaSize,
                                NumBytesTmp, AvailableFPRs, AvailableVRs)) {
                     HasParameterArea = true;
-                }
+            }
         }
     }
 
@@ -7358,11 +7351,10 @@ SDValue PPCTargetLowering::LowerCall_Xbox360(
     }
 
     unsigned NumBytesActuallyUsed = NumBytes;
-
     if (HasParameterArea)
-        NumBytes = std::max(NumBytes, PreParamAreaSize + 8 * RegByteSize);
+      NumBytes = std::max(NumBytes, LinkageSize + (8 * RegByteSize));
     else
-        NumBytes = PreParamAreaSize;
+      NumBytes = LinkageSize;
 
     // Tail call needs the stack to be aligned.
     if (getTargetMachine().Options.GuaranteedTailCallOpt && IsFastCall)
@@ -7401,7 +7393,9 @@ SDValue PPCTargetLowering::LowerCall_Xbox360(
     // memory.  Also, if this is a vararg function, floating point operations
     // must be stored to our stack, and loaded into integer regs as well, if
     // any integer regs are available for argument passing.
-    unsigned ArgOffset = PreParamAreaSize;
+    // ArgOffset tracks where the next argument would land in the call frame.
+    // Start at the linkage area so register assignment starts at parameter 0.
+    unsigned ArgOffset = LinkageSize;
 
     SmallVector<std::pair<unsigned, SDValue>, 8> RegsToPass;
     SmallVector<TailCallArgumentInfo, 8> TailCallArguments;
@@ -7435,13 +7429,12 @@ SDValue PPCTargetLowering::LowerCall_Xbox360(
             ComputePtrOff();
 
             /* Compute GPR index associated with argument offset.  */
-            GPR_idx = (ArgOffset - PreParamAreaSize) / RegByteSize;
+            GPR_idx = (ArgOffset - LinkageSize) / RegByteSize;
             GPR_idx = std::min(GPR_idx, NumGPRs);
         }
 
         // Promote integers to 64-bit values.
         if (Arg.getValueType() == MVT::i32 || Arg.getValueType() == MVT::i1) {
-            // FIXME: Should this use ANY_EXTEND if neither sext nor zext?
             unsigned ExtOp = Flags.isSExt() ? ISD::SIGN_EXTEND : ISD::ZERO_EXTEND;
             Arg = DAG.getNode(ExtOp, dl, MVT::i64, Arg);
         }
@@ -7453,9 +7446,9 @@ SDValue PPCTargetLowering::LowerCall_Xbox360(
             // Note: Size includes alignment padding, so
             //   struct x { short a; char b; }
             // will have Size = 4.  With #pragma pack(1), it will have Size = 3.
-            // These are the proper values we need for right-justifying the
-            // aggregate in a parameter register.
+            // Only sub-8-byte power-of-two aggregates are right-justified.
             unsigned Size = Flags.getByValSize();
+            bool RightJustify = Size == 1 || Size == 2 || Size == 4;
 
             // An empty aggregate parameter takes up no storage and no
             // registers.
@@ -7465,8 +7458,7 @@ SDValue PPCTargetLowering::LowerCall_Xbox360(
             if (IsFastCall)
                 ComputePtrOff();
 
-            // All aggregates smaller than 8 bytes must be passed right-justified.
-            if (Size==1 || Size==2 || Size==4) {
+            if (RightJustify) {
                 EVT VT = (Size==1) ? MVT::i8 : ((Size==2) ? MVT::i16 : MVT::i32);
                 if (GPR_idx != NumGPRs) {
                     SDValue Load = DAG.getExtLoad(ISD::EXTLOAD, dl, RegVT, Chain, Arg,
@@ -7481,9 +7473,11 @@ SDValue PPCTargetLowering::LowerCall_Xbox360(
 
             if (GPR_idx == NumGPRs && Size < 8) {
                 SDValue AddPtr = PtrOff;
+              if (RightJustify) {
                 SDValue Const = DAG.getConstant(RegByteSize - Size, dl,
-                                            PtrOff.getValueType());
+                              PtrOff.getValueType());
                 AddPtr = DAG.getNode(ISD::ADD, dl, RegVT, PtrOff, Const);
+              }
                 Chain = CallSeqStart = createMemcpyOutsideCallSeq(Arg, AddPtr,
                                                               CallSeqStart,
                                                               Flags, DAG, dl);
@@ -7500,19 +7494,20 @@ SDValue PPCTargetLowering::LowerCall_Xbox360(
                 Chain = CallSeqStart = createMemcpyOutsideCallSeq(Arg, PtrOff,
                                                               CallSeqStart,
                                                               Flags, DAG, dl);
-            // When a register is available, pass a small aggregate right-justified.
+            // Place small aggregates according to the ABI's justification rule.
             if (Size <= RegByteSize && GPR_idx != NumGPRs) {
-                // The easiest way to get this right-justified in a register
-                // is to copy the structure into the rightmost portion of a
-                // local variable slot, then load the whole slot into the
-                // register.
+              // Copy into a doubleword slot and load it into the argument
+              // register. Non-power-of-two sizes start at the slot address.
                 // FIXME: The memcpy seems to produce pretty awful code for
                 // small aggregates, particularly for packed ones.
                 // FIXME: It would be preferable to use the slot in the
                 // parameter save area instead of a new local variable.
                 SDValue AddPtr = PtrOff;
-                SDValue Const = DAG.getConstant(8 - Size, dl, PtrOff.getValueType());
+              if (RightJustify) {
+                SDValue Const = DAG.getConstant(RegByteSize - Size, dl,
+                              PtrOff.getValueType());
                 AddPtr = DAG.getNode(ISD::ADD, dl, RegVT, PtrOff, Const);
+              }
                 Chain = CallSeqStart = createMemcpyOutsideCallSeq(Arg, AddPtr,
                                                               CallSeqStart,
                                                               Flags, DAG, dl);
@@ -7679,11 +7674,8 @@ SDValue PPCTargetLowering::LowerCall_Xbox360(
         case MVT::v16i8:
         case MVT::v2f64:
         case MVT::v2i64:
-        case MVT::v1i128:
-        case MVT::f128:
         // These can be scalar arguments or elements of a vector array type
-        // passed directly.  The latter are used to implement ELFv2 homogenous
-        // vector aggregates.
+        // passed directly.
 
         // For a varargs call, named arguments go into VRs or on the stack as
         // usual; unnamed arguments always go to the stack or the corresponding
@@ -7765,7 +7757,7 @@ SDValue PPCTargetLowering::LowerCall_Xbox360(
 
 // Xbox 360 Stack Frame Layout:
 //
-//              +-----------------------------------+
+// High Memory  +-----------------------------------+
 //        +-->  |             Back chain            | <-- 1 word
 //        |     +-----------------------------------+ <-- 1 reserved word in between
 //        |     |           Return address          | <-- 1 word (lower word of LR, only used for non-leaf functions but always present)
@@ -7780,10 +7772,12 @@ SDValue PPCTargetLowering::LowerCall_Xbox360(
 //        |     +-----------------------------------+
 //        |     |          _alloca() space          | <-- arbitary size, can be 0 bytes, presumably must be at least double if not quad word-aligned
 //        |     +-----------------------------------+
+//        |     |    Additional stack parameters    | <-- arbitary size, can be 0 bytes, presumably must be at least double if not quad word-aligned
+//        |     +-----------------------------------+
 //        |     |           Parameters 0-7          | <-- 0 (for leaf functions) or 8 (for non-leaf functions) double words (space for all 8 parameter registers is saved even if the function has less than 8 parameters)
 //        |     +-----------------------------------+ <-- 2 reserved words in between
 // SP-->  +---  |            Back chain             | <-- 1 word (if non-leaf function) or 0 words (if leaf function)
-//              +-----------------------------------+ <-- 1 reserved word afterwards if non-leaf function
+// Low Memory   +-----------------------------------+ <-- 1 reserved word afterwards if non-leaf function
 //
 // (for clarity's sake, word == 32 bits here, and all fields are always present unless otherwise noted)
 //
@@ -7804,22 +7798,23 @@ SDValue PPCTargetLowering::LowerFormalArguments_Xbox360(
                          (CallConv == CallingConv::Fast));
     EVT RegVT = MVT::i64;
     unsigned RegByteSize = 8;
-    // Note that, regardless of whether the stack frame has a linkage area,
-    // Xbox 360's ABI reserves 8 bytes of space before the argument area.
     unsigned LinkageSize = Subtarget.getFrameLowering()->getLinkageSize();
 
     static const MCPhysReg GPR[] = {
         PPC::X3, PPC::X4, PPC::X5, PPC::X6,
         PPC::X7, PPC::X8, PPC::X9, PPC::X10,
     };
-
+    static const MCPhysReg FPR[] = {
+        PPC::F1, PPC::F2, PPC::F3,  PPC::F4,  PPC::F5,  PPC::F6, PPC::F7,
+        PPC::F8, PPC::F9, PPC::F10, PPC::F11, PPC::F12, PPC::F13,
+    };
     static const MCPhysReg VR[] = {
-        PPC::V2, PPC::V3, PPC::V4, PPC::V5, PPC::V6, PPC::V7, PPC::V8,
-        PPC::V9, PPC::V10, PPC::V11, PPC::V12, PPC::V13,
+        PPC::V1, PPC::V2, PPC::V3,  PPC::V4,  PPC::V5,  PPC::V6, PPC::V7,
+        PPC::V8, PPC::V9, PPC::V10, PPC::V11, PPC::V12, PPC::V13,
     };
 
     const unsigned Num_GPR_Regs = std::size(GPR);
-    const unsigned Num_FPR_Regs = 13;
+    const unsigned Num_FPR_Regs = std::size(FPR);
     const unsigned Num_VR_Regs = std::size(VR);
 
     bool HasParameterArea = isVarArg;
@@ -9021,6 +9016,7 @@ PPCTargetLowering::getFramePointerFrameIndex(SelectionDAG & DAG) const {
 SDValue PPCTargetLowering::LowerDYNAMIC_STACKALLOC(SDValue Op,
                                                    SelectionDAG &DAG) const {
   MachineFunction &MF = DAG.getMachineFunction();
+  bool UseProbedAlloca = hasInlineStackProbe(MF);
   // Get the inputs.
   SDValue Chain = Op.getOperand(0);
   SDValue Size  = Op.getOperand(1);
@@ -9028,15 +9024,36 @@ SDValue PPCTargetLowering::LowerDYNAMIC_STACKALLOC(SDValue Op,
 
   // Get the correct type for pointers.
   EVT PtrVT = getPointerTy(DAG.getDataLayout());
+  // Probed alloca stack-update pseudos use 64-bit neg-size operands on ppc64.
+  // Non-probed DYNALLOC keeps using PtrVT to match selector patterns.
+  EVT NegSizeVT = (UseProbedAlloca && Subtarget.isPPC64()) ? MVT::i64 : PtrVT;
+
+  SDValue SizeForNeg = Size;
+  EVT SizeVT = SizeForNeg.getValueType();
+  if (SizeVT.bitsLT(NegSizeVT))
+    SizeForNeg = DAG.getNode(ISD::ANY_EXTEND, dl, NegSizeVT, SizeForNeg);
+  else if (SizeVT.bitsGT(NegSizeVT))
+    SizeForNeg = DAG.getNode(ISD::TRUNCATE, dl, NegSizeVT, SizeForNeg);
+
   // Negate the size.
-  SDValue NegSize = DAG.getNode(ISD::SUB, dl, PtrVT,
-                                DAG.getConstant(0, dl, PtrVT), Size);
+  SDValue NegSize = DAG.getNode(ISD::SUB, dl, NegSizeVT,
+                                DAG.getConstant(0, dl, NegSizeVT),
+                                SizeForNeg);
   // Construct a node for the frame pointer save index.
   SDValue FPSIdx = getFramePointerFrameIndex(DAG);
   SDValue Ops[3] = { Chain, NegSize, FPSIdx };
   SDVTList VTs = DAG.getVTList(PtrVT, MVT::Other);
-  if (hasInlineStackProbe(MF))
+  if (UseProbedAlloca) {
+    if (Subtarget.isPPC64()) {
+      SDValue Probe = DAG.getNode(PPCISD::PROBED_ALLOCA, dl,
+                                  DAG.getVTList(MVT::i64, MVT::Other), Ops);
+      SDValue Res = Probe.getValue(0);
+      if (PtrVT != MVT::i64)
+        Res = DAG.getNode(ISD::TRUNCATE, dl, PtrVT, Res);
+      return DAG.getMergeValues({Res, Probe.getValue(1)}, dl);
+    }
     return DAG.getNode(PPCISD::PROBED_ALLOCA, dl, VTs, Ops);
+  }
   return DAG.getNode(PPCISD::DYNALLOC, dl, VTs, Ops);
 }
 
@@ -13994,6 +14011,8 @@ MachineBasicBlock *
 PPCTargetLowering::emitProbedAlloca(MachineInstr &MI,
                                     MachineBasicBlock *MBB) const {
   const bool isPPC64 = Subtarget.isPPC64();
+  const bool isXbox360 = Subtarget.isTargetXbox360();
+  const bool Use64BitStackOps = isPPC64;
   MachineFunction *MF = MBB->getParent();
   const TargetInstrInfo *TII = Subtarget.getInstrInfo();
   DebugLoc DL = MI.getDebugLoc();
@@ -14035,24 +14054,27 @@ PPCTargetLowering::emitProbedAlloca(MachineInstr &MI,
   Register DstReg = MI.getOperand(0).getReg();
   Register NegSizeReg = MI.getOperand(1).getReg();
   Register SPReg = Subtarget.getStackPointerRegister();
-  Register FinalStackPtr = MRI.createVirtualRegister(isPPC64 ? G8RC : GPRC);
-  Register FramePointer = MRI.createVirtualRegister(isPPC64 ? G8RC : GPRC);
-  Register ActualNegSizeReg = MRI.createVirtualRegister(isPPC64 ? G8RC : GPRC);
+    Register FinalStackPtr =
+      MRI.createVirtualRegister(Use64BitStackOps ? G8RC : GPRC);
+    Register FramePointer =
+      MRI.createVirtualRegister(Use64BitStackOps ? G8RC : GPRC);
+    Register ActualNegSizeReg =
+      MRI.createVirtualRegister(Use64BitStackOps ? G8RC : GPRC);
 
   // Since value of NegSizeReg might be realigned in prologepilog, insert a
   // PREPARE_PROBED_ALLOCA pseudo instruction to get actual FramePointer and
   // NegSize.
   unsigned ProbeOpc;
   if (!MRI.hasOneNonDBGUse(NegSizeReg))
-    ProbeOpc =
-        isPPC64 ? PPC::PREPARE_PROBED_ALLOCA_64 : PPC::PREPARE_PROBED_ALLOCA_32;
+    ProbeOpc = Use64BitStackOps ? PPC::PREPARE_PROBED_ALLOCA_64
+                                : PPC::PREPARE_PROBED_ALLOCA_32;
   else
     // By introducing PREPARE_PROBED_ALLOCA_NEGSIZE_OPT, ActualNegSizeReg
     // and NegSizeReg will be allocated in the same phyreg to avoid
     // redundant copy when NegSizeReg has only one use which is current MI and
     // will be replaced by PREPARE_PROBED_ALLOCA then.
-    ProbeOpc = isPPC64 ? PPC::PREPARE_PROBED_ALLOCA_NEGSIZE_SAME_REG_64
-                       : PPC::PREPARE_PROBED_ALLOCA_NEGSIZE_SAME_REG_32;
+    ProbeOpc = Use64BitStackOps ? PPC::PREPARE_PROBED_ALLOCA_NEGSIZE_SAME_REG_64
+                  : PPC::PREPARE_PROBED_ALLOCA_NEGSIZE_SAME_REG_32;
   BuildMI(*MBB, {MI}, DL, TII->get(ProbeOpc), FramePointer)
       .addDef(ActualNegSizeReg)
       .addReg(NegSizeReg)
@@ -14060,7 +14082,7 @@ PPCTargetLowering::emitProbedAlloca(MachineInstr &MI,
       .add(MI.getOperand(3));
 
   // Calculate final stack pointer, which equals to SP + ActualNegSize.
-  BuildMI(*MBB, {MI}, DL, TII->get(isPPC64 ? PPC::ADD8 : PPC::ADD4),
+  BuildMI(*MBB, {MI}, DL, TII->get(Use64BitStackOps ? PPC::ADD8 : PPC::ADD4),
           FinalStackPtr)
       .addReg(SPReg)
       .addReg(ActualNegSizeReg);
@@ -14068,34 +14090,45 @@ PPCTargetLowering::emitProbedAlloca(MachineInstr &MI,
   // Materialize a scratch register for update.
   int64_t NegProbeSize = -(int64_t)ProbeSize;
   assert(isInt<32>(NegProbeSize) && "Unhandled probe size!");
-  Register ScratchReg = MRI.createVirtualRegister(isPPC64 ? G8RC : GPRC);
+  Register ScratchReg =
+      MRI.createVirtualRegister(Use64BitStackOps ? G8RC : GPRC);
   if (!isInt<16>(NegProbeSize)) {
-    Register TempReg = MRI.createVirtualRegister(isPPC64 ? G8RC : GPRC);
-    BuildMI(*MBB, {MI}, DL, TII->get(isPPC64 ? PPC::LIS8 : PPC::LIS), TempReg)
+    Register TempReg =
+        MRI.createVirtualRegister(Use64BitStackOps ? G8RC : GPRC);
+    BuildMI(*MBB, {MI}, DL, TII->get(Use64BitStackOps ? PPC::LIS8 : PPC::LIS),
+            TempReg)
         .addImm(NegProbeSize >> 16);
-    BuildMI(*MBB, {MI}, DL, TII->get(isPPC64 ? PPC::ORI8 : PPC::ORI),
+    BuildMI(*MBB, {MI}, DL, TII->get(Use64BitStackOps ? PPC::ORI8 : PPC::ORI),
             ScratchReg)
         .addReg(TempReg)
         .addImm(NegProbeSize & 0xFFFF);
   } else
-    BuildMI(*MBB, {MI}, DL, TII->get(isPPC64 ? PPC::LI8 : PPC::LI), ScratchReg)
+    BuildMI(*MBB, {MI}, DL, TII->get(Use64BitStackOps ? PPC::LI8 : PPC::LI),
+            ScratchReg)
         .addImm(NegProbeSize);
 
   {
     // Probing leading residual part.
-    Register Div = MRI.createVirtualRegister(isPPC64 ? G8RC : GPRC);
-    BuildMI(*MBB, {MI}, DL, TII->get(isPPC64 ? PPC::DIVD : PPC::DIVW), Div)
+    Register Div = MRI.createVirtualRegister(Use64BitStackOps ? G8RC : GPRC);
+    BuildMI(*MBB, {MI}, DL, TII->get(Use64BitStackOps ? PPC::DIVD : PPC::DIVW),
+        Div)
         .addReg(ActualNegSizeReg)
         .addReg(ScratchReg);
-    Register Mul = MRI.createVirtualRegister(isPPC64 ? G8RC : GPRC);
-    BuildMI(*MBB, {MI}, DL, TII->get(isPPC64 ? PPC::MULLD : PPC::MULLW), Mul)
+    Register Mul = MRI.createVirtualRegister(Use64BitStackOps ? G8RC : GPRC);
+    BuildMI(*MBB, {MI}, DL,
+        TII->get(Use64BitStackOps ? PPC::MULLD : PPC::MULLW), Mul)
         .addReg(Div)
         .addReg(ScratchReg);
-    Register NegMod = MRI.createVirtualRegister(isPPC64 ? G8RC : GPRC);
-    BuildMI(*MBB, {MI}, DL, TII->get(isPPC64 ? PPC::SUBF8 : PPC::SUBF), NegMod)
+    Register NegMod =
+      MRI.createVirtualRegister(Use64BitStackOps ? G8RC : GPRC);
+    BuildMI(*MBB, {MI}, DL,
+        TII->get(Use64BitStackOps ? PPC::SUBF8 : PPC::SUBF), NegMod)
         .addReg(Mul)
         .addReg(ActualNegSizeReg);
-    BuildMI(*MBB, {MI}, DL, TII->get(isPPC64 ? PPC::STDUX : PPC::STWUX), SPReg)
+        BuildMI(*MBB, {MI}, DL,
+          TII->get(isPPC64 ? (isXbox360 ? PPC::STWUX8 : PPC::STDUX)
+               : PPC::STWUX),
+          SPReg)
         .addReg(FramePointer)
         .addReg(SPReg)
         .addReg(NegMod);
@@ -14104,7 +14137,8 @@ PPCTargetLowering::emitProbedAlloca(MachineInstr &MI,
   {
     // Remaining part should be multiple of ProbeSize.
     Register CmpResult = MRI.createVirtualRegister(&PPC::CRRCRegClass);
-    BuildMI(TestMBB, DL, TII->get(isPPC64 ? PPC::CMPD : PPC::CMPW), CmpResult)
+    BuildMI(TestMBB, DL,
+        TII->get(Use64BitStackOps ? PPC::CMPD : PPC::CMPW), CmpResult)
         .addReg(SPReg)
         .addReg(FinalStackPtr);
     BuildMI(TestMBB, DL, TII->get(PPC::BCC))
@@ -14118,7 +14152,10 @@ PPCTargetLowering::emitProbedAlloca(MachineInstr &MI,
   {
     // Touch the block.
     // |P...|P...|P...
-    BuildMI(BlockMBB, DL, TII->get(isPPC64 ? PPC::STDUX : PPC::STWUX), SPReg)
+        BuildMI(BlockMBB, DL,
+          TII->get(isPPC64 ? (isXbox360 ? PPC::STWUX8 : PPC::STDUX)
+               : PPC::STWUX),
+          SPReg)
         .addReg(FramePointer)
         .addReg(SPReg)
         .addReg(ScratchReg);
@@ -14128,16 +14165,31 @@ PPCTargetLowering::emitProbedAlloca(MachineInstr &MI,
 
   // Calculation of MaxCallFrameSize is deferred to prologepilog, use
   // DYNAREAOFFSET pseudo instruction to get the future result.
-  Register MaxCallFrameSizeReg =
-      MRI.createVirtualRegister(isPPC64 ? G8RC : GPRC);
-  BuildMI(TailMBB, DL,
-          TII->get(isPPC64 ? PPC::DYNAREAOFFSET8 : PPC::DYNAREAOFFSET),
+      if (isXbox360 && isPPC64) {
+      Register MaxCallFrameSizeReg = MRI.createVirtualRegister(GPRC);
+      Register DynamicAreaPtrReg = MRI.createVirtualRegister(GPRC);
+      BuildMI(TailMBB, DL, TII->get(PPC::DYNAREAOFFSET), MaxCallFrameSizeReg)
+        .add(MI.getOperand(2))
+        .add(MI.getOperand(3));
+      BuildMI(TailMBB, DL, TII->get(PPC::ADD4), DynamicAreaPtrReg)
+        .addReg(PPC::R1)
+        .addReg(MaxCallFrameSizeReg);
+      BuildMI(TailMBB, DL, TII->get(TargetOpcode::COPY), DstReg)
+          .addReg(DynamicAreaPtrReg);
+      } else {
+      Register MaxCallFrameSizeReg =
+        MRI.createVirtualRegister(Use64BitStackOps ? G8RC : GPRC);
+      BuildMI(TailMBB, DL,
+          TII->get(Use64BitStackOps ? PPC::DYNAREAOFFSET8
+                        : PPC::DYNAREAOFFSET),
           MaxCallFrameSizeReg)
-      .add(MI.getOperand(2))
-      .add(MI.getOperand(3));
-  BuildMI(TailMBB, DL, TII->get(isPPC64 ? PPC::ADD8 : PPC::ADD4), DstReg)
-      .addReg(SPReg)
-      .addReg(MaxCallFrameSizeReg);
+        .add(MI.getOperand(2))
+        .add(MI.getOperand(3));
+      BuildMI(TailMBB, DL, TII->get(Use64BitStackOps ? PPC::ADD8 : PPC::ADD4),
+          DstReg)
+        .addReg(SPReg)
+        .addReg(MaxCallFrameSizeReg);
+      }
 
   // Splice instructions after MI to TailMBB.
   TailMBB->splice(TailMBB->end(), MBB,

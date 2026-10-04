@@ -193,7 +193,7 @@ void applyMOV32T(uint8_t *off, uint32_t v) {
 
 static uint16_t readADDIS(uint8_t *off) {
   uint16_t op = read16be(off);
-  if (op != 0x3d8c)
+  if (op != 0x3d80)
     error("unexpected instruction in ADDIS relocation");
 
   return read16be(off + 2);
@@ -397,27 +397,148 @@ void SectionChunk::applyRelARM64(uint8_t *off, uint16_t type, OutputSection *os,
 void SectionChunk::applyRelPPC(uint8_t *off, uint16_t type, OutputSection *os,
                                uint64_t s, uint64_t p,
                                uint64_t imageBase) const {
+  constexpr uint32_t Branch14Mask = 0x0000fffc;
+  constexpr uint32_t Branch24Mask = 0x03fffffc;
 
   switch (type) {
   case IMAGE_REL_PPC_ABSOLUTE:
     break;
 
-  case IMAGE_REL_PPC_REFHI: {
-    write16be(off + 2, (s + imageBase) >> 16);
+  case IMAGE_REL_PPC_REL24: {
+    uint32_t Instr = read32be(off);
+    int64_t Addend = SignExtend64<26>(Instr & Branch24Mask);
+    int64_t Displacement = (int64_t)s + Addend - (int64_t)p;
+    if ((Displacement & 3) != 0) {
+      error("misaligned IMAGE_REL_PPC_REL24 relocation in " + toString(file));
+      break;
+    }
+    if (!isInt<26>(Displacement)) {
+      error("IMAGE_REL_PPC_REL24 relocation out of range in " +
+            toString(file));
+      break;
+    }
+    write32be(off, (Instr & ~Branch24Mask) |
+                       (static_cast<uint32_t>(Displacement) & Branch24Mask));
     break;
   }
-  case IMAGE_REL_PPC_REFLO: {
-    write16be(off + 2, (s + imageBase) & 0xFFFF);
+
+  case IMAGE_REL_PPC_REL14: {
+    uint32_t Instr = read32be(off);
+    int64_t Addend = SignExtend64<16>(Instr & Branch14Mask);
+    int64_t Displacement = (int64_t)s + Addend - (int64_t)p;
+    if ((Displacement & 3) != 0) {
+      error("misaligned IMAGE_REL_PPC_REL14 relocation in " + toString(file));
+      break;
+    }
+    if (!isInt<16>(Displacement)) {
+      error("IMAGE_REL_PPC_REL14 relocation out of range in " +
+            toString(file));
+      break;
+    }
+    write32be(off, (Instr & ~Branch14Mask) |
+                       (static_cast<uint32_t>(Displacement) & Branch14Mask));
     break;
   }
-  case IMAGE_REL_PPC_PAIR: {
-    write16be(off + 2, (s + imageBase) & 0xFFFF);
+
+  case IMAGE_REL_PPC_ADDR24: {
+    uint32_t Instr = read32be(off);
+    int64_t Addend = SignExtend64<26>(Instr & Branch24Mask);
+    int64_t Address = (int64_t)(s + imageBase) + Addend;
+    if ((Address & 3) != 0) {
+      error("misaligned IMAGE_REL_PPC_ADDR24 relocation in " + toString(file));
+      break;
+    }
+    if (!isInt<26>(Address)) {
+      error("IMAGE_REL_PPC_ADDR24 relocation out of range in " +
+            toString(file));
+      break;
+    }
+    write32be(off, (Instr & ~Branch24Mask) |
+                       (static_cast<uint32_t>(Address) & Branch24Mask));
     break;
   }
-  case IMAGE_REL_PPC_ADDR32: {
+
+  case IMAGE_REL_PPC_ADDR14: {
+    uint32_t Instr = read32be(off);
+    int64_t Addend = SignExtend64<16>(Instr & Branch14Mask);
+    int64_t Address = (int64_t)(s + imageBase) + Addend;
+    if ((Address & 3) != 0) {
+      error("misaligned IMAGE_REL_PPC_ADDR14 relocation in " + toString(file));
+      break;
+    }
+    if (!isInt<16>(Address)) {
+      error("IMAGE_REL_PPC_ADDR14 relocation out of range in " +
+            toString(file));
+      break;
+    }
+    write32be(off, (Instr & ~Branch14Mask) |
+                       (static_cast<uint32_t>(Address) & Branch14Mask));
+    break;
+  }
+
+  case IMAGE_REL_PPC_ADDR16:
+    add16be(off, s + imageBase);
+    break;
+  case IMAGE_REL_PPC_ADDR32:
     add32be(off, s + imageBase);
     break;
+  case IMAGE_REL_PPC_ADDR64:
+    write64be(off, read64be(off) + s + imageBase);
+    break;
+  case IMAGE_REL_PPC_ADDR32NB:
+    add32be(off, s);
+    break;
+
+  case IMAGE_REL_PPC_SECREL: {
+    if (!checkSecRel(this, os))
+      break;
+    uint64_t SecRel = s - os->getRVA();
+    if (!isUInt<32>(SecRel)) {
+      error("overflow in IMAGE_REL_PPC_SECREL relocation in section: " +
+            getSectionName());
+      break;
+    }
+    add32be(off, SecRel);
+    break;
   }
+  case IMAGE_REL_PPC_SECREL16: {
+    if (!checkSecRel(this, os))
+      break;
+    uint64_t SecRel = s - os->getRVA();
+    if (!isUInt<16>(SecRel)) {
+      error("overflow in IMAGE_REL_PPC_SECREL16 relocation in section: " +
+            getSectionName());
+      break;
+    }
+    add16be(off, SecRel);
+    break;
+  }
+  case IMAGE_REL_PPC_SECRELLO: {
+    if (!checkSecRel(this, os))
+      break;
+    uint64_t SecRel = s - os->getRVA();
+    add16be(off + 2, SecRel);
+    break;
+  }
+
+  case IMAGE_REL_PPC_SECTION: {
+    uint64_t SectionIndex =
+        os ? os->sectionIndex : file->symtab.ctx.outputSections.size() + 1;
+    if (!isUInt<16>(SectionIndex)) {
+      error("overflow in IMAGE_REL_PPC_SECTION relocation in section: " +
+            getSectionName());
+      break;
+    }
+    add16be(off, SectionIndex);
+    break;
+  }
+
+  case IMAGE_REL_PPC_REFHI:
+    add16be(off + 2, (s + imageBase) >> 16);
+    break;
+  case IMAGE_REL_PPC_REFLO:
+    add16be(off + 2, s + imageBase);
+    break;
   default:
     error("unsupported relocation type 0x" + Twine::utohexstr(type) + " in " +
           toString(file));
@@ -491,6 +612,20 @@ void SectionChunk::writeTo(uint8_t *buf) const {
 
 void SectionChunk::applyRelocation(uint8_t *off,
                                    const coff_relocation &rel) const {
+  if (getArch() == Triple::ppc64 && rel.Type == IMAGE_REL_PPC_PAIR) {
+    ArrayRef<coff_relocation> Relocs = getRelocs();
+    const coff_relocation *Reloc = &rel;
+    if (Reloc == Relocs.begin() ||
+        (Reloc - 1)->Type != IMAGE_REL_PPC_REFHI ||
+        (Reloc - 1)->VirtualAddress != rel.VirtualAddress) {
+      error("IMAGE_REL_PPC_PAIR relocation is not preceded by REFHI in " +
+            toString(file));
+      return;
+    }
+    add16be(off + 2, SignExtend64<16>(rel.SymbolTableIndex));
+    return;
+  }
+
   auto *sym = dyn_cast_or_null<Defined>(file->getSymbol(rel.SymbolTableIndex));
 
   // Get the output section of the symbol for this relocation.  The output
@@ -755,6 +890,8 @@ static int getRuntimePseudoRelocSize(uint16_t type, Triple::ArchType arch) {
 void SectionChunk::getRuntimePseudoRelocs(
     std::vector<RuntimePseudoReloc> &res) {
   for (const coff_relocation &rel : getRelocs()) {
+    if (getArch() == Triple::ppc64 && rel.Type == IMAGE_REL_PPC_PAIR)
+      continue;
     auto *target =
         dyn_cast_or_null<Defined>(file->getSymbol(rel.SymbolTableIndex));
     if (!target || !target->isRuntimePseudoReloc)

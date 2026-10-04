@@ -48,6 +48,9 @@ unsigned PPCWinCOFFObjectWriter::getRelocType(MCContext &Ctx, const MCValue &Tar
   MCSymbolRefExpr::VariantKind Modifier =
     Target.isAbsolute() ? MCSymbolRefExpr::VK_None : Target.getSymA()->getKind();
   const unsigned FixupKind = Fixup.getKind();
+  if (FixupKind >= FirstLiteralRelocationKind)
+    return FixupKind - FirstLiteralRelocationKind;
+
   assert(Modifier != MCSymbolRefExpr::VK_PPC_TOC &&
          Modifier != MCSymbolRefExpr::VK_PPC_TOC_HA &&
          Modifier != MCSymbolRefExpr::VK_PPC_TOC_HI &&
@@ -62,6 +65,8 @@ unsigned PPCWinCOFFObjectWriter::getRelocType(MCContext &Ctx, const MCValue &Tar
   case PPC::fixup_ppc_half16ds:
     return llvm::COFF::IMAGE_REL_PPC_ADDR14;
   case FK_Data_2:
+    if (Modifier == MCSymbolRefExpr::VK_SECREL)
+      return llvm::COFF::IMAGE_REL_PPC_SECREL16;
     return llvm::COFF::IMAGE_REL_PPC_ADDR16;
   case FK_Data_4:
     switch (Modifier) {
@@ -74,14 +79,14 @@ unsigned PPCWinCOFFObjectWriter::getRelocType(MCContext &Ctx, const MCValue &Tar
     }
   case FK_Data_8:
     return llvm::COFF::IMAGE_REL_PPC_ADDR64;
-  case FK_GPRel_2:
-    return llvm::COFF::IMAGE_REL_PPC_GPREL;
   case FK_SecRel_2:
-    return llvm::COFF::IMAGE_REL_PPC_SECREL16;
+    return llvm::COFF::IMAGE_REL_PPC_SECTION;
   case FK_SecRel_4:
     return llvm::COFF::IMAGE_REL_PPC_SECREL;
   case PPC::fixup_ppc_br24:
     return llvm::COFF::IMAGE_REL_PPC_REL24;
+  case PPC::fixup_ppc_br24abs:
+    return llvm::COFF::IMAGE_REL_PPC_ADDR24;
   case PPC::fixup_ppc_brcond14:
     return llvm::COFF::IMAGE_REL_PPC_REL14;
   case PPC::fixup_ppc_brcond14abs:
@@ -91,15 +96,17 @@ unsigned PPCWinCOFFObjectWriter::getRelocType(MCContext &Ctx, const MCValue &Tar
     case MCSymbolRefExpr::VK_None:
     case MCSymbolRefExpr::VK_PPC_LO:
       return llvm::COFF::IMAGE_REL_PPC_REFLO;
-    case MCSymbolRefExpr::VK_PPC_HI:
+    // case MCSymbolRefExpr::VK_PPC_HI:
     case MCSymbolRefExpr::VK_PPC_HA:
       return llvm::COFF::IMAGE_REL_PPC_REFHI;
+    case MCSymbolRefExpr::VK_SECREL:
+      return llvm::COFF::IMAGE_REL_PPC_SECRELLO;
     default:
       ;
     }
     [[fallthrough]];
-  // TODO: IMAGE_REL_PPC_SECRELLO, IMAGE_REL_PPC_TOKEN
   default:
+    dbgs() << "FixupKind=" << FixupKind << "\n";
     llvm_unreachable("Unimplemented PPC fixup.");
   }
 }

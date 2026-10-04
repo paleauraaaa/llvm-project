@@ -543,10 +543,6 @@ static bool ppcUserFeaturesCheck(DiagnosticsEngine &Diags,
 bool PPCTargetInfo::initFeatureMap(
     llvm::StringMap<bool> &Features, DiagnosticsEngine &Diags, StringRef CPU,
     const std::vector<std::string> &FeaturesVec) const {
-  const bool IsXbox360 = llvm::StringSwitch<bool>(CPU)
-                            .Case("xenon", true)
-                            .Default(false);
-
   Features["altivec"] = llvm::StringSwitch<bool>(CPU)
                             .Case("7400", true)
                             .Case("g4", true)
@@ -554,13 +550,14 @@ bool PPCTargetInfo::initFeatureMap(
                             .Case("g4+", true)
                             .Case("970", true)
                             .Case("g5", true)
+                            .Case("xenon", true)
                             .Case("pwr6", true)
                             .Case("pwr7", true)
                             .Case("pwr8", true)
                             .Case("pwr9", true)
                             .Case("ppc64", true)
                             .Case("ppc64le", true)
-                            .Default(IsXbox360);
+                            .Default(false);
 
   Features["power9-vector"] = (CPU == "pwr9");
   Features["crypto"] = llvm::StringSwitch<bool>(CPU)

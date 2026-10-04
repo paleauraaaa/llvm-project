@@ -93,6 +93,11 @@ def RetCC_PPC : CallingConv<[
            CCIfSubtarget<"hasAltivec()",
            CCAssignToReg<[V2, V3, V4, V5, V6, V7, V8, V9]>>>,
 
+  // Xbox 360 returns direct vector values in VR1.
+  CCIfType<[v16i8, v8i16, v4i32, v2i64, v1i128, v4f32, v2f64],
+           CCIfSubtarget<"isTargetXbox360()",
+           CCAssignToReg<[V1]>>>,
+
   // Vector types returned as "direct" go into V2 .. V9; note that only the
   // ELFv2 ABI fully utilizes all these registers.
   CCIfType<[v16i8, v8i16, v4i32, v2i64, v1i128, v4f32, v2f64],
@@ -338,6 +343,10 @@ def CSR_PPC64   : CalleeSavedRegs<(add X14, X15, X16, X17, X18, X19, X20,
 
 
 def CSR_PPC64_Altivec : CalleeSavedRegs<(add CSR_PPC64, CSR_Altivec)>;
+
+// Xbox 360 preserves CR fields 2 through 5 and the modeled nonvolatile VMX
+// registers. VMX128 registers beyond V31 are not modeled by LLVM.
+def CSR_XBOX360 : CalleeSavedRegs<(add CSR_PPC64_Altivec, CR5)>;
 
 def CSR_PPC64_R2 : CalleeSavedRegs<(add CSR_PPC64, X2)>;
 

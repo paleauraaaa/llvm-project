@@ -1,0 +1,83 @@
+# RUN: split-file %s %t.dir
+# RUN: llvm-mc -filetype=obj -triple=ppc64-ibm-xbox360 %t.dir/dll.s -o %t.dll.obj
+# RUN: lld-link /machine:ppcbe /dll /noentry /out:%t.dll /implib:%t.lib /export:impfunc %t.dll.obj
+# RUN: llvm-mc -filetype=obj -triple=ppc64-ibm-xbox360 %t.dir/main.s -o %t.main.obj
+# RUN: lld-link /machine:ppcbe /entry:main /subsystem:console /base:0x10000 /out:%t.exe %t.main.obj %t.lib
+# RUN: llvm-readobj --coff-imports %t.exe | FileCheck --check-prefix=IMPORT %s
+# RUN: llvm-readobj --coff-basereloc %t.exe | FileCheck --check-prefix=BASEREL %s
+# RUN: llvm-readobj --sections --section-data %t.exe | FileCheck --check-prefix=DATA %s
+# RUN: llvm-objdump -d --triple=powerpc-unknown-windows-msvc %t.exe | FileCheck --check-prefix=DIS %s
+
+# IMPORT: Format: COFF-PPCBE
+# IMPORT: Import {
+# IMPORT: Symbol: impfunc
+
+# BASEREL-LABEL: BaseReloc [
+# BASEREL: Entry {
+# BASEREL-NEXT: Type: HIGHLOW
+# BASEREL-NEXT: Address: 0x3004
+# BASEREL-NEXT: }
+# BASEREL-NEXT: Entry {
+# BASEREL-NEXT: Type: DIR64
+# BASEREL-NEXT: Address: 0x300C
+# BASEREL-NEXT: }
+
+# DATA-LABEL: Name: .text
+# DATA: 0000: 41820020 41821002 3C600001 38631020
+# DATA: 0010: 48000011 3C800020 48011022 4E800020
+# DATA-LABEL: Name: .data
+# DATA: 0000: 00031020 00011020 00001020 00000000
+# DATA: 0010: 00011020 00000020 00200000
+
+# DIS: <.text>:
+# DIS: bt 2,
+# DIS: bta 2,
+# DIS: lis
+# DIS: addi
+# DIS: bl
+# DIS: lis 4,
+# DIS: b
+# DIS: blr
+# DIS: lis 12,
+# DIS-NEXT: lwz 12,
+# DIS-NEXT: mtctr 12
+# DIS-NEXT: bctr
+
+#--- dll.s
+.text
+.globl impfunc
+impfunc:
+  blr
+
+#--- main.s
+.text
+.globl main
+main:
+  beq impfunc
+  beqa addr14_target
+  lis 3, impfunc@ha
+  addi 3, 3, impfunc@l
+  bl impfunc
+secrel_lo:
+  lis 4, 0
+  .reloc 20, IMAGE_REL_PPC_SECRELLO, impfunc
+  ba impfunc
+  blr
+.set addr14_target, 0x1000
+.data
+.globl reloc_data
+reloc_data:
+  .secidx reloc_data
+  .short impfunc
+  .long impfunc
+  .long impfunc@imgrel
+  .quad impfunc
+secrel32:
+  .long 0
+  .reloc 20, IMAGE_REL_PPC_SECREL, impfunc
+secrel16:
+  .short 0
+  .reloc 24, IMAGE_REL_PPC_SECREL16, impfunc
+absolute:
+  .long 0
+  .reloc 26, IMAGE_REL_PPC_ABSOLUTE, impfunc
