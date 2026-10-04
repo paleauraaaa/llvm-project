@@ -979,11 +979,17 @@ void WinCOFFWriter::recordRelocation(MCAssembler &Asm,
   if (Header.Machine == COFF::IMAGE_FILE_MACHINE_PPCBE) {
     switch (Reloc.Data.Type) {
     case COFF::IMAGE_REL_PPC_ABSOLUTE:
+    case COFF::IMAGE_REL_PPC_ADDR24:
+    case COFF::IMAGE_REL_PPC_ADDR14:
     case COFF::IMAGE_REL_PPC_ADDR16:
     case COFF::IMAGE_REL_PPC_ADDR32:
-    //case COFF::IMAGE_REL_PPC_ADDR32NB:
+    case COFF::IMAGE_REL_PPC_ADDR32NB:
+    case COFF::IMAGE_REL_PPC_ADDR64:
+    case COFF::IMAGE_REL_PPC_REL14:
+    case COFF::IMAGE_REL_PPC_SECREL16:
+    case COFF::IMAGE_REL_PPC_SECRELLO:
+    case COFF::IMAGE_REL_PPC_SECTION:
     //case COFF::IMAGE_REL_PPC_TOKEN:
-    //case COFF::IMAGE_REL_PPC_SECTION:
     case COFF::IMAGE_REL_PPC_SECREL:
     case COFF::IMAGE_REL_PPC_REFHI:
     case COFF::IMAGE_REL_PPC_REFLO:
@@ -1012,6 +1018,8 @@ void WinCOFFWriter::recordRelocation(MCAssembler &Asm,
 
     if (Header.Machine == COFF::IMAGE_FILE_MACHINE_PPCBE &&
         Reloc.Data.Type == COFF::IMAGE_REL_PPC_REFHI) {
+      // IMAGE_REL_PPC_REFHI and IMAGE_REL_PPC_SECRELHI *must*
+      // be followed by IMAGE_REL_PPC_PAIR
       auto RelocPair = Reloc;
       RelocPair.Data.Type = COFF::IMAGE_REL_PPC_PAIR;
       Sec->Relocations.push_back(RelocPair);

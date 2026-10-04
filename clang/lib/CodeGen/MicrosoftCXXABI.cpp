@@ -1160,7 +1160,16 @@ static bool isTrivialForMSVC(const CXXRecordDecl *RD, QualType Ty,
 }
 
 bool MicrosoftCXXABI::classifyReturnType(CGFunctionInfo &FI) const {
-  const CXXRecordDecl *RD = FI.getReturnType()->getAsCXXRecordDecl();
+  QualType RetTy = FI.getReturnType();
+  if (CGM.getTarget().getTriple().isOSXbox360() && FI.isInstanceMethod() &&
+      RetTy->isVectorType() && CGM.getContext().getTypeSize(RetTy) > 64) {
+    CharUnits Align = CGM.getContext().getTypeAlignInChars(RetTy);
+    FI.getReturnInfo() = ABIArgInfo::getIndirect(Align, /*ByVal=*/false);
+    FI.getReturnInfo().setSRetAfterThis(true);
+    return true;
+  }
+
+  const CXXRecordDecl *RD = RetTy->getAsCXXRecordDecl();
   if (!RD)
     return false;
 

@@ -1691,7 +1691,7 @@ enum class CodeGenFunction::MSVCIntrin {
   _InterlockedDecrement_rel,
   _InterlockedDecrement_nf,
   __fastfail,
-  __emit,
+  // __emit,
 };
 
 static std::optional<CodeGenFunction::MSVCIntrin>
@@ -2204,19 +2204,19 @@ Value *CodeGenFunction::EmitMSVCBuiltinExpr(MSVCIntrin BuiltinID,
       Asm = "brk #0xF003";
       Constraints = "{w0}";
     }
-    llvm::FunctionType *FTy = llvm::FunctionType::get(VoidTy, {Int32Ty}, false);
-    llvm::InlineAsm *IA =
+        llvm::FunctionType *FTy = llvm::FunctionType::get(VoidTy, {Int32Ty}, false);
+        llvm::InlineAsm *IA =
         llvm::InlineAsm::get(FTy, Asm, Constraints, /*hasSideEffects=*/true);
-    llvm::AttributeList NoReturnAttr = llvm::AttributeList::get(
-        getLLVMContext(), llvm::AttributeList::FunctionIndex,
-        llvm::Attribute::NoReturn);
-    llvm::CallInst *CI = Builder.CreateCall(IA, EmitScalarExpr(E->getArg(0)));
-    CI->setAttributes(NoReturnAttr);
-    return CI;
+        llvm::AttributeList NoReturnAttr = llvm::AttributeList::get(
+            getLLVMContext(), llvm::AttributeList::FunctionIndex,
+            llvm::Attribute::NoReturn);
+        llvm::CallInst *CI = Builder.CreateCall(IA, EmitScalarExpr(E->getArg(0)));
+        CI->setAttributes(NoReturnAttr);
+        return CI;
   }
 
-  case MSVCIntrin::__emit:
-    return EmitScalarExpr(E->getArg(0));
+  // case MSVCIntrin::__emit:
+  //   return EmitScalarExpr(E->getArg(0));
   }
   llvm_unreachable("Incorrect MSVC intrinsic!");
 }
@@ -5831,8 +5831,8 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
 
   case Builtin::BI__fastfail:
     return RValue::get(EmitMSVCBuiltinExpr(MSVCIntrin::__fastfail, E));
-  case Builtin::BI__emit:
-    return RValue::get(EmitMSVCBuiltinExpr(MSVCIntrin::__emit, E));
+  // case Builtin::BI__emit:
+  //   return RValue::get(EmitMSVCBuiltinExpr(MSVCIntrin::__emit, E));
 
   case Builtin::BI__builtin_coro_id:
     return EmitCoroutineIntrinsic(E, Intrinsic::coro_id);

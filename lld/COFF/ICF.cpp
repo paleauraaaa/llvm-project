@@ -24,6 +24,7 @@
 #include "lld/Common/ErrorHandler.h"
 #include "lld/Common/Timer.h"
 #include "llvm/ADT/Hashing.h"
+#include "llvm/BinaryFormat/COFF.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/Parallel.h"
 #include "llvm/Support/TimeProfiler.h"
@@ -159,6 +160,9 @@ bool ICF::equalsConstant(const SectionChunk *a, const SectionChunk *b) {
         r1.VirtualAddress != r2.VirtualAddress) {
       return false;
     }
+    if (a->getMachine() == COFF::IMAGE_FILE_MACHINE_PPCBE &&
+      r1.Type == COFF::IMAGE_REL_PPC_PAIR)
+      return r1.SymbolTableIndex == r2.SymbolTableIndex;
     Symbol *b1 = a->file->getSymbol(r1.SymbolTableIndex);
     Symbol *b2 = b->file->getSymbol(r2.SymbolTableIndex);
     if (b1 == b2)
@@ -193,6 +197,9 @@ bool ICF::equalsVariable(const SectionChunk *a, const SectionChunk *b) {
     return false;
   };
   auto eq = [&](const coff_relocation &r1, const coff_relocation &r2) {
+    if (a->getMachine() == COFF::IMAGE_FILE_MACHINE_PPCBE &&
+      r1.Type == COFF::IMAGE_REL_PPC_PAIR)
+      return r1.SymbolTableIndex == r2.SymbolTableIndex;
     Symbol *b1 = a->file->getSymbol(r1.SymbolTableIndex);
     Symbol *b2 = b->file->getSymbol(r2.SymbolTableIndex);
     return eqSym(b1, b2);

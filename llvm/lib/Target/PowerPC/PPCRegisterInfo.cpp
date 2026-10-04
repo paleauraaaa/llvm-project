@@ -234,6 +234,8 @@ PPCRegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
       return CSR_SVR32_ColdCC_SPE_SaveList;
     return CSR_SVR32_ColdCC_SaveList;
   }
+  if (Subtarget.isTargetXbox360())
+    return CSR_XBOX360_SaveList;
   // Standard calling convention CSRs.
   if (TM.isPPC64()) {
     if (Subtarget.pairedVectorMemops()) {
@@ -322,6 +324,9 @@ PPCRegisterInfo::getCallPreservedMask(const MachineFunction &MF,
                         : (Subtarget.hasSPE() ? CSR_SVR32_ColdCC_SPE_RegMask
                                               : CSR_SVR32_ColdCC_RegMask));
   }
+
+  if (Subtarget.isTargetXbox360())
+    return CSR_XBOX360_RegMask;
 
   if (TM.isPPC64())
     return Subtarget.pairedVectorMemops()
@@ -753,8 +758,7 @@ void PPCRegisterInfo::lowerDynamicAlloc(MachineBasicBlock::iterator II) const {
   const PPCSubtarget &Subtarget = MF.getSubtarget<PPCSubtarget>();
   // Get the instruction info.
   const TargetInstrInfo &TII = *Subtarget.getInstrInfo();
-  // Determine whether 64-bit pointers are used.
-  bool LP64 = TM.isPPC64();
+  bool Use64BitStackOps = TM.isPPC64();
   DebugLoc dl = MI.getDebugLoc();
 
   // Get the maximum call stack size.
@@ -766,21 +770,40 @@ void PPCRegisterInfo::lowerDynamicAlloc(MachineBasicBlock::iterator II) const {
 
   const TargetRegisterClass *G8RC = &PPC::G8RCRegClass;
   const TargetRegisterClass *GPRC = &PPC::GPRCRegClass;
-  Register Reg = MF.getRegInfo().createVirtualRegister(LP64 ? G8RC : GPRC);
+  Register Reg = MF.getRegInfo().createVirtualRegister(Use64BitStackOps ? G8RC : GPRC);
   bool KillNegSizeReg = MI.getOperand(1).isKill();
   Register NegSizeReg = MI.getOperand(1).getReg();
 
   prepareDynamicAlloca(II, NegSizeReg, KillNegSizeReg, Reg);
+
+  // On Xbox360 ppc64, stack update uses STWUX8, which expects a G8RC offset.
+  // Dynamic alloca size often arrives in a 32-bit GPR, so widen it first.
+  if (Use64BitStackOps && Subtarget.isTargetXbox360()) {
+    Register WideNegSizeReg = MF.getRegInfo().createVirtualRegister(G8RC);
+    BuildMI(MBB, II, dl, TII.get(TargetOpcode::COPY), WideNegSizeReg)
+        .addReg(NegSizeReg, getKillRegState(KillNegSizeReg));
+    NegSizeReg = WideNegSizeReg;
+    KillNegSizeReg = true;
+  }
+
   // Grow the stack and update the stack pointer link, then determine the
   // address of new allocated space.
-  if (LP64) {
-    BuildMI(MBB, II, dl, TII.get(PPC::STDUX), PPC::X1)
+  if (Use64BitStackOps) {
+    unsigned StackUpdateOpc =
+        Subtarget.isTargetXbox360() ? PPC::STWUX8 : PPC::STDUX;
+    BuildMI(MBB, II, dl, TII.get(StackUpdateOpc), PPC::X1)
         .addReg(Reg, RegState::Kill)
         .addReg(PPC::X1)
         .addReg(NegSizeReg, getKillRegState(KillNegSizeReg));
-    BuildMI(MBB, II, dl, TII.get(PPC::ADDI8), MI.getOperand(0).getReg())
-        .addReg(PPC::X1)
-        .addImm(maxCallFrameSize);
+    if (Subtarget.isTargetXbox360()) {
+      BuildMI(MBB, II, dl, TII.get(PPC::ADDI), MI.getOperand(0).getReg())
+          .addReg(PPC::R1)
+          .addImm(maxCallFrameSize);
+    } else {
+      BuildMI(MBB, II, dl, TII.get(PPC::ADDI8), MI.getOperand(0).getReg())
+          .addReg(PPC::X1)
+          .addImm(maxCallFrameSize);
+    }
   } else {
     BuildMI(MBB, II, dl, TII.get(PPC::STWUX), PPC::R1)
         .addReg(Reg, RegState::Kill)
@@ -813,8 +836,7 @@ void PPCRegisterInfo::prepareDynamicAlloca(MachineBasicBlock::iterator II,
   const PPCSubtarget &Subtarget = MF.getSubtarget<PPCSubtarget>();
   // Get the instruction info.
   const TargetInstrInfo &TII = *Subtarget.getInstrInfo();
-  // Determine whether 64-bit pointers are used.
-  bool LP64 = TM.isPPC64();
+  bool Use64BitStackOps = TM.isPPC64();
   DebugLoc dl = MI.getDebugLoc();
   // Get the total frame size.
   unsigned FrameSize = MFI.getStackSize();
@@ -834,7 +856,7 @@ void PPCRegisterInfo::prepareDynamicAlloca(MachineBasicBlock::iterator II,
   const TargetRegisterClass *GPRC = &PPC::GPRCRegClass;
 
   if (MaxAlign < TargetAlign && isInt<16>(FrameSize)) {
-    if (LP64)
+    if (Use64BitStackOps)
       BuildMI(MBB, II, dl, TII.get(PPC::ADDI8), FramePointer)
           .addReg(PPC::X31)
           .addImm(FrameSize);
@@ -842,7 +864,7 @@ void PPCRegisterInfo::prepareDynamicAlloca(MachineBasicBlock::iterator II,
       BuildMI(MBB, II, dl, TII.get(PPC::ADDI), FramePointer)
           .addReg(PPC::R31)
           .addImm(FrameSize);
-  } else if (LP64) {
+  } else if (Use64BitStackOps) {
     BuildMI(MBB, II, dl, TII.get(PPC::LD), FramePointer)
         .addImm(0)
         .addReg(PPC::X1);
@@ -852,7 +874,7 @@ void PPCRegisterInfo::prepareDynamicAlloca(MachineBasicBlock::iterator II,
         .addReg(PPC::R1);
   }
   // Determine the actual NegSizeReg according to alignment info.
-  if (LP64) {
+  if (Use64BitStackOps) {
     if (MaxAlign > TargetAlign) {
       unsigned UnalNegSizeReg = NegSizeReg;
       NegSizeReg = MF.getRegInfo().createVirtualRegister(G8RC);
@@ -899,14 +921,13 @@ void PPCRegisterInfo::lowerPrepareProbedAlloca(
   const PPCSubtarget &Subtarget = MF.getSubtarget<PPCSubtarget>();
   // Get the instruction info.
   const TargetInstrInfo &TII = *Subtarget.getInstrInfo();
-  // Determine whether 64-bit pointers are used.
-  bool LP64 = TM.isPPC64();
+  bool Use64BitStackOps = TM.isPPC64();
   DebugLoc dl = MI.getDebugLoc();
   Register FramePointer = MI.getOperand(0).getReg();
   const Register ActualNegSizeReg = MI.getOperand(1).getReg();
   bool KillNegSizeReg = MI.getOperand(2).isKill();
   Register NegSizeReg = MI.getOperand(2).getReg();
-  const MCInstrDesc &CopyInst = TII.get(LP64 ? PPC::OR8 : PPC::OR);
+  const MCInstrDesc &CopyInst = TII.get(Use64BitStackOps ? PPC::OR8 : PPC::OR);
   // RegAllocator might allocate FramePointer and NegSizeReg in the same phyreg.
   if (FramePointer == NegSizeReg) {
     assert(KillNegSizeReg && "FramePointer is a def and NegSizeReg is an use, "
@@ -946,8 +967,9 @@ void PPCRegisterInfo::lowerDynamicAreaOffset(
 
   unsigned maxCallFrameSize = MFI.getMaxCallFrameSize();
   bool is64Bit = TM.isPPC64();
+  bool Use64BitImmOps = is64Bit && !Subtarget.isTargetXbox360();
   DebugLoc dl = MI.getDebugLoc();
-  BuildMI(MBB, II, dl, TII.get(is64Bit ? PPC::LI8 : PPC::LI),
+  BuildMI(MBB, II, dl, TII.get(Use64BitImmOps ? PPC::LI8 : PPC::LI),
           MI.getOperand(0).getReg())
       .addImm(maxCallFrameSize);
   MBB.erase(II);
@@ -1518,15 +1540,17 @@ void PPCRegisterInfo::lowerQuadwordRestore(MachineBasicBlock::iterator II,
 
 bool PPCRegisterInfo::hasReservedSpillSlot(const MachineFunction &MF,
                                            Register Reg, int &FrameIdx) const {
-  // For the nonvolatile condition registers (CR2, CR3, CR4) return true to
-  // prevent allocating an additional frame slot.
-  // For 64-bit ELF and AIX, the CR save area is in the linkage area at SP+8,
-  // for 32-bit AIX the CR save area is in the linkage area at SP+4.
+  const PPCSubtarget &Subtarget = MF.getSubtarget<PPCSubtarget>();
+  bool IsCR2ToCR4 = PPC::CR2 <= Reg && Reg <= PPC::CR4;
+  bool IsXboxCR5 = Subtarget.isTargetXbox360() && Reg == PPC::CR5;
+  // For the nonvolatile condition registers return true to prevent allocating
+  // an additional frame slot. For 64-bit ELF, Xbox, and AIX, the CR save area
+  // is in the linkage area at SP+8; for 32-bit AIX it is at SP+4.
   // We have created a FrameIndex to that spill slot to keep the CalleSaveInfos
   // valid.
   // For 32-bit ELF, we have previously created the stack slot if needed, so
   // return its FrameIdx.
-  if (PPC::CR2 <= Reg && Reg <= PPC::CR4) {
+  if (IsCR2ToCR4 || IsXboxCR5) {
     FrameIdx = MF.getInfo<PPCFunctionInfo>()->getCRSpillFrameIndex();
     return true;
   }
@@ -1678,8 +1702,19 @@ PPCRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
   }
 
   // Replace the FrameIndex with base register with GPR1 (SP) or GPR31 (FP).
-  MI.getOperand(FIOperandNum).ChangeToRegister(
-    FrameIndex < 0 ? getBaseRegister(MF) : getFrameRegister(MF), false);
+  Register FrameReg = FrameIndex < 0 ? getBaseRegister(MF) : getFrameRegister(MF);
+  if (Subtarget.isTargetXbox360() &&
+      (FrameReg == PPC::X1 || FrameReg == PPC::X31)) {
+    const TargetRegisterClass *FrameRC =
+        TII.getRegClass(MI.getDesc(), FIOperandNum, this, MF);
+    if (FrameRC && !FrameRC->contains(FrameReg)) {
+      if (FrameReg == PPC::X1 && FrameRC->contains(PPC::R1))
+        FrameReg = PPC::R1;
+      else if (FrameReg == PPC::X31 && FrameRC->contains(PPC::R31))
+        FrameReg = PPC::R31;
+    }
+  }
+  MI.getOperand(FIOperandNum).ChangeToRegister(FrameReg, false);
 
   // If the instruction is not present in ImmToIdxMap, then it has no immediate
   // form (and must be r+r).

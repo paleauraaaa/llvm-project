@@ -16,8 +16,10 @@
 
 #include "llvm_blake3_prefix.h"
 
+#ifndef _MSC_VER
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wlanguage-extension-token"
+#endif // _MSC_VER
 
 // internal flags
 enum blake3_flags {
@@ -307,6 +309,8 @@ void blake3_hash_many_neon(const uint8_t *const *inputs, size_t num_inputs,
                            uint8_t flags_end, uint8_t *out);
 #endif
 
+#ifndef _MSC_VER
 #pragma clang diagnostic pop
+#endif // _MSC_VER
 
 #endif /* BLAKE3_IMPL_H */

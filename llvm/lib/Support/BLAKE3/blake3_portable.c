@@ -1,8 +1,10 @@
 #include "blake3_impl.h"
 #include <string.h>
 
+#ifndef _MSC_VER
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wlanguage-extension-token"
+#endif // _MSC_VER
 
 INLINE uint32_t rotr32(uint32_t w, uint32_t c) {
   return (w >> c) | (w << (32 - c));
@@ -162,4 +164,6 @@ void blake3_hash_many_portable(const uint8_t *const *inputs, size_t num_inputs,
   }
 }
 
+#ifndef _MSC_VER
 #pragma clang diagnostic pop
+#endif // _MSC_VER

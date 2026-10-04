@@ -500,7 +500,12 @@ char SIWholeQuadMode::scanInstructions(MachineFunction &MF,
       unsigned Opcode = MI.getOpcode();
       char Flags = 0;
 
-      if (TII->isWQM(Opcode)) {
+      if (Opcode == AMDGPU::WQM) {
+        // The WQM intrinsic requires its output to have all the helper lanes
+        // correct, so we need it to be in WQM.
+        Flags = StateWQM;
+        LowerToCopyInstrs.insert(&MI);
+      } else if (TII->isWQM(Opcode)) {
         // If LOD is not supported WQM is not needed.
         // Only generate implicit WQM if implicit derivatives are required.
         // This avoids inserting unintended WQM if a shader type without
@@ -512,11 +517,6 @@ char SIWholeQuadMode::scanInstructions(MachineFunction &MF,
           markInstructionUses(MI, StateWQM, Worklist);
           GlobalFlags |= StateWQM;
         }
-      } else if (Opcode == AMDGPU::WQM) {
-        // The WQM intrinsic requires its output to have all the helper lanes
-        // correct, so we need it to be in WQM.
-        Flags = StateWQM;
-        LowerToCopyInstrs.insert(&MI);
       } else if (Opcode == AMDGPU::SOFT_WQM) {
         LowerToCopyInstrs.insert(&MI);
         SoftWQMInstrs.push_back(&MI);

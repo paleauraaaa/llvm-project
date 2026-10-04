@@ -497,6 +497,9 @@ bool Writer::createThunks(OutputSection *os, int margin) {
         file->getCOFFObj()->getRelocations(sc->header);
     for (size_t j = 0, e = originalRelocs.size(); j < e; ++j) {
       const coff_relocation &rel = originalRelocs[j];
+      if (machine == IMAGE_FILE_MACHINE_PPCBE &&
+          rel.Type == IMAGE_REL_PPC_PAIR)
+        continue;
       Symbol *relocTarget = file->getSymbol(rel.SymbolTableIndex);
 
       // The estimate of the source address P should be pretty accurate,
@@ -626,6 +629,9 @@ bool Writer::verifyRanges(const std::vector<Chunk *> chunks) {
 
     ArrayRef<coff_relocation> relocs = sc->getRelocs();
     for (const coff_relocation &rel : relocs) {
+      if (machine == IMAGE_FILE_MACHINE_PPCBE &&
+          rel.Type == IMAGE_REL_PPC_PAIR)
+        continue;
       Symbol *relocTarget = sc->file->getSymbol(rel.SymbolTableIndex);
 
       Defined *sym = dyn_cast_or_null<Defined>(relocTarget);
@@ -2023,6 +2029,9 @@ void Writer::markSymbolsWithRelocations(ObjFile *file,
       continue;
 
     for (const coff_relocation &reloc : sc->getRelocs()) {
+      if (ctx.config.machine == IMAGE_FILE_MACHINE_PPCBE &&
+          reloc.Type == COFF::IMAGE_REL_PPC_PAIR)
+        continue;
       if (ctx.config.machine == I386 &&
           reloc.Type == COFF::IMAGE_REL_I386_REL32)
         // Ignore relative relocations on x86. On x86_64 they can't be ignored

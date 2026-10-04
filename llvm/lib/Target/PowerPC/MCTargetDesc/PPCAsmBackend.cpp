@@ -8,6 +8,7 @@
 
 #include "MCTargetDesc/PPCFixupKinds.h"
 #include "MCTargetDesc/PPCMCTargetDesc.h"
+#include "llvm/BinaryFormat/COFF.h"
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/BinaryFormat/MachO.h"
 #include "llvm/MC/MCAsmBackend.h"
@@ -28,10 +29,14 @@ static uint64_t adjustFixupValue(unsigned Kind, uint64_t Value) {
   switch (Kind) {
   default:
     llvm_unreachable("Unknown fixup kind!");
+  case FK_NONE:
+    return Value;
   case FK_Data_1:
   case FK_Data_2:
   case FK_Data_4:
   case FK_Data_8:
+  case FK_SecRel_2:
+  case FK_SecRel_4:
   case PPC::fixup_ppc_nofixup:
     return Value;
   case PPC::fixup_ppc_brcond14:
@@ -56,14 +61,18 @@ static unsigned getFixupKindNumBytes(unsigned Kind) {
   switch (Kind) {
   default:
     llvm_unreachable("Unknown fixup kind!");
+  case FK_NONE:
+    return 0;
   case FK_Data_1:
     return 1;
   case FK_Data_2:
+  case FK_SecRel_2:
   case PPC::fixup_ppc_half16:
   case PPC::fixup_ppc_half16ds:
   case PPC::fixup_ppc_half16dq:
     return 2;
   case FK_Data_4:
+  case FK_SecRel_4:
   case PPC::fixup_ppc_brcond14:
   case PPC::fixup_ppc_brcond14abs:
   case PPC::fixup_ppc_br24:
@@ -294,7 +303,6 @@ XCOFFPPCAsmBackend::getFixupKind(StringRef Name) const {
 
 std::optional<MCFixupKind>
 WinCOFFPPCAsmBackend::getFixupKind(StringRef Name) const {
-    dbgs() << "WinCOFFPPCAsmBackend::getFixupKind: Name=" << Name << "\n";
   return StringSwitch<std::optional<MCFixupKind>>(Name)
       .Case("IMAGE_REL_PPC_ABSOLUTE", FK_NONE)
       .Case("IMAGE_REL_PPC_ADDR64", FK_Data_8)
@@ -304,8 +312,14 @@ WinCOFFPPCAsmBackend::getFixupKind(StringRef Name) const {
       .Case("IMAGE_REL_PPC_ADDR14", (MCFixupKind)PPC::fixup_ppc_brcond14abs)
       .Case("IMAGE_REL_PPC_REL24", (MCFixupKind)PPC::fixup_ppc_br24_notoc)
       .Case("IMAGE_REL_PPC_REL14", (MCFixupKind)PPC::fixup_ppc_brcond14)
+      .Case("IMAGE_REL_PPC_SECTION", FK_SecRel_2)
       .Case("IMAGE_REL_PPC_SECREL", FK_SecRel_4)
-      .Case("IMAGE_REL_PPC_SECREL16", FK_SecRel_2)
+      .Case("IMAGE_REL_PPC_SECREL16",
+        static_cast<MCFixupKind>(FirstLiteralRelocationKind +
+                 COFF::IMAGE_REL_PPC_SECREL16))
+      .Case("IMAGE_REL_PPC_SECRELLO",
+        static_cast<MCFixupKind>(FirstLiteralRelocationKind +
+                 COFF::IMAGE_REL_PPC_SECRELLO))
       .Default(std::nullopt);
 }
 

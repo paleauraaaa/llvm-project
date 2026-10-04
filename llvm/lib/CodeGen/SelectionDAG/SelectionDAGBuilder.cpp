@@ -1944,7 +1944,7 @@ SDValue SelectionDAGBuilder::getValueImpl(const Value *V) {
     DenseMap<const AllocaInst*, int>::iterator SI =
       FuncInfo.StaticAllocaMap.find(AI);
     if (SI != FuncInfo.StaticAllocaMap.end())
-      return DAG.getFrameIndex(
+        return DAG.getFrameIndex(
           SI->second, TLI.getValueType(DAG.getDataLayout(), AI->getType()));
   }
 
