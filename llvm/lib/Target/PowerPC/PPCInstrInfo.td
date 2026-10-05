@@ -1254,9 +1254,9 @@ let PPC970_Single = 1 in {
   def SELECT_CC_VRRC: PPCCustomInserterPseudo<(outs vrrc:$dst), (ins crrc:$cond, vrrc:$T, vrrc:$F,
                               i32imm:$BROPC), "#SELECT_CC_VRRC",
                               []>;
-  // def SELECT_CC_VR128RC: PPCCustomInserterPseudo<(outs vrrc:$dst), (ins crrc:$cond, vrrc:$T, vrrc:$F,
-  //                              i32imm:$BROPC), "#SELECT_CC_VR128RC",
-  //                              []>;
+  def SELECT_CC_VR128RC: PPCCustomInserterPseudo<(outs vrrc:$dst), (ins crrc:$cond, vrrc:$T, vrrc:$F,
+                               i32imm:$BROPC), "#SELECT_CC_VR128RC",
+                               []>;
 
   // SELECT_* pseudo instructions, like SELECT_CC_* but taking condition
   // register bit directly.

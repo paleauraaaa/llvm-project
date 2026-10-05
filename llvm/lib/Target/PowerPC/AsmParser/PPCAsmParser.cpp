@@ -140,6 +140,9 @@ class PPCAsmParser : public MCTargetAsmParser {
 
 
 public:
+  bool areEqualRegs(const MCParsedAsmOperand &Op1,
+                    const MCParsedAsmOperand &Op2) const override;
+
   PPCAsmParser(const MCSubtargetInfo &STI, MCAsmParser &,
                const MCInstrInfo &MII, const MCTargetOptions &Options)
       : MCTargetAsmParser(Options, STI, MII),
@@ -417,11 +420,11 @@ public:
                                   (getImm() & 3) == 0); }
   bool isImmZero() const { return Kind == Immediate && getImm() == 0; }
   bool isRegNumber() const { return Kind == Immediate && isUInt<5>(getImm()); }
+  bool isVPermRegNumber() const { return Kind == Immediate && isUInt<3>(getImm()); }
+  bool isVR128RegNumber() const { return Kind == Immediate && isUInt<7>(getImm()); }
   bool isACCRegNumber() const {
     return Kind == Immediate && isUInt<3>(getImm());
   }
-  bool isVPermRegNumber() const { return Kind == Immediate && isUInt<3>(getImm()); }
-  bool isVR128RegNumber() const { return Kind == Immediate && isUInt<7>(getImm()); }
   bool isDMRROWRegNumber() const {
     return Kind == Immediate && isUInt<6>(getImm());
   }
@@ -1317,9 +1320,28 @@ bool PPCAsmParser::matchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
 
     return Error(ErrorLoc, "invalid operand for instruction");
   }
+  case Match_InvalidTiedOperand: {
+    SMLoc ErrorLoc = IDLoc;
+    if (ErrorInfo < Operands.size())
+      ErrorLoc = ((PPCOperand &)*Operands[ErrorInfo]).getStartLoc();
+    return Error(ErrorLoc, "register operands must match");
+  }
   }
 
   llvm_unreachable("Implement any new match types added!");
+}
+
+bool PPCAsmParser::areEqualRegs(const MCParsedAsmOperand &Op1,
+                               const MCParsedAsmOperand &Op2) const {
+  if (MCTargetAsmParser::areEqualRegs(Op1, Op2))
+    return true;
+
+  const auto &PPCOp1 = static_cast<const PPCOperand &>(Op1);
+  const auto &PPCOp2 = static_cast<const PPCOperand &>(Op2);
+  return PPCOp1.Kind == PPCOperand::Immediate &&
+         PPCOp2.Kind == PPCOperand::Immediate &&
+         isUInt<7>(PPCOp1.getImm()) && isUInt<7>(PPCOp2.getImm()) &&
+         PPCOp1.getImm() == PPCOp2.getImm();
 }
 
 #define GET_REGISTER_MATCHER

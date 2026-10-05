@@ -1798,8 +1798,13 @@ void PPCInstrInfo::copyPhysReg(MachineBasicBlock &MBB,
     Opc = PPC::FMR;
   else if (PPC::CRRCRegClass.contains(DestReg, SrcReg))
     Opc = PPC::MCRF;
-  else if (PPC::VRRCRegClass.contains(DestReg, SrcReg) /*|| PPC::VR128RCRegClass.contains(DestReg, SrcReg) */)
+  else if (PPC::VRRCRegClass.contains(DestReg, SrcReg))
     Opc = PPC::VOR;
+  else if (PPC::VR128RCRegClass.contains(DestReg, SrcReg)) {
+    assert(Subtarget.hasVMX128() &&
+           "VMX128 register copy requires the vmx128 feature");
+    Opc = PPC::VOR128;
+  }
   else if (PPC::VSRCRegClass.contains(DestReg, SrcReg))
     // There are two different ways this can be done:
     //   1. xxlor : This has lower latency (on the P7), 2 cycles, but can only
