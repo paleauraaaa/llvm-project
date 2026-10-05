@@ -424,10 +424,16 @@ BitVector PPCRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
 
   // Reserve Altivec registers when Altivec is unavailable.
   if (!Subtarget.hasAltivec()) {
-    for (MCRegister Reg : PPC::VRRCRegClass)
+    // VR128RC includes all 128-bit vector registers, so we reserve them all when Altivec is unavailable.
+    for (MCRegister Reg : PPC::VR128RCRegClass)
       markSuperRegs(Reserved, Reg);
-    // for (MCRegister Reg : PPC::VR128RCRegClass)
-    //   markSuperRegs(Reserved, Reg);
+  }
+
+  // If Altivec is available but VMX128 is not, reserve the VMX128-specific vector registers.
+  if (Subtarget.hasAltivec() && !Subtarget.hasVMX128()) {
+    for (MCRegister Reg : PPC::VR128RCRegClass)
+      if (Reg >= PPC::V32)
+        markSuperRegs(Reserved, Reg);
   }
 
   if (Subtarget.isAIXABI() && Subtarget.hasAltivec() &&

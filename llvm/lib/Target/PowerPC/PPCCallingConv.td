@@ -300,6 +300,16 @@ def CC_PPC32_SVR4_ByVal : CallingConv<[
 
 def CSR_Altivec : CalleeSavedRegs<(add V20, V21, V22, V23, V24, V25, V26, V27,
                                        V28, V29, V30, V31)>;
+def CSR_VMX128 : CalleeSavedRegs<(add V64, V65, V66, V67, V68, V69, V70, V71,
+                                       V72, V73, V74, V75, V76, V77, V78, V79,
+                                       V80, V81, V82, V83, V84, V85, V86, V87,
+                                       V88, V89, V90, V91, V92, V93, V94, V95, 
+                                       V96, V97, V98, V99, V100, V101, V102, V103, 
+                                       V104, V105, V106, V107,
+                                       V108, V109, V110, V111, V112, V113, V114, V115,
+                                       V116, V117, V118, V119, V120, V121, V122, V123,
+                                       V124, V125, V126, V127
+                                       )>;
 
 // SPE does not use FPRs, so break out the common register set as base.
 def CSR_SVR432_COMM : CalleeSavedRegs<(add R14, R15, R16, R17, R18, R19, R20,
@@ -343,6 +353,7 @@ def CSR_PPC64   : CalleeSavedRegs<(add X14, X15, X16, X17, X18, X19, X20,
 
 
 def CSR_PPC64_Altivec : CalleeSavedRegs<(add CSR_PPC64, CSR_Altivec)>;
+def CSR_PPC64_VMX128 : CalleeSavedRegs<(add CSR_PPC64, CSR_VMX128)>;
 
 // Xbox 360 preserves CR fields 2 through 5 and the modeled nonvolatile VMX
 // registers. VMX128 registers beyond V31 are not modeled by LLVM.
