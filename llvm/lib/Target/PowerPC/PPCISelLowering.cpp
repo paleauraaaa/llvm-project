@@ -18313,7 +18313,8 @@ PPCTargetLowering::getRegForInlineAsmConstraint(const TargetRegisterInfo *TRI,
   if (Subtarget.isAIXABI() && !TM.getAIXExtendedAltivecABI()) {
     if (((R.first >= PPC::V20 && R.first <= PPC::V31) ||
          (R.first >= PPC::VF20 && R.first <= PPC::VF31)) &&
-        (R.second == &PPC::VSRCRegClass || R.second == &PPC::VSFRCRegClass))
+        (R.second == &PPC::VSRCRegClass || R.second == &PPC::VSFRCRegClass ||
+         R.second == &PPC::VR128RCRegClass))
       errs() << "warning: vector registers 20 to 32 are reserved in the "
                 "default AIX AltiVec ABI and cannot be used\n";
   }

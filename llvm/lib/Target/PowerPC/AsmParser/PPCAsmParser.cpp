@@ -281,7 +281,7 @@ public:
   MCRegister getReg() const override { llvm_unreachable("Not implemented"); }
 
   unsigned getRegNum() const {
-    assert(isRegNumber() && "Invalid access!");
+    assert(Kind == Immediate && isUInt<7>(getImm()) && "Invalid access!");
     return (unsigned)Imm.Val;
   }
 
@@ -420,6 +420,8 @@ public:
   bool isACCRegNumber() const {
     return Kind == Immediate && isUInt<3>(getImm());
   }
+  bool isVPermRegNumber() const { return Kind == Immediate && isUInt<3>(getImm()); }
+  bool isVR128RegNumber() const { return Kind == Immediate && isUInt<7>(getImm()); }
   bool isDMRROWRegNumber() const {
     return Kind == Immediate && isUInt<6>(getImm());
   }
@@ -525,10 +527,15 @@ public:
     Inst.addOperand(MCOperand::createReg(VRegs[getRegNum()]));
   }
 
-  // void addRegVR128RCOperands(MCInst &Inst, unsigned N) const {
-  //   assert(N == 1 && "Invalid number of operands!");
-  //   Inst.addOperand(MCOperand::createReg(V128Regs[getRegNum()]));
-  // }
+  void addRegVRPermRCOperands(MCInst &Inst, unsigned N) const {
+    assert(N == 1 && "Invalid number of operands!");
+    Inst.addOperand(MCOperand::createReg(VRegs[getRegNum()]));
+  }
+
+  void addRegVR128RCOperands(MCInst &Inst, unsigned N) const {
+    assert(N == 1 && "Invalid number of operands!");
+    Inst.addOperand(MCOperand::createReg(V128Regs[getRegNum()]));
+  }
 
   void addRegVSRCOperands(MCInst &Inst, unsigned N) const {
     assert(N == 1 && "Invalid number of operands!");

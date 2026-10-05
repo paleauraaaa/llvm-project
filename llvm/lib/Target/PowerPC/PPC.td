@@ -82,6 +82,9 @@ def FeatureFPU       : SubtargetFeature<"fpu","HasFPU","true",
 def FeatureAltivec   : SubtargetFeature<"altivec","HasAltivec", "true",
                                         "Enable Altivec instructions",
                                         [FeatureFPU]>;
+def FeatureVMX128    : SubtargetFeature<"vmx128","HasVMX128", "true",
+                                        "Enable VMX128 instructions",
+                                        [FeatureFPU]>;
 def FeatureSPE       : SubtargetFeature<"spe","HasSPE", "true",
                                         "Enable SPE instructions",
                                         [FeatureHardFloat]>;
