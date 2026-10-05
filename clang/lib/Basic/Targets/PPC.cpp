@@ -294,6 +294,7 @@ void PPCTargetInfo::getTargetDefines(const LangOptions &Opts,
     Builder.defineMacro("_M_PPCBE");
     Builder.defineMacro("__fctidz", "__builtin_ppc_fctidz");
     Builder.defineMacro("__fcfid", "__builtin_ppc_fcfid");
+    Builder.defineMacro("__XENON__");
   }
 
   // We define the XLC compatibility macros only on AIX and Linux since XLC
@@ -405,6 +406,8 @@ void PPCTargetInfo::getTargetDefines(const LangOptions &Opts,
     Builder.defineMacro("_ARCH_A2");
   if (ArchDefs & ArchDefineE500)
     Builder.defineMacro("__NO_LWSYNC__");
+  if (ArchDefs & ArchDefineXenon)
+    Builder.defineMacro("_ARCH_XENON");
   if (ArchDefs & ArchDefineFuture)
     Builder.defineMacro("_ARCH_PWR_FUTURE");
 
