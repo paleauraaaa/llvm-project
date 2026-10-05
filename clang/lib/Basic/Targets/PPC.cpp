@@ -564,8 +564,9 @@ bool PPCTargetInfo::initFeatureMap(
                             .Case("pwr9", true)
                             .Case("ppc64", true)
                             .Case("ppc64le", true)
+                            .Case("xenon", true)
                             .Default(false);
-
+  Features["vmx128"] = CPU == "xenon";
   Features["power9-vector"] = (CPU == "pwr9");
   Features["crypto"] = llvm::StringSwitch<bool>(CPU)
                            .Case("ppc64le", true)

@@ -642,10 +642,10 @@ def : ProcessorModel<"g5", G5Model,
                    Feature64Bit /*, Feature64BitRegs */,
                    FeatureMFTB, DeprecatedDST]>;
 def : ProcessorModel<"xenon", G5Model,
-                  [Directive970, FeatureAltivec,
+                  [Directive970, FeatureAltivec, FeatureVMX128,
                    FeatureFSqrt, FeatureSTFIWX,
                    FeatureFRES, FeatureFRSQRTE,
-                   Feature64Bit,
+                   Feature64Bit /*, Feature64BitRegs */,
                    FeatureMFTB, DeprecatedDST]>;
 def : ProcessorModel<"e500", PPCE500Model,
                   [DirectiveE500,
