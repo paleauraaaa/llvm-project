@@ -138,6 +138,7 @@ ENUM_LANGOPT(AltivecSrcCompat, AltivecSrcCompatKind, 2,
              AltivecSrcCompatKind::Default, "Altivec source compatibility")
 LANGOPT(ConvergentFunctions, 1, 1, "Assume convergent functions")
 LANGOPT(AltiVec           , 1, 0, "AltiVec-style vector initializers")
+LANGOPT(VMX128            , 1, 0, "")
 LANGOPT(ZVector           , 1, 0, "System z vector extensions")
 LANGOPT(Exceptions        , 1, 0, "exception handling")
 LANGOPT(ObjCExceptions    , 1, 0, "Objective-C exceptions")

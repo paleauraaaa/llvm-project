@@ -5221,6 +5221,8 @@ let Flags = [TargetSpecific] in {
 def maltivec : Flag<["-"], "maltivec">, Group<m_ppc_Features_Group>,
   HelpText<"Enable AltiVec vector initializer syntax">;
 def mno_altivec : Flag<["-"], "mno-altivec">, Group<m_ppc_Features_Group>;
+def mvmx128 : Flag<["-"], "mvmx128">, Group<m_ppc_Features_Group>;
+def mno_vmx128 : Flag<["-"], "mno-vmx128">, Group<m_ppc_Features_Group>;
 def mpcrel: Flag<["-"], "mpcrel">, Group<m_ppc_Features_Group>;
 def mno_pcrel: Flag<["-"], "mno-pcrel">, Group<m_ppc_Features_Group>;
 def mprefixed: Flag<["-"], "mprefixed">, Group<m_ppc_Features_Group>;
