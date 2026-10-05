@@ -355,9 +355,8 @@ def CSR_PPC64   : CalleeSavedRegs<(add X14, X15, X16, X17, X18, X19, X20,
 def CSR_PPC64_Altivec : CalleeSavedRegs<(add CSR_PPC64, CSR_Altivec)>;
 def CSR_PPC64_VMX128 : CalleeSavedRegs<(add CSR_PPC64, CSR_VMX128)>;
 
-// Xbox 360 preserves CR fields 2 through 5 and the modeled nonvolatile VMX
-// registers. VMX128 registers beyond V31 are not modeled by LLVM.
-def CSR_XBOX360 : CalleeSavedRegs<(add CSR_PPC64_Altivec, CR5)>;
+// Xbox 360 preserves CR fields 2 through 5 and V64-127.
+def CSR_XBOX360 : CalleeSavedRegs<(add CSR_PPC64_VMX128, CR5)>;
 
 def CSR_PPC64_R2 : CalleeSavedRegs<(add CSR_PPC64, X2)>;
 
