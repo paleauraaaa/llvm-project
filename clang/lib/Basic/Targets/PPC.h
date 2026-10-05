@@ -59,6 +59,7 @@ class LLVM_LIBRARY_VISIBILITY PPCTargetInfo : public TargetInfo {
 
   // Target cpu features.
   bool HasAltivec = false;
+  bool HasVMX128 = false;
   bool HasMMA = false;
   bool HasROPProtect = false;
   bool HasPrivileged = false;

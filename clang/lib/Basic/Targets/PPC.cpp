@@ -37,6 +37,8 @@ bool PPCTargetInfo::handleTargetFeatures(std::vector<std::string> &Features,
   for (const auto &Feature : Features) {
     if (Feature == "+altivec") {
       HasAltivec = true;
+    } else if (Feature == "+vmx128") {
+      HasVMX128 = true;
     } else if (Feature == "+vsx") {
       HasVSX = true;
     } else if (Feature == "+crbits") {
@@ -415,6 +417,8 @@ void PPCTargetInfo::getTargetDefines(const LangOptions &Opts,
     Builder.defineMacro("__VEC__", "10206");
     Builder.defineMacro("__ALTIVEC__");
   }
+  if (HasVMX128)
+    Builder.defineMacro("__VMX128__");
   if (HasSPE)
     Builder.defineMacro("__SPE__");
   if (HasSPE || FloatABI == SoftFloat)
@@ -747,6 +751,7 @@ bool PPCTargetInfo::hasFeature(StringRef Feature) const {
   return llvm::StringSwitch<bool>(Feature)
       .Case("powerpc", true)
       .Case("altivec", HasAltivec)
+      .Case("vmx128", HasVMX128)
       .Case("vsx", HasVSX)
       .Case("crbits", UseCRBits)
       .Case("power8-vector", HasP8Vector)
@@ -796,6 +801,8 @@ void PPCTargetInfo::setFeatureEnabled(llvm::StringMap<bool> &Features,
                              .Default(false);
     if (FeatureHasVSX)
       Features["vsx"] = Features["altivec"] = true;
+    if (Name == "vmx128")
+      Features["altivec"] = true;
     if (Name == "power9-vector")
       Features["power8-vector"] = true;
     else if (Name == "power10-vector")
@@ -813,7 +820,7 @@ void PPCTargetInfo::setFeatureEnabled(llvm::StringMap<bool> &Features,
     // of the vsx features.
     if ((Name == "altivec") || (Name == "vsx") || (Name == "hard-float")) {
       if (Name != "vsx")
-        Features["altivec"] = Features["crypto"] = false;
+        Features["altivec"] = Features["vmx128"] = Features["crypto"] = false;
       Features["vsx"] = Features["direct-move"] = Features["power8-vector"] =
           Features["float128"] = Features["power9-vector"] =
               Features["paired-vector-memops"] = Features["mma"] =
@@ -926,6 +933,8 @@ void PPCTargetInfo::fillValidCPUList(SmallVectorImpl<StringRef> &Values) const {
 void PPCTargetInfo::adjust(DiagnosticsEngine &Diags, LangOptions &Opts) {
   if (HasAltivec)
     Opts.AltiVec = 1;
+  if (HasVMX128)
+    Opts.VMX128 = 1;
   TargetInfo::adjust(Diags, Opts);
   if (LongDoubleFormat != &llvm::APFloat::IEEEdouble())
     LongDoubleFormat = Opts.PPCIEEELongDouble
