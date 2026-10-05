@@ -3113,6 +3113,16 @@ bool PPCInstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
   auto DL = MI.getDebugLoc();
 
   switch (MI.getOpcode()) {
+  case PPC::WRITE_VR128: {
+    unsigned RegNo = MI.getOperand(1).getImm();
+    Register DestReg = PPC::VR128RCRegClass.getRegister(RegNo);
+    Register SrcReg = MI.getOperand(0).getReg();
+    BuildMI(MBB, MI, DL, get(PPC::VOR128), DestReg)
+        .addReg(SrcReg)
+        .addReg(SrcReg);
+    MI.eraseFromParent();
+    return true;
+  }
   case PPC::BUILD_UACC: {
     MCRegister ACC = MI.getOperand(0).getReg();
     MCRegister UACC = MI.getOperand(1).getReg();
