@@ -155,6 +155,10 @@ bool SemaPPC::CheckPPCBuiltinFunctionCall(const TargetInfo &TI,
     return SemaRef.BuiltinConstantArgRange(TheCall, 2, 0, 7);
   case PPC::BI__builtin_altivec_vsrdbi:
     return SemaRef.BuiltinConstantArgRange(TheCall, 2, 0, 7);
+  case PPC::BI__builtin_altivec_get_vr128:
+    return SemaRef.BuiltinConstantArgRange(TheCall, 0, 0, 127);
+  case PPC::BI__builtin_altivec_set_vr128:
+    return SemaRef.BuiltinConstantArgRange(TheCall, 1, 0, 127);
   case PPC::BI__builtin_vsx_xxpermx:
     return SemaRef.BuiltinConstantArgRange(TheCall, 3, 0, 7);
   case PPC::BI__builtin_ppc_tw:
