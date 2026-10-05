@@ -662,6 +662,7 @@ PPCTargetLowering::PPCTargetLowering(const PPCTargetMachine &TM,
 
   // To handle counter-based loop conditions.
   setOperationAction(ISD::INTRINSIC_W_CHAIN, MVT::i1, Custom);
+  setOperationAction(ISD::INTRINSIC_W_CHAIN, MVT::Other, Custom);
 
   setOperationAction(ISD::INTRINSIC_VOID, MVT::i8, Custom);
   setOperationAction(ISD::INTRINSIC_VOID, MVT::i16, Custom);
@@ -12388,6 +12389,18 @@ SDValue PPCTargetLowering::LowerINTRINSIC_VOID(SDValue Op,
             Op.getOperand(0)),
         0);
   }
+  case Intrinsic::ppc_altivec_set_vr128: {
+    if (!Subtarget.hasVMX128())
+      report_fatal_error("VMX128 register access requires the vmx128 feature");
+    unsigned RegNo = Op.getConstantOperandVal(ArgStart + 2);
+    if (RegNo >= 128)
+      report_fatal_error("invalid VMX128 vector register number");
+    SDValue RegNoOp = DAG.getTargetConstant(RegNo, DL, MVT::i32);
+    return SDValue(DAG.getMachineNode(PPC::WRITE_VR128, DL, MVT::Other,
+                                      Op.getOperand(ArgStart + 1), RegNoOp,
+                                      Op.getOperand(0)),
+                   0);
+  }
   default:
     break;
   }
@@ -13185,7 +13198,20 @@ SDValue PPCTargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
   case ISD::ROTL:               return LowerROTL(Op, DAG);
 
   // For counter-based loop handling.
-  case ISD::INTRINSIC_W_CHAIN:  return SDValue();
+  case ISD::INTRINSIC_W_CHAIN: {
+    unsigned IntrinsicID = Op.getConstantOperandVal(1);
+    if (IntrinsicID != Intrinsic::ppc_altivec_get_vr128)
+      return SDValue();
+    if (!Subtarget.hasVMX128())
+      report_fatal_error("VMX128 register access requires the vmx128 feature");
+    unsigned RegNo = Op.getConstantOperandVal(2);
+    if (RegNo >= 128)
+      report_fatal_error("invalid VMX128 vector register number");
+    Register Reg = PPC::VR128RCRegClass.getRegister(RegNo);
+    SDLoc DL(Op);
+    SDValue Copy = DAG.getCopyFromReg(Op.getOperand(0), DL, Reg, MVT::v4i32);
+    return DAG.getMergeValues({Copy, Copy.getValue(1)}, DL);
+  }
 
   case ISD::BITCAST:            return LowerBITCAST(Op, DAG);
 

@@ -1089,6 +1089,11 @@ def VOR128      : VMX128_Bin<0b1011, "vor128">;
 def VXOR128     : VMX128_Bin<0b1100, "vxor128">;
 def VSLO128     : VMX128_Bin<0b1110, "vslo128">;
 
+def WRITE_VR128 : PPCPostRAExpPseudo<(outs), (ins vr128rc:$VS, u7imm:$VR),
+                                     "#WRITE_VR128", []> {
+  let hasSideEffects = 1;
+}
+
 def VMADDFP128  : VMX128_VX3_Tied<5, 0b0011, 1, "vmaddfp128 $VD, $VA, $VB, $VDin", IIC_VecFP>;
 def VMADDCFP128 : VMX128_VX3_Tied<5, 0b0100, 1, "vmaddcfp128 $VD, $VA, $VDin, $VB", IIC_VecFP>;
 def VNMSUBFP128 : VMX128_VX3_Tied<5, 0b0101, 1, "vnmsubfp128 $VD, $VA, $VB, $VDin", IIC_VecFP>;
