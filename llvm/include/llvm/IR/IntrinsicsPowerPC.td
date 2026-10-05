@@ -251,6 +251,13 @@ let TargetPrefix = "ppc" in {  // All PPC intrinsics start with "llvm.ppc.".
                               list<IntrinsicProperty> properties>
     : ClangBuiltin<!strconcat("__builtin_vsx_", GCCIntSuffix)>,
       DefaultAttrsIntrinsic<ret_types, param_types, properties>;
+
+  /// PowerPC_VMX128_Intrinsic - Base class for all VMX128 intrinsics.
+  class PowerPC_VMX128_Intrinsic<string GCCIntSuffix, list<LLVMType> ret_types,
+                              list<LLVMType> param_types,
+                              list<IntrinsicProperty> properties>
+    : ClangBuiltin<!strconcat("__builtin_vmx128_", GCCIntSuffix)>,
+      DefaultAttrsIntrinsic<ret_types, param_types, properties>;
 }
 
 //===----------------------------------------------------------------------===//
@@ -362,6 +369,64 @@ class PowerPC_VSX_Vec_FFF_Intrinsic<string GCCIntSuffix>
 class PowerPC_VSX_Sca_DDD_Intrinsic<string GCCIntSuffix>
   : PowerPC_VSX_Intrinsic<GCCIntSuffix,
                           [llvm_double_ty], [llvm_double_ty, llvm_double_ty],
+                          [IntrNoMem]>;
+//===----------------------------------------------------------------------===//
+// PowerPC VMX128 Intrinsic Class Definitions.
+//
+
+/// PowerPC_VMX128_FF_Intrinsic - A PowerPC intrinsic that takes one v4f32
+/// vector and returns one.  These intrinsics have no side effects.
+class PowerPC_VMX128_FF_Intrinsic<string GCCIntSuffix>
+  : PowerPC_VMX128_Intrinsic<GCCIntSuffix,
+                          [llvm_v4f32_ty], [llvm_v4f32_ty], [IntrNoMem]>;
+
+/// PowerPC_VMX128_FFF_Intrinsic - A PowerPC intrinsic that takes two v4f32
+/// vectors and returns one.  These intrinsics have no side effects.
+class PowerPC_VMX128_FFF_Intrinsic<string GCCIntSuffix>
+  : PowerPC_VMX128_Intrinsic<GCCIntSuffix,
+                          [llvm_v4f32_ty], [llvm_v4f32_ty, llvm_v4f32_ty],
+                          [IntrNoMem]>;
+
+/// PowerPC_VMX128_BBB_Intrinsic - A PowerPC intrinsic that takes two v16i8
+/// vectors and returns one.  These intrinsics have no side effects.
+class PowerPC_VMX128_BBB_Intrinsic<string GCCIntSuffix>
+  : PowerPC_VMX128_Intrinsic<GCCIntSuffix,
+                          [llvm_v16i8_ty], [llvm_v16i8_ty, llvm_v16i8_ty],
+                          [IntrNoMem]>;
+
+/// PowerPC_VMX128_HHH_Intrinsic - A PowerPC intrinsic that takes two v8i16
+/// vectors and returns one.  These intrinsics have no side effects.
+class PowerPC_VMX128_HHH_Intrinsic<string GCCIntSuffix>
+  : PowerPC_VMX128_Intrinsic<GCCIntSuffix,
+                          [llvm_v8i16_ty], [llvm_v8i16_ty, llvm_v8i16_ty],
+                          [IntrNoMem]>;
+
+/// PowerPC_VMX128_WWW_Intrinsic - A PowerPC intrinsic that takes two v4i32
+/// vectors and returns one.  These intrinsics have no side effects.
+class PowerPC_VMX128_WWW_Intrinsic<string GCCIntSuffix>
+  : PowerPC_VMX128_Intrinsic<GCCIntSuffix,
+                          [llvm_v4i32_ty], [llvm_v4i32_ty, llvm_v4i32_ty],
+                          [IntrNoMem]>;
+
+/// PowerPC_VMX128_DDD_Intrinsic - A PowerPC intrinsic that takes two v2i64
+/// vectors and returns one.  These intrinsics have no side effects.
+class PowerPC_VMX128_DDD_Intrinsic<string GCCIntSuffix>
+  : PowerPC_VMX128_Intrinsic<GCCIntSuffix,
+                          [llvm_v2i64_ty], [llvm_v2i64_ty, llvm_v2i64_ty],
+                          [IntrNoMem]>;
+
+/// PowerPC_VMX128_QQQ_Intrinsic - A PowerPC intrinsic that takes two v1i128
+/// vectors and returns one. These intrinsics have no side effects.
+class PowerPC_VMX128_QQQ_Intrinsic<string GCCIntSuffix>
+  : PowerPC_VMX128_Intrinsic<GCCIntSuffix,
+                         [llvm_v1i128_ty], [llvm_v1i128_ty, llvm_v1i128_ty],
+                         [IntrNoMem]>;
+
+/// PowerPC_VMX128_QDD_Intrinsic - A PowerPC intrinsic that takes two v2i64
+/// vectors and returns one v1i128. These intrinsics have no side effects.
+class PowerPC_VMX128_QDD_Intrinsic<string GCCIntSuffix>
+  : PowerPC_VMX128_Intrinsic<GCCIntSuffix,
+                          [llvm_v1i128_ty], [llvm_v2i64_ty, llvm_v2i64_ty],
                           [IntrNoMem]>;
 
 //===----------------------------------------------------------------------===//
@@ -1978,3 +2043,304 @@ let TargetPrefix = "ppc" in {
     Intrinsic<[], [llvm_i64_ty, llvm_i64_ty, llvm_ptr_ty],
               [IntrArgMemOnly, IntrWriteMem, NoCapture<ArgIndex<2>>]>;
 }
+//===----------------------------------------------------------------------===//
+// PowerPC VMX128 Intrinsic Definitions.
+
+let TargetPrefix = "ppc" in {
+  // Read or write an architectural VMX128 vector register.
+  def int_ppc_altivec_get_vr128 :
+      ClangBuiltin<"__builtin_altivec_get_vr128">,
+      Intrinsic<[llvm_v4i32_ty], [llvm_i32_ty],
+                [IntrHasSideEffects, ImmArg<ArgIndex<0>>]>;
+  def int_ppc_altivec_set_vr128 :
+      ClangBuiltin<"__builtin_altivec_set_vr128">,
+      Intrinsic<[], [llvm_v4i32_ty, llvm_i32_ty],
+                [IntrHasSideEffects, ImmArg<ArgIndex<1>>]>;
+
+  // Loads.
+  def int_ppc_altivec_lvewx128 : ClangBuiltin<"__builtin_altivec_lvewx128">,
+      DefaultAttrsIntrinsic<[llvm_v4i32_ty], [llvm_ptr_ty, llvm_i32_ty],
+                            [IntrReadMem, IntrArgMemOnly]>;
+  def int_ppc_altivec_lvlx128 : ClangBuiltin<"__builtin_altivec_lvlx128">,
+      DefaultAttrsIntrinsic<[llvm_v4i32_ty], [llvm_ptr_ty, llvm_i32_ty],
+                            [IntrReadMem, IntrArgMemOnly]>;
+  def int_ppc_altivec_lvlx128_volatile :
+      ClangBuiltin<"__builtin_altivec_lvlx128_volatile">,
+      Intrinsic<[llvm_v4i32_ty], [llvm_ptr_ty, llvm_i32_ty],
+                [IntrReadMem, IntrArgMemOnly, IntrHasSideEffects]>;
+  def int_ppc_altivec_lvlxl128 : ClangBuiltin<"__builtin_altivec_lvlxl128">,
+      DefaultAttrsIntrinsic<[llvm_v4i32_ty], [llvm_ptr_ty, llvm_i32_ty],
+                            [IntrReadMem, IntrArgMemOnly]>;
+  def int_ppc_altivec_lvrx128 : ClangBuiltin<"__builtin_altivec_lvrx128">,
+      DefaultAttrsIntrinsic<[llvm_v4i32_ty], [llvm_ptr_ty, llvm_i32_ty],
+                            [IntrReadMem, IntrArgMemOnly]>;
+  def int_ppc_altivec_lvrx128_volatile :
+      ClangBuiltin<"__builtin_altivec_lvrx128_volatile">,
+      Intrinsic<[llvm_v4i32_ty], [llvm_ptr_ty, llvm_i32_ty],
+                [IntrReadMem, IntrArgMemOnly, IntrHasSideEffects]>;
+  def int_ppc_altivec_lvrxl128 : ClangBuiltin<"__builtin_altivec_lvrxl128">,
+      DefaultAttrsIntrinsic<[llvm_v4i32_ty], [llvm_ptr_ty, llvm_i32_ty],
+                            [IntrReadMem, IntrArgMemOnly]>;
+  def int_ppc_altivec_lvsl128 : ClangBuiltin<"__builtin_altivec_lvsl128">,
+      DefaultAttrsIntrinsic<[llvm_v16i8_ty], [llvm_ptr_ty, llvm_i32_ty],
+                            [IntrNoMem]>;
+  def int_ppc_altivec_lvsr128 : ClangBuiltin<"__builtin_altivec_lvsr128">,
+      DefaultAttrsIntrinsic<[llvm_v16i8_ty], [llvm_ptr_ty, llvm_i32_ty],
+                            [IntrNoMem]>;
+  def int_ppc_altivec_lvx128 : ClangBuiltin<"__builtin_altivec_lvx128">,
+      DefaultAttrsIntrinsic<[llvm_v4i32_ty], [llvm_ptr_ty, llvm_i32_ty],
+                            [IntrReadMem, IntrArgMemOnly]>;
+  def int_ppc_altivec_lvxl128 : ClangBuiltin<"__builtin_altivec_lvxl128">,
+      DefaultAttrsIntrinsic<[llvm_v4i32_ty], [llvm_ptr_ty, llvm_i32_ty],
+                            [IntrReadMem, IntrArgMemOnly]>;
+
+  // Stores.
+  def int_ppc_altivec_stvewx128 : ClangBuiltin<"__builtin_altivec_stvewx128">,
+      DefaultAttrsIntrinsic<[], [llvm_v4i32_ty, llvm_ptr_ty, llvm_i32_ty],
+                            [IntrWriteMem, IntrArgMemOnly]>;
+  def int_ppc_altivec_stvlx128 : ClangBuiltin<"__builtin_altivec_stvlx128">,
+      DefaultAttrsIntrinsic<[], [llvm_v4i32_ty, llvm_ptr_ty, llvm_i32_ty],
+                            [IntrWriteMem, IntrArgMemOnly]>;
+  def int_ppc_altivec_stvlx128_volatile :
+      ClangBuiltin<"__builtin_altivec_stvlx128_volatile">,
+      Intrinsic<[], [llvm_v4i32_ty, llvm_ptr_ty, llvm_i32_ty],
+                [IntrWriteMem, IntrArgMemOnly, IntrHasSideEffects]>;
+  def int_ppc_altivec_stvlxl128 : ClangBuiltin<"__builtin_altivec_stvlxl128">,
+      DefaultAttrsIntrinsic<[], [llvm_v4i32_ty, llvm_ptr_ty, llvm_i32_ty],
+                            [IntrWriteMem, IntrArgMemOnly]>;
+  def int_ppc_altivec_stvrx128 : ClangBuiltin<"__builtin_altivec_stvrx128">,
+      DefaultAttrsIntrinsic<[], [llvm_v4i32_ty, llvm_ptr_ty, llvm_i32_ty],
+                            [IntrWriteMem, IntrArgMemOnly]>;
+  def int_ppc_altivec_stvrx128_volatile :
+      ClangBuiltin<"__builtin_altivec_stvrx128_volatile">,
+      Intrinsic<[], [llvm_v4i32_ty, llvm_ptr_ty, llvm_i32_ty],
+                [IntrWriteMem, IntrArgMemOnly, IntrHasSideEffects]>;
+  def int_ppc_altivec_stvrxl128 : ClangBuiltin<"__builtin_altivec_stvrxl128">,
+      DefaultAttrsIntrinsic<[], [llvm_v4i32_ty, llvm_ptr_ty, llvm_i32_ty],
+                            [IntrWriteMem, IntrArgMemOnly]>;
+  def int_ppc_altivec_stvx128 : ClangBuiltin<"__builtin_altivec_stvx128">,
+      DefaultAttrsIntrinsic<[], [llvm_v4i32_ty, llvm_ptr_ty, llvm_i32_ty],
+                            [IntrWriteMem, IntrArgMemOnly]>;
+  def int_ppc_altivec_stvxl128 : ClangBuiltin<"__builtin_altivec_stvxl128">,
+      DefaultAttrsIntrinsic<[], [llvm_v4i32_ty, llvm_ptr_ty, llvm_i32_ty],
+                            [IntrWriteMem, IntrArgMemOnly]>;
+
+  // Vector arithmetic and logical operations.
+  def int_ppc_altivec_vaddfp128 : ClangBuiltin<"__builtin_altivec_vaddfp128">,
+      DefaultAttrsIntrinsic<[llvm_v4f32_ty], [llvm_v4f32_ty, llvm_v4f32_ty],
+                            [IntrNoMem]>;
+  def int_ppc_altivec_vand128 : ClangBuiltin<"__builtin_altivec_vand128">,
+      DefaultAttrsIntrinsic<[llvm_v4i32_ty], [llvm_v4i32_ty, llvm_v4i32_ty],
+                            [IntrNoMem]>;
+  def int_ppc_altivec_vandc128 : ClangBuiltin<"__builtin_altivec_vandc128">,
+      DefaultAttrsIntrinsic<[llvm_v4i32_ty], [llvm_v4i32_ty, llvm_v4i32_ty],
+                            [IntrNoMem]>;
+  def int_ppc_altivec_vmaxfp128 : ClangBuiltin<"__builtin_altivec_vmaxfp128">,
+      DefaultAttrsIntrinsic<[llvm_v4f32_ty], [llvm_v4f32_ty, llvm_v4f32_ty],
+                            [IntrNoMem]>;
+  def int_ppc_altivec_vminfp128 : ClangBuiltin<"__builtin_altivec_vminfp128">,
+      DefaultAttrsIntrinsic<[llvm_v4f32_ty], [llvm_v4f32_ty, llvm_v4f32_ty],
+                            [IntrNoMem]>;
+  def int_ppc_altivec_vnor128 : ClangBuiltin<"__builtin_altivec_vnor128">,
+      DefaultAttrsIntrinsic<[llvm_v4i32_ty], [llvm_v4i32_ty, llvm_v4i32_ty],
+                            [IntrNoMem]>;
+  def int_ppc_altivec_vor128 : ClangBuiltin<"__builtin_altivec_vor128">,
+      DefaultAttrsIntrinsic<[llvm_v4i32_ty], [llvm_v4i32_ty, llvm_v4i32_ty],
+                            [IntrNoMem]>;
+  def int_ppc_altivec_vxor128 : ClangBuiltin<"__builtin_altivec_vxor128">,
+      DefaultAttrsIntrinsic<[llvm_v4i32_ty], [llvm_v4i32_ty, llvm_v4i32_ty],
+                            [IntrNoMem]>;
+  def int_ppc_altivec_vsubfp128 : ClangBuiltin<"__builtin_altivec_vsubfp128">,
+      DefaultAttrsIntrinsic<[llvm_v4f32_ty], [llvm_v4f32_ty, llvm_v4f32_ty],
+                            [IntrNoMem]>;
+
+  // Compare instructions. The record forms also update CR6.
+  def int_ppc_altivec_vcmpbfp128 : ClangBuiltin<"__builtin_altivec_vcmpbfp128">,
+      DefaultAttrsIntrinsic<[llvm_v4i32_ty], [llvm_v4f32_ty, llvm_v4f32_ty],
+                            [IntrNoMem]>;
+  def int_ppc_altivec_vcmpbfp128_rec : ClangBuiltin<"__builtin_altivec_vcmpbfp128_rec">,
+      DefaultAttrsIntrinsic<[llvm_v4i32_ty],
+                            [llvm_v4f32_ty, llvm_v4f32_ty, llvm_ptr_ty],
+                            [IntrWriteMem, IntrArgMemOnly,
+                             NoCapture<ArgIndex<2>>, IntrHasSideEffects]>;
+  def int_ppc_altivec_vcmpeqfp128 : ClangBuiltin<"__builtin_altivec_vcmpeqfp128">,
+      DefaultAttrsIntrinsic<[llvm_v4i32_ty], [llvm_v4f32_ty, llvm_v4f32_ty],
+                            [IntrNoMem]>;
+  def int_ppc_altivec_vcmpeqfp128_rec : ClangBuiltin<"__builtin_altivec_vcmpeqfp128_rec">,
+      DefaultAttrsIntrinsic<[llvm_v4i32_ty],
+                            [llvm_v4f32_ty, llvm_v4f32_ty, llvm_ptr_ty],
+                            [IntrWriteMem, IntrArgMemOnly,
+                             NoCapture<ArgIndex<2>>, IntrHasSideEffects]>;
+  def int_ppc_altivec_vcmpgefp128 : ClangBuiltin<"__builtin_altivec_vcmpgefp128">,
+      DefaultAttrsIntrinsic<[llvm_v4i32_ty], [llvm_v4f32_ty, llvm_v4f32_ty],
+                            [IntrNoMem]>;
+  def int_ppc_altivec_vcmpgefp128_rec : ClangBuiltin<"__builtin_altivec_vcmpgefp128_rec">,
+      DefaultAttrsIntrinsic<[llvm_v4i32_ty],
+                            [llvm_v4f32_ty, llvm_v4f32_ty, llvm_ptr_ty],
+                            [IntrWriteMem, IntrArgMemOnly,
+                             NoCapture<ArgIndex<2>>, IntrHasSideEffects]>;
+  def int_ppc_altivec_vcmpgtfp128 : ClangBuiltin<"__builtin_altivec_vcmpgtfp128">,
+      DefaultAttrsIntrinsic<[llvm_v4i32_ty], [llvm_v4f32_ty, llvm_v4f32_ty],
+                            [IntrNoMem]>;
+  def int_ppc_altivec_vcmpgtfp128_rec : ClangBuiltin<"__builtin_altivec_vcmpgtfp128_rec">,
+      DefaultAttrsIntrinsic<[llvm_v4i32_ty],
+                            [llvm_v4f32_ty, llvm_v4f32_ty, llvm_ptr_ty],
+                            [IntrWriteMem, IntrArgMemOnly,
+                             NoCapture<ArgIndex<2>>, IntrHasSideEffects]>;
+  def int_ppc_altivec_vcmpequw128 : ClangBuiltin<"__builtin_altivec_vcmpequw128">,
+      DefaultAttrsIntrinsic<[llvm_v4i32_ty], [llvm_v4i32_ty, llvm_v4i32_ty],
+                            [IntrNoMem]>;
+  def int_ppc_altivec_vcmpequw128_rec : ClangBuiltin<"__builtin_altivec_vcmpequw128_rec">,
+      DefaultAttrsIntrinsic<[llvm_v4i32_ty],
+                            [llvm_v4i32_ty, llvm_v4i32_ty, llvm_ptr_ty],
+                            [IntrWriteMem, IntrArgMemOnly,
+                             NoCapture<ArgIndex<2>>, IntrHasSideEffects]>;
+
+  // Conversion operations with immediate scale operands.
+  def int_ppc_altivec_vcfpsxws128 : ClangBuiltin<"__builtin_altivec_vcfpsxws128">,
+      DefaultAttrsIntrinsic<[llvm_v4i32_ty], [llvm_v4f32_ty, llvm_i32_ty],
+                            [IntrNoMem, ImmArg<ArgIndex<1>>]>;
+  def int_ppc_altivec_vcfpuxws128 : ClangBuiltin<"__builtin_altivec_vcfpuxws128">,
+      DefaultAttrsIntrinsic<[llvm_v4i32_ty], [llvm_v4f32_ty, llvm_i32_ty],
+                            [IntrNoMem, ImmArg<ArgIndex<1>>]>;
+  def int_ppc_altivec_vcsxwfp128 : ClangBuiltin<"__builtin_altivec_vcsxwfp128">,
+      DefaultAttrsIntrinsic<[llvm_v4f32_ty], [llvm_v4i32_ty, llvm_i32_ty],
+                            [IntrNoMem, ImmArg<ArgIndex<1>>]>;
+  def int_ppc_altivec_vcuxwfp128 : ClangBuiltin<"__builtin_altivec_vcuxwfp128">,
+      DefaultAttrsIntrinsic<[llvm_v4f32_ty], [llvm_v4i32_ty, llvm_i32_ty],
+                            [IntrNoMem, ImmArg<ArgIndex<1>>]>;
+
+  // Floating-point estimate and rounding operations.
+  def int_ppc_altivec_vexptefp128 : ClangBuiltin<"__builtin_altivec_vexptefp128">,
+      DefaultAttrsIntrinsic<[llvm_v4f32_ty], [llvm_v4f32_ty], [IntrNoMem]>;
+  def int_ppc_altivec_vlogefp128 : ClangBuiltin<"__builtin_altivec_vlogefp128">,
+      DefaultAttrsIntrinsic<[llvm_v4f32_ty], [llvm_v4f32_ty], [IntrNoMem]>;
+  def int_ppc_altivec_vrefp128 : ClangBuiltin<"__builtin_altivec_vrefp128">,
+      DefaultAttrsIntrinsic<[llvm_v4f32_ty], [llvm_v4f32_ty], [IntrNoMem]>;
+  def int_ppc_altivec_vrsqrtefp128 : ClangBuiltin<"__builtin_altivec_vrsqrtefp128">,
+      DefaultAttrsIntrinsic<[llvm_v4f32_ty], [llvm_v4f32_ty], [IntrNoMem]>;
+  def int_ppc_altivec_vrfim128 : ClangBuiltin<"__builtin_altivec_vrfim128">,
+      DefaultAttrsIntrinsic<[llvm_v4f32_ty], [llvm_v4f32_ty], [IntrNoMem]>;
+  def int_ppc_altivec_vrfin128 : ClangBuiltin<"__builtin_altivec_vrfin128">,
+      DefaultAttrsIntrinsic<[llvm_v4f32_ty], [llvm_v4f32_ty], [IntrNoMem]>;
+  def int_ppc_altivec_vrfip128 : ClangBuiltin<"__builtin_altivec_vrfip128">,
+      DefaultAttrsIntrinsic<[llvm_v4f32_ty], [llvm_v4f32_ty], [IntrNoMem]>;
+  def int_ppc_altivec_vrfiz128 : ClangBuiltin<"__builtin_altivec_vrfiz128">,
+      DefaultAttrsIntrinsic<[llvm_v4f32_ty], [llvm_v4f32_ty], [IntrNoMem]>;
+
+  def int_ppc_altivec_vmaddcfp128 : ClangBuiltin<"__builtin_altivec_vmaddcfp128">,
+      DefaultAttrsIntrinsic<[llvm_v4f32_ty],
+                            [llvm_v4f32_ty, llvm_v4f32_ty, llvm_v4f32_ty],
+                            [IntrNoMem]>;
+  def int_ppc_altivec_vmaddfp128 : ClangBuiltin<"__builtin_altivec_vmaddfp128">,
+      DefaultAttrsIntrinsic<[llvm_v4f32_ty],
+                            [llvm_v4f32_ty, llvm_v4f32_ty, llvm_v4f32_ty],
+                            [IntrNoMem]>;
+  def int_ppc_altivec_vmsum3fp128 : ClangBuiltin<"__builtin_altivec_vmsum3fp128">,
+      DefaultAttrsIntrinsic<[llvm_v4f32_ty], [llvm_v4f32_ty, llvm_v4f32_ty],
+                            [IntrNoMem]>;
+  def int_ppc_altivec_vmsum4fp128 : ClangBuiltin<"__builtin_altivec_vmsum4fp128">,
+      DefaultAttrsIntrinsic<[llvm_v4f32_ty], [llvm_v4f32_ty, llvm_v4f32_ty],
+                            [IntrNoMem]>;
+  def int_ppc_altivec_vmulfp128 : ClangBuiltin<"__builtin_altivec_vmulfp128">,
+      DefaultAttrsIntrinsic<[llvm_v4f32_ty], [llvm_v4f32_ty, llvm_v4f32_ty],
+                            [IntrNoMem]>;
+  def int_ppc_altivec_vnmsubfp128 : ClangBuiltin<"__builtin_altivec_vnmsubfp128">,
+      DefaultAttrsIntrinsic<[llvm_v4f32_ty],
+                            [llvm_v4f32_ty, llvm_v4f32_ty, llvm_v4f32_ty],
+                            [IntrNoMem]>;
+
+  // Permute, pack, and unpack operations.
+  def int_ppc_altivec_vmrghw128 : ClangBuiltin<"__builtin_altivec_vmrghw128">,
+      DefaultAttrsIntrinsic<[llvm_v4i32_ty], [llvm_v4i32_ty, llvm_v4i32_ty],
+                            [IntrNoMem]>;
+  def int_ppc_altivec_vmrglw128 : ClangBuiltin<"__builtin_altivec_vmrglw128">,
+      DefaultAttrsIntrinsic<[llvm_v4i32_ty], [llvm_v4i32_ty, llvm_v4i32_ty],
+                            [IntrNoMem]>;
+  def int_ppc_altivec_vperm128 : ClangBuiltin<"__builtin_altivec_vperm128">,
+      DefaultAttrsIntrinsic<[llvm_v4i32_ty],
+                            [llvm_v4i32_ty, llvm_v4i32_ty, llvm_v16i8_ty],
+                            [IntrNoMem]>;
+  def int_ppc_altivec_vpermwi128 : ClangBuiltin<"__builtin_altivec_vpermwi128">,
+      DefaultAttrsIntrinsic<[llvm_v4i32_ty], [llvm_v4i32_ty, llvm_i32_ty],
+                            [IntrNoMem, ImmArg<ArgIndex<1>>]>;
+  def int_ppc_altivec_vpkd3d128 : ClangBuiltin<"__builtin_altivec_vpkd3d128">,
+      DefaultAttrsIntrinsic<[llvm_v4i32_ty],
+                            [llvm_v4i32_ty, llvm_v4i32_ty, llvm_i32_ty,
+                             llvm_i32_ty, llvm_i32_ty],
+                            [IntrNoMem, ImmArg<ArgIndex<2>>,
+                             ImmArg<ArgIndex<3>>, ImmArg<ArgIndex<4>>]>;
+  def int_ppc_altivec_vpkshss128 : ClangBuiltin<"__builtin_altivec_vpkshss128">,
+      DefaultAttrsIntrinsic<[llvm_v16i8_ty], [llvm_v8i16_ty, llvm_v8i16_ty],
+                            [IntrNoMem, IntrHasSideEffects]>;
+  def int_ppc_altivec_vpkshus128 : ClangBuiltin<"__builtin_altivec_vpkshus128">,
+      DefaultAttrsIntrinsic<[llvm_v16i8_ty], [llvm_v8i16_ty, llvm_v8i16_ty],
+                            [IntrNoMem, IntrHasSideEffects]>;
+  def int_ppc_altivec_vpkswss128 : ClangBuiltin<"__builtin_altivec_vpkswss128">,
+      DefaultAttrsIntrinsic<[llvm_v8i16_ty], [llvm_v4i32_ty, llvm_v4i32_ty],
+                            [IntrNoMem, IntrHasSideEffects]>;
+  def int_ppc_altivec_vpkswus128 : ClangBuiltin<"__builtin_altivec_vpkswus128">,
+      DefaultAttrsIntrinsic<[llvm_v8i16_ty], [llvm_v4i32_ty, llvm_v4i32_ty],
+                            [IntrNoMem, IntrHasSideEffects]>;
+  def int_ppc_altivec_vpkuhum128 : ClangBuiltin<"__builtin_altivec_vpkuhum128">,
+      DefaultAttrsIntrinsic<[llvm_v16i8_ty], [llvm_v8i16_ty, llvm_v8i16_ty],
+                            [IntrNoMem]>;
+  def int_ppc_altivec_vpkuhus128 : ClangBuiltin<"__builtin_altivec_vpkuhus128">,
+      DefaultAttrsIntrinsic<[llvm_v16i8_ty], [llvm_v8i16_ty, llvm_v8i16_ty],
+                            [IntrNoMem, IntrHasSideEffects]>;
+  def int_ppc_altivec_vpkuwum128 : ClangBuiltin<"__builtin_altivec_vpkuwum128">,
+      DefaultAttrsIntrinsic<[llvm_v8i16_ty], [llvm_v4i32_ty, llvm_v4i32_ty],
+                            [IntrNoMem]>;
+  def int_ppc_altivec_vpkuwus128 : ClangBuiltin<"__builtin_altivec_vpkuwus128">,
+      DefaultAttrsIntrinsic<[llvm_v8i16_ty], [llvm_v4i32_ty, llvm_v4i32_ty],
+                            [IntrNoMem, IntrHasSideEffects]>;
+  def int_ppc_altivec_vupkhsb128 : ClangBuiltin<"__builtin_altivec_vupkhsb128">,
+      DefaultAttrsIntrinsic<[llvm_v8i16_ty], [llvm_v16i8_ty], [IntrNoMem]>;
+  def int_ppc_altivec_vupklsb128 : ClangBuiltin<"__builtin_altivec_vupklsb128">,
+      DefaultAttrsIntrinsic<[llvm_v8i16_ty], [llvm_v16i8_ty], [IntrNoMem]>;
+
+  // Immediate and vector shift operations.
+  def int_ppc_altivec_vrlimi128 : ClangBuiltin<"__builtin_altivec_vrlimi128">,
+      DefaultAttrsIntrinsic<[llvm_v4i32_ty],
+                            [llvm_v4i32_ty, llvm_v4i32_ty, llvm_i32_ty,
+                             llvm_i32_ty],
+                            [IntrNoMem, ImmArg<ArgIndex<2>>,
+                             ImmArg<ArgIndex<3>>]>;
+  def int_ppc_altivec_vrlw128 : ClangBuiltin<"__builtin_altivec_vrlw128">,
+      DefaultAttrsIntrinsic<[llvm_v4i32_ty], [llvm_v4i32_ty, llvm_v4i32_ty],
+                            [IntrNoMem]>;
+  def int_ppc_altivec_vsel128 : ClangBuiltin<"__builtin_altivec_vsel128">,
+      DefaultAttrsIntrinsic<[llvm_v4i32_ty],
+                            [llvm_v4i32_ty, llvm_v4i32_ty, llvm_v4i32_ty],
+                            [IntrNoMem]>;
+  def int_ppc_altivec_vsldoi128 : ClangBuiltin<"__builtin_altivec_vsldoi128">,
+      DefaultAttrsIntrinsic<[llvm_v4i32_ty],
+                            [llvm_v4i32_ty, llvm_v4i32_ty, llvm_i32_ty],
+                            [IntrNoMem, ImmArg<ArgIndex<2>>]>;
+  def int_ppc_altivec_vslo128 : ClangBuiltin<"__builtin_altivec_vslo128">,
+      DefaultAttrsIntrinsic<[llvm_v4i32_ty], [llvm_v4i32_ty, llvm_v4i32_ty],
+                            [IntrNoMem]>;
+  def int_ppc_altivec_vslw128 : ClangBuiltin<"__builtin_altivec_vslw128">,
+      DefaultAttrsIntrinsic<[llvm_v4i32_ty], [llvm_v4i32_ty, llvm_v4i32_ty],
+                            [IntrNoMem]>;
+  def int_ppc_altivec_vspltisw128 : ClangBuiltin<"__builtin_altivec_vspltisw128">,
+      DefaultAttrsIntrinsic<[llvm_v4i32_ty], [llvm_i32_ty],
+                            [IntrNoMem, ImmArg<ArgIndex<0>>]>;
+  def int_ppc_altivec_vspltw128 : ClangBuiltin<"__builtin_altivec_vspltw128">,
+      DefaultAttrsIntrinsic<[llvm_v4i32_ty], [llvm_v4i32_ty, llvm_i32_ty],
+                            [IntrNoMem, ImmArg<ArgIndex<1>>]>;
+  def int_ppc_altivec_vsraw128 : ClangBuiltin<"__builtin_altivec_vsraw128">,
+      DefaultAttrsIntrinsic<[llvm_v4i32_ty], [llvm_v4i32_ty, llvm_v4i32_ty],
+                            [IntrNoMem]>;
+  def int_ppc_altivec_vsro128 : ClangBuiltin<"__builtin_altivec_vsro128">,
+      DefaultAttrsIntrinsic<[llvm_v4i32_ty], [llvm_v4i32_ty, llvm_v4i32_ty],
+                            [IntrNoMem]>;
+  def int_ppc_altivec_vsrw128 : ClangBuiltin<"__builtin_altivec_vsrw128">,
+      DefaultAttrsIntrinsic<[llvm_v4i32_ty], [llvm_v4i32_ty, llvm_v4i32_ty],
+                            [IntrNoMem]>;
+  def int_ppc_altivec_vupkd3d128 : ClangBuiltin<"__builtin_altivec_vupkd3d128">,
+      DefaultAttrsIntrinsic<[llvm_v4i32_ty], [llvm_v4i32_ty, llvm_i32_ty],
+                            [IntrNoMem, ImmArg<ArgIndex<1>>]>;
+}
+
+//===----------------------------------------------------------------------===//
