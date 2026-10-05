@@ -1168,6 +1168,18 @@ def VRLIMI128  : VMX128_Rlimi<"vrlimi128 $VD, $VB, $IMM, $Z">;
 }
 }
 
+let Predicates = [HasVMX128] in {
+def : Pat<(v4i32 (int_ppc_altivec_lvlx128_volatile i32:$ptr, i32:$off)),
+          (LVLX128 $ptr, $off)>;
+def : Pat<(v4i32 (int_ppc_altivec_lvrx128_volatile i32:$ptr, i32:$off)),
+          (LVRX128 $ptr, $off)>;
+def : Pat<(int_ppc_altivec_stvlx128_volatile v4i32:$v, i32:$ptr, i32:$off),
+          (STVLX128 $v, $ptr, $off)>;
+def : Pat<(int_ppc_altivec_stvrx128_volatile v4i32:$v, i32:$ptr, i32:$off),
+          (STVRX128 $v, $ptr, $off)>;
+
+}
+
 let Predicates = [HasAltivec] in {
 
 //===----------------------------------------------------------------------===//

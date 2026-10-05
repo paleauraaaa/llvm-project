@@ -2032,3 +2032,16 @@ def : Pat<(i64 (int_ppc_mfspr timm:$SPR)),
           (MFSPR8 $SPR)>;
 def : Pat<(int_ppc_mtspr timm:$SPR, g8rc:$RT),
           (MTSPR8 $SPR, $RT)>;
+
+// VMX128 volatile unaligned vector accesses with a 64-bit base. The signed
+// 32-bit offset is sign-extended to form the index register.
+let Predicates = [HasVMX128] in {
+def : Pat<(v4i32 (int_ppc_altivec_lvlx128_volatile i64:$ptr, i32:$off)),
+          (LVLX128 $ptr, (EXTSW_32_64 $off))>;
+def : Pat<(v4i32 (int_ppc_altivec_lvrx128_volatile i64:$ptr, i32:$off)),
+          (LVRX128 $ptr, (EXTSW_32_64 $off))>;
+def : Pat<(int_ppc_altivec_stvlx128_volatile v4i32:$v, i64:$ptr, i32:$off),
+          (STVLX128 $v, $ptr, (EXTSW_32_64 $off))>;
+def : Pat<(int_ppc_altivec_stvrx128_volatile v4i32:$v, i64:$ptr, i32:$off),
+          (STVRX128 $v, $ptr, (EXTSW_32_64 $off))>;
+}
