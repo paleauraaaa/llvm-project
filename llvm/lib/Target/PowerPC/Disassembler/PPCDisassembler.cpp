@@ -133,11 +133,17 @@ static DecodeStatus DecodeVRRCRegisterClass(MCInst &Inst, uint64_t RegNo,
   return decodeRegisterClass(Inst, RegNo, VRegs);
 }
 
-// static DecodeStatus DecodeVR128RCRegisterClass(MCInst &Inst, uint64_t RegNo,
-//                                                uint64_t Address,
-//                                                const MCDisassembler *Decoder) {
-//   return decodeRegisterClass(Inst, RegNo, VRegs);
-// }
+static DecodeStatus DecodeVRPermRCRegisterClass(
+    MCInst &Inst, uint64_t RegNo, uint64_t Address,
+    const MCDisassembler *Decoder) {
+  return decodeRegisterClass(Inst, RegNo, VRegs);
+}
+
+static DecodeStatus DecodeVR128RCRegisterClass(MCInst &Inst, uint64_t RegNo,
+                                               uint64_t Address,
+                                               const MCDisassembler *Decoder) {
+  return decodeRegisterClass(Inst, RegNo, V128Regs);
+}
 
 static DecodeStatus DecodeVSRCRegisterClass(MCInst &Inst, uint64_t RegNo,
                                             uint64_t Address,
@@ -400,6 +406,13 @@ DecodeStatus PPCDisassembler::getInstruction(MCInst &MI, uint64_t &Size,
 
   // Read the instruction in the proper endianness.
   uint64_t Inst = ReadFunc(Bytes.data());
+
+  if (STI.hasFeature(PPC::FeatureVMX128)) {
+    DecodeStatus result =
+        decodeInstruction(DecoderTableVMX12832, MI, Inst, Address, this, STI);
+    if (result != MCDisassembler::Fail)
+      return result;
+  }
 
   if (STI.hasFeature(PPC::FeatureSPE)) {
     DecodeStatus result =

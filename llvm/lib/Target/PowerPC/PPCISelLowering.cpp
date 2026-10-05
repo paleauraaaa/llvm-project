@@ -949,10 +949,12 @@ PPCTargetLowering::PPCTargetLowering(const PPCTargetMachine &TM,
     addRegisterClass(MVT::v8i16, &PPC::VRRCRegClass);
     addRegisterClass(MVT::v16i8, &PPC::VRRCRegClass);
 
-    // addRegisterClass(MVT::v4f32, &PPC::VR128RCRegClass);
-    // addRegisterClass(MVT::v4i32, &PPC::VR128RCRegClass);
-    // addRegisterClass(MVT::v8i16, &PPC::VR128RCRegClass);
-    // addRegisterClass(MVT::v16i8, &PPC::VR128RCRegClass);
+    if (Subtarget.hasVMX128()) {
+      addRegisterClass(MVT::v4f32, &PPC::VR128RCRegClass);
+      addRegisterClass(MVT::v4i32, &PPC::VR128RCRegClass);
+      addRegisterClass(MVT::v8i16, &PPC::VR128RCRegClass);
+      addRegisterClass(MVT::v16i8, &PPC::VR128RCRegClass);
+    }
 
     setOperationAction(ISD::MUL, MVT::v4f32, Legal);
     setOperationAction(ISD::FMA, MVT::v4f32, Legal);
@@ -1192,7 +1194,8 @@ PPCTargetLowering::PPCTargetLowering(const PPCTargetMachine &TM,
 
       addRegisterClass(MVT::v2i64, &PPC::VSRCRegClass);
       addRegisterClass(MVT::f128, &PPC::VRRCRegClass);
-      // addRegisterClass(MVT::f128, &PPC::VR128RCRegClass);
+      if (Subtarget.hasVMX128())
+        addRegisterClass(MVT::f128, &PPC::VR128RCRegClass);
 
       for (MVT FPT : MVT::fp_valuetypes())
         setLoadExtAction(ISD::EXTLOAD, MVT::f128, FPT, Expand);
@@ -1210,6 +1213,13 @@ PPCTargetLowering::PPCTargetLowering(const PPCTargetMachine &TM,
       setOperationAction(ISD::FPOW, MVT::f128, Expand);
       setOperationAction(ISD::FPOWI, MVT::f128, Expand);
       setOperationAction(ISD::FREM, MVT::f128, Expand);
+    }
+
+    if (Subtarget.hasVMX128()) {
+      addRegisterClass(MVT::v2i64, &PPC::VRRCRegClass);
+      addRegisterClass(MVT::v1i128, &PPC::VRRCRegClass);
+      addRegisterClass(MVT::v2i64, &PPC::VR128RCRegClass);
+      addRegisterClass(MVT::v1i128, &PPC::VR128RCRegClass);
     }
 
     if (Subtarget.hasP8Altivec()) {
@@ -7175,7 +7185,7 @@ static const TargetRegisterClass *getRegClassForSVT(MVT::SimpleValueType SVT,
   case MVT::v2i64:
   case MVT::v2f64:
   case MVT::v1i128:
-    return /* HasVMX128 ?  &PPC::VR128RCRegClass : &PPC::VRRCRegClass; */ &PPC::VRRCRegClass;
+    return &PPC::VRRCRegClass;
   }
 }
 
@@ -14212,7 +14222,6 @@ static bool IsSelectCC(MachineInstr &MI) {
   case PPC::SELECT_CC_F8:
   case PPC::SELECT_CC_F16:
   case PPC::SELECT_CC_VRRC:
-  // case PPC::SELECT_CC_VR128RC:
   case PPC::SELECT_CC_VSFRC:
   case PPC::SELECT_CC_VSSRC:
   case PPC::SELECT_CC_VSRC:
@@ -18223,7 +18232,7 @@ PPCTargetLowering::getRegForInlineAsmConstraint(const TargetRegisterInfo *TRI,
       break;
     case 'v':
       if (Subtarget.hasAltivec() && VT.isVector())
-        return std::make_pair(0U, &PPC::VRRCRegClass);
+        return std::make_pair(0U, Subtarget.hasVMX128() ? &PPC::VR128RCRegClass : &PPC::VRRCRegClass);
       else if (Subtarget.hasVSX())
         // Scalars in Altivec registers only make sense with VSX.
         return std::make_pair(0U, &PPC::VFRCRegClass);

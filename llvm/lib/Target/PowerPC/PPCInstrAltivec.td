@@ -337,6 +337,8 @@ class VXCR_Int_Ty<bits<11> xo, string opc, Intrinsic IntID, ValueType Ty>
 // Instruction Definitions.
 
 def HasAltivec : Predicate<"Subtarget->hasAltivec()">;
+def NoVMX128 : Predicate<"!Subtarget->hasVMX128()">,
+               AssemblerPredicate<(all_of (not FeatureVMX128))>;
 let Predicates = [HasAltivec] in {
 
 def DSS      : DSS_Form<0, 822, (outs), (ins u5imm:$STRM),
@@ -466,12 +468,6 @@ def VNMSUBFP: VAForm_1<47, (outs vrrc:$RT), (ins vrrc:$RA, vrrc:$RC, vrrc:$RB),
                        "vnmsubfp $RT, $RA, $RC, $RB", IIC_VecFP,
                        [(set v4f32:$RT, (fneg (fma v4f32:$RA, v4f32:$RC,
                                                   (fneg v4f32:$RB))))]>;
-let hasSideEffects = 1 in {
-  def VMHADDSHS  : VA1a_Int_Ty<32, "vmhaddshs", int_ppc_altivec_vmhaddshs, v8i16>;
-  def VMHRADDSHS : VA1a_Int_Ty<33, "vmhraddshs", int_ppc_altivec_vmhraddshs,
-                               v8i16>;
-}
-def VMLADDUHM  : VA1a_Int_Ty<34, "vmladduhm", int_ppc_altivec_vmladduhm, v8i16>;
 } // isCommutable
 
 def VPERM      : VA1a_Int_Ty3<43, "vperm", int_ppc_altivec_vperm,
@@ -602,40 +598,6 @@ def VMRGLW : VXForm_1<396, (outs vrrc:$VD), (ins vrrc:$VA, vrrc:$VB),
                       "vmrglw $VD, $VA, $VB", IIC_VecFP,
                       [(set v16i8:$VD, (vmrglw_shuffle v16i8:$VA, v16i8:$VB))]>;
 
-def VMSUMMBM : VA1a_Int_Ty3<37, "vmsummbm", int_ppc_altivec_vmsummbm,
-                            v4i32, v16i8, v4i32>;
-def VMSUMSHM : VA1a_Int_Ty3<40, "vmsumshm", int_ppc_altivec_vmsumshm,
-                            v4i32, v8i16, v4i32>;
-def VMSUMUBM : VA1a_Int_Ty3<36, "vmsumubm", int_ppc_altivec_vmsumubm,
-                            v4i32, v16i8, v4i32>;
-def VMSUMUHM : VA1a_Int_Ty3<38, "vmsumuhm", int_ppc_altivec_vmsumuhm,
-                            v4i32, v8i16, v4i32>;
-let hasSideEffects = 1 in {
-  def VMSUMSHS : VA1a_Int_Ty3<41, "vmsumshs", int_ppc_altivec_vmsumshs,
-                              v4i32, v8i16, v4i32>;
-  def VMSUMUHS : VA1a_Int_Ty3<39, "vmsumuhs", int_ppc_altivec_vmsumuhs,
-                              v4i32, v8i16, v4i32>;
-}
-
-let isCommutable = 1 in {
-def VMULESB : VX1_Int_Ty2<776, "vmulesb", int_ppc_altivec_vmulesb,
-                          v8i16, v16i8>;
-def VMULESH : VX1_Int_Ty2<840, "vmulesh", int_ppc_altivec_vmulesh,
-                          v4i32, v8i16>;
-def VMULEUB : VX1_Int_Ty2<520, "vmuleub", int_ppc_altivec_vmuleub,
-                          v8i16, v16i8>;
-def VMULEUH : VX1_Int_Ty2<584, "vmuleuh", int_ppc_altivec_vmuleuh,
-                          v4i32, v8i16>;
-def VMULOSB : VX1_Int_Ty2<264, "vmulosb", int_ppc_altivec_vmulosb,
-                          v8i16, v16i8>;
-def VMULOSH : VX1_Int_Ty2<328, "vmulosh", int_ppc_altivec_vmulosh,
-                          v4i32, v8i16>;
-def VMULOUB : VX1_Int_Ty2<  8, "vmuloub", int_ppc_altivec_vmuloub,
-                          v8i16, v16i8>;
-def VMULOUH : VX1_Int_Ty2< 72, "vmulouh", int_ppc_altivec_vmulouh,
-                          v4i32, v8i16>;
-} // isCommutable
-
 def VREFP     : VX2_Int_SP<266, "vrefp",     int_ppc_altivec_vrefp>;
 def VRFIM     : VX2_Int_SP<714, "vrfim",     int_ppc_altivec_vrfim>;
 def VRFIN     : VX2_Int_SP<522, "vrfin",     int_ppc_altivec_vrfin>;
@@ -664,18 +626,6 @@ def VSUBSWS : VX1_Int_Ty<1920, "vsubsws" , int_ppc_altivec_vsubsws, v4i32>;
 def VSUBUBS : VX1_Int_Ty<1536, "vsububs" , int_ppc_altivec_vsububs, v16i8>;
 def VSUBUHS : VX1_Int_Ty<1600, "vsubuhs" , int_ppc_altivec_vsubuhs, v8i16>;
 def VSUBUWS : VX1_Int_Ty<1664, "vsubuws" , int_ppc_altivec_vsubuws, v4i32>;
-
-let hasSideEffects = 1 in {
-  def VSUMSWS : VX1_Int_Ty<1928, "vsumsws" , int_ppc_altivec_vsumsws, v4i32>;
-  def VSUM2SWS: VX1_Int_Ty<1672, "vsum2sws", int_ppc_altivec_vsum2sws, v4i32>;
-
-  def VSUM4SBS: VX1_Int_Ty3<1800, "vsum4sbs", int_ppc_altivec_vsum4sbs,
-                            v4i32, v16i8, v4i32>;
-  def VSUM4SHS: VX1_Int_Ty3<1608, "vsum4shs", int_ppc_altivec_vsum4shs,
-                            v4i32, v8i16, v4i32>;
-  def VSUM4UBS: VX1_Int_Ty3<1544, "vsum4ubs", int_ppc_altivec_vsum4ubs,
-                            v4i32, v16i8, v4i32>;
-}
 
 def VNOR : VXForm_1<1284, (outs vrrc:$VD), (ins vrrc:$VA, vrrc:$VB),
                     "vnor $VD, $VA, $VB", IIC_VecFP,
@@ -856,6 +806,364 @@ def V_SETALLONES  : VXForm_3<908, (outs vrrc:$VD), (ins),
 }
 }
 } // VALU Operations.
+} // end HasAltivec
+
+let Predicates = [HasAltivec, NoVMX128] in {
+  def VMSUMUBM : VA1a_Int_Ty3<36, "vmsumubm", int_ppc_altivec_vmsumubm,
+                            v4i32, v16i8, v4i32>;
+  def VMSUMMBM : VA1a_Int_Ty3<37, "vmsummbm", int_ppc_altivec_vmsummbm,
+                            v4i32, v16i8, v4i32>;
+  def VMSUMSHM : VA1a_Int_Ty3<40, "vmsumshm", int_ppc_altivec_vmsumshm,
+                              v4i32, v8i16, v4i32>;
+  def VMSUMUHM : VA1a_Int_Ty3<38, "vmsumuhm", int_ppc_altivec_vmsumuhm,
+                            v4i32, v8i16, v4i32>;
+  let isCommutable = 1 in {
+    def VMULOUB : VX1_Int_Ty2<  8, "vmuloub", int_ppc_altivec_vmuloub,
+                          v8i16, v16i8>;
+    def VMULOUH : VX1_Int_Ty2< 72, "vmulouh", int_ppc_altivec_vmulouh,
+                          v4i32, v8i16>;
+    def VMULOSB : VX1_Int_Ty2<264, "vmulosb", int_ppc_altivec_vmulosb,
+                          v8i16, v16i8>;
+    def VMULOSH : VX1_Int_Ty2<328, "vmulosh", int_ppc_altivec_vmulosh,
+                          v4i32, v8i16>;
+    def VMULESB : VX1_Int_Ty2<776, "vmulesb", int_ppc_altivec_vmulesb,
+                          v8i16, v16i8>;
+    def VMULESH : VX1_Int_Ty2<840, "vmulesh", int_ppc_altivec_vmulesh,
+                              v4i32, v8i16>;
+    def VMULEUB : VX1_Int_Ty2<520, "vmuleub", int_ppc_altivec_vmuleub,
+                              v8i16, v16i8>;
+    def VMULEUH : VX1_Int_Ty2<584, "vmuleuh", int_ppc_altivec_vmuleuh,
+                          v4i32, v8i16>;
+    def VMLADDUHM  : VA1a_Int_Ty<34, "vmladduhm", int_ppc_altivec_vmladduhm, v8i16>;
+  }
+
+  let hasSideEffects = 1 in {
+    def VSUMSWS : VX1_Int_Ty<1928, "vsumsws" , int_ppc_altivec_vsumsws, v4i32>;
+    def VSUM2SWS: VX1_Int_Ty<1672, "vsum2sws", int_ppc_altivec_vsum2sws, v4i32>;
+
+    def VSUM4SBS: VX1_Int_Ty3<1800, "vsum4sbs", int_ppc_altivec_vsum4sbs,
+                              v4i32, v16i8, v4i32>;
+    def VSUM4SHS: VX1_Int_Ty3<1608, "vsum4shs", int_ppc_altivec_vsum4shs,
+                              v4i32, v8i16, v4i32>;
+    def VSUM4UBS: VX1_Int_Ty3<1544, "vsum4ubs", int_ppc_altivec_vsum4ubs,
+                            v4i32, v16i8, v4i32>;
+    def VMHADDSHS  : VA1a_Int_Ty<32, "vmhaddshs", int_ppc_altivec_vmhaddshs, v8i16>;
+    def VMHRADDSHS : VA1a_Int_Ty<33, "vmhraddshs", int_ppc_altivec_vmhraddshs,
+                               v8i16>;
+    def VMSUMSHS : VA1a_Int_Ty3<41, "vmsumshs", int_ppc_altivec_vmsumshs,
+                              v4i32, v8i16, v4i32>;
+    def VMSUMUHS : VA1a_Int_Ty3<39, "vmsumuhs", int_ppc_altivec_vmsumuhs,
+                              v4i32, v8i16, v4i32>;
+  }
+}
+
+
+// ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+def HasVMX128 : Predicate<"Subtarget->hasVMX128()">;
+class VMX128_Mem<bits<7> xo, dag OOL, dag IOL, string asmstr,
+                 InstrItinClass itin>
+    : I<4, OOL, IOL, asmstr, itin>, XFormMemOp {
+  let Pattern = [];
+  bits<7> RST;
+  bits<5> RA;
+  bits<5> RB;
+
+  let Inst{6-10} = RST{4-0};
+  let Inst{11-15} = RA;
+  let Inst{16-20} = RB;
+  let Inst{21-27} = xo;
+  let Inst{28-29} = RST{6-5};
+  let Inst{30-31} = 0b11;
+}
+
+class VMX128_VX3<bits<6> opc, bits<4> xo, bit b27, dag OOL, dag IOL,
+                 string asmstr, InstrItinClass itin>
+    : I<opc, OOL, IOL, asmstr, itin> {
+  let Pattern = [];
+  bits<7> VD;
+  bits<7> VA;
+  bits<7> VB;
+
+  let Inst{6-10} = VD{4-0};
+  let Inst{11-15} = VA{4-0};
+  let Inst{16-20} = VB{4-0};
+  let Inst{21} = VA{6};
+  let Inst{22-25} = xo;
+  let Inst{26} = VA{5};
+  let Inst{27} = b27;
+  let Inst{28-29} = VD{6-5};
+  let Inst{30-31} = VB{6-5};
+}
+
+class VMX128_Cmp<bits<4> xo, string asmstr>
+    : VMX128_VX3<6, xo, 0, (outs vr128rc:$VD),
+                 (ins vr128rc:$VA, vr128rc:$VB), asmstr,
+                 IIC_VecFPCompare>;
+
+class VMX128_VX3_Tied<bits<6> opc, bits<4> xo, bit b27, string asmstr,
+                      InstrItinClass itin>
+    : VMX128_VX3<opc, xo, b27, (outs vr128rc:$VD),
+                 (ins vr128rc:$VDin, vr128rc:$VA, vr128rc:$VB), asmstr,
+                 itin>,
+      RegConstraint<"$VDin = $VD">, NoEncode<"$VDin">;
+
+class VMX128_Perm<string asmstr>
+    : I<5, (outs vr128rc:$VD),
+         (ins vr128rc:$VA, vr128rc:$VB, vrpermrc:$VC), asmstr, IIC_VecPerm> {
+  let Pattern = [];
+  bits<7> VD;
+  bits<7> VA;
+  bits<7> VB;
+  bits<3> VC;
+
+  let Inst{6-10} = VD{4-0};
+  let Inst{11-15} = VA{4-0};
+  let Inst{16-20} = VB{4-0};
+  let Inst{21} = VA{6};
+  let Inst{22} = 0;
+  let Inst{23-25} = VC{2-0};
+  let Inst{26} = VA{5};
+  let Inst{27} = 0;
+  let Inst{28-29} = VD{6-5};
+  let Inst{30-31} = VB{6-5};
+}
+
+class VMX128_Sldoi<string asmstr>
+    : I<4, (outs vr128rc:$VD),
+         (ins vr128rc:$VA, vr128rc:$VB, u4imm:$SHB), asmstr, IIC_VecPerm> {
+  let Pattern = [];
+  bits<7> VD;
+  bits<7> VA;
+  bits<7> VB;
+  bits<4> SHB;
+
+  let Inst{6-10} = VD{4-0};
+  let Inst{11-15} = VA{4-0};
+  let Inst{16-20} = VB{4-0};
+  let Inst{21} = VA{6};
+  let Inst{22-25} = SHB;
+  let Inst{26} = VA{5};
+  let Inst{27} = 1;
+  let Inst{28-29} = VD{6-5};
+  let Inst{30-31} = VB{6-5};
+}
+
+class VMX128_VX2<bits<7> xo, dag IOL, string asmstr,
+                 InstrItinClass itin>
+    : I<6, (outs vr128rc:$VD), IOL, asmstr, itin> {
+  let Pattern = [];
+  bits<7> VD;
+  bits<7> VB;
+  bits<5> IMM;
+
+  let Inst{6-10} = VD{4-0};
+  let Inst{11-15} = IMM;
+  let Inst{16-20} = VB{4-0};
+  let Inst{21-27} = xo;
+  let Inst{28-29} = VD{6-5};
+  let Inst{30-31} = VB{6-5};
+}
+
+class VMX128_Unary<bits<7> xo, string asmstr, InstrItinClass itin>
+    : VMX128_VX2<xo, (ins vr128rc:$VB), asmstr, itin> {
+  let IMM = 0;
+}
+class VMX128_UImm<bits<7> xo, string asmstr, InstrItinClass itin>
+    : VMX128_VX2<xo, (ins vr128rc:$VB, u5imm:$IMM), asmstr, itin>;
+class VMX128_SImm<bits<7> xo, string asmstr, InstrItinClass itin>
+    : VMX128_VX2<xo, (ins vr128rc:$VB, s5imm:$IMM), asmstr, itin>;
+
+class VMX128_Pkd3d<string asmstr>
+    : I<6, (outs vr128rc:$VD),
+         (ins vr128rc:$VB, u3imm:$X, u2imm:$Y, u2imm:$Z), asmstr,
+         IIC_VecFP> {
+  let Pattern = [];
+  bits<7> VD;
+  bits<7> VB;
+  bits<3> X;
+  bits<2> Y;
+  bits<2> Z;
+
+  let Inst{6-10} = VD{4-0};
+  let Inst{11-13} = X;
+  let Inst{14-15} = Y;
+  let Inst{16-20} = VB{4-0};
+  let Inst{21-23} = 0b110;
+  let Inst{24-25} = Z;
+  let Inst{26-27} = 0b01;
+  let Inst{28-29} = VD{6-5};
+  let Inst{30-31} = VB{6-5};
+}
+
+class VMX128_Rlimi<string asmstr>
+    : I<6, (outs vr128rc:$VD),
+         (ins vr128rc:$VB, u5imm:$IMM, u2imm:$Z), asmstr, IIC_VecFP> {
+  let Pattern = [];
+  bits<7> VD;
+  bits<7> VB;
+  bits<5> IMM;
+  bits<2> Z;
+
+  let Inst{6-10} = VD{4-0};
+  let Inst{11-15} = IMM;
+  let Inst{16-20} = VB{4-0};
+  let Inst{21-23} = 0b111;
+  let Inst{24-25} = Z;
+  let Inst{26-27} = 0b01;
+  let Inst{28-29} = VD{6-5};
+  let Inst{30-31} = VB{6-5};
+}
+
+class VMX128_Permwi<string asmstr>
+    : I<6, (outs vr128rc:$VD),
+         (ins vr128rc:$VB, u8imm:$PERM), asmstr, IIC_VecPerm> {
+  let Pattern = [];
+  bits<7> VD;
+  bits<7> VB;
+  bits<8> PERM;
+
+  let Inst{6-10} = VD{4-0};
+  let Inst{11-15} = PERM{4-0};
+  let Inst{16-20} = VB{4-0};
+  let Inst{21} = 0;
+  let Inst{22} = 1;
+  let Inst{23-25} = PERM{7-5};
+  let Inst{26} = 0;
+  let Inst{27} = 1;
+  let Inst{28-29} = VD{6-5};
+  let Inst{30-31} = VB{6-5};
+}
+
+let DecoderNamespace = "VMX128", Predicates = [HasVMX128] in {
+
+class VMX128_Load<bits<7> xo, string name>
+    : VMX128_Mem<xo, (outs vr128rc:$RST),
+                 (ins (memrr $RA, $RB):$addr),
+                 !strconcat(name, " $RST, $addr"), IIC_LdStLoad>;
+class VMX128_Store<bits<7> xo, string name>
+    : VMX128_Mem<xo, (outs),
+                 (ins vr128rc:$RST, (memrr $RA, $RB):$addr),
+                 !strconcat(name, " $RST, $addr"), IIC_LdStStore>;
+
+let PPC970_Unit = 2 in {
+def LVSL128 : VMX128_Load<0b0000000, "lvsl128">;
+def LVSR128 : VMX128_Load<0b0000100, "lvsr128">;
+}
+
+let PPC970_Unit = 2, mayLoad = 1, mayStore = 0 in {
+def LVEWX128 : VMX128_Load<0b0001000, "lvewx128">;
+def LVX128   : VMX128_Load<0b0001100, "lvx128">;
+def LVXL128  : VMX128_Load<0b0101100, "lvxl128">;
+def LVLX128  : VMX128_Load<0b1000000, "lvlx128">;
+def LVRX128  : VMX128_Load<0b1000100, "lvrx128">;
+def LVLXL128 : VMX128_Load<0b1100000, "lvlxl128">;
+def LVRXL128 : VMX128_Load<0b1100100, "lvrxl128">;
+}
+
+let PPC970_Unit = 2, mayStore = 1, mayLoad = 0 in {
+def STVX128   : VMX128_Store<0b0011100, "stvx128">;
+def STVEWX128 : VMX128_Store<0b0011000, "stvewx128">;
+def STVXL128  : VMX128_Store<0b0111100, "stvxl128">;
+def STVLX128  : VMX128_Store<0b1010000, "stvlx128">;
+def STVRX128  : VMX128_Store<0b1010100, "stvrx128">;
+def STVLXL128 : VMX128_Store<0b1110000, "stvlxl128">;
+def STVRXL128 : VMX128_Store<0b1110100, "stvrxl128">;
+}
+
+let PPC970_Unit = 5 in {
+class VMX128_Bin<bits<4> xo, string name,
+                 InstrItinClass itin = IIC_VecFP>
+    : VMX128_VX3<5, xo, 1, (outs vr128rc:$VD),
+                 (ins vr128rc:$VA, vr128rc:$VB),
+                 !strconcat(name, " $VD, $VA, $VB"), itin>;
+def VADDFP128   : VMX128_Bin<0b0000, "vaddfp128">;
+def VSUBFP128   : VMX128_Bin<0b0001, "vsubfp128">;
+def VMULFP128   : VMX128_Bin<0b0010, "vmulfp128">;
+def VMSUM3FP128 : VMX128_Bin<0b0110, "vmsum3fp128">;
+def VMSUM4FP128 : VMX128_Bin<0b0111, "vmsum4fp128">;
+def VAND128     : VMX128_Bin<0b1000, "vand128">;
+def VANDC128    : VMX128_Bin<0b1001, "vandc128">;
+def VNOR128     : VMX128_Bin<0b1010, "vnor128">;
+def VOR128      : VMX128_Bin<0b1011, "vor128">;
+def VXOR128     : VMX128_Bin<0b1100, "vxor128">;
+def VSLO128     : VMX128_Bin<0b1110, "vslo128">;
+
+def VMADDFP128  : VMX128_VX3_Tied<5, 0b0011, 1, "vmaddfp128 $VD, $VA, $VB, $VDin", IIC_VecFP>;
+def VMADDCFP128 : VMX128_VX3_Tied<5, 0b0100, 1, "vmaddcfp128 $VD, $VA, $VDin, $VB", IIC_VecFP>;
+def VNMSUBFP128 : VMX128_VX3_Tied<5, 0b0101, 1, "vnmsubfp128 $VD, $VA, $VB, $VDin", IIC_VecFP>;
+def VSEL128     : VMX128_VX3_Tied<5, 0b1101, 1, "vsel128 $VD, $VA, $VB, $VDin", IIC_VecFP>;
+
+class VMX128_Pack<bits<4> xo, string name>
+    : VMX128_VX3<5, xo, 0, (outs vr128rc:$VD),
+                 (ins vr128rc:$VA, vr128rc:$VB),
+                 !strconcat(name, " $VD, $VA, $VB"), IIC_VecGeneral>;
+def VPKSHSS128 : VMX128_Pack<0b1000, "vpkshss128">;
+def VPKSHUS128 : VMX128_Pack<0b1001, "vpkshus128">;
+def VPKSWSS128 : VMX128_Pack<0b1010, "vpkswss128">;
+def VPKSWUS128 : VMX128_Pack<0b1011, "vpkswus128">;
+def VPKUHUM128 : VMX128_Pack<0b1100, "vpkuhum128">;
+def VPKUHUS128 : VMX128_Pack<0b1101, "vpkuhus128">;
+def VPKUWUM128 : VMX128_Pack<0b1110, "vpkuwum128">;
+def VPKUWUS128 : VMX128_Pack<0b1111, "vpkuwus128">;
+
+def VCMPEQFP128 : VMX128_Cmp<0b0000, "vcmpeqfp128 $VD, $VA, $VB">;
+def VCMPGEFP128 : VMX128_Cmp<0b0010, "vcmpgefp128 $VD, $VA, $VB">;
+def VCMPGTFP128 : VMX128_Cmp<0b0100, "vcmpgtfp128 $VD, $VA, $VB">;
+def VCMPBFP128  : VMX128_Cmp<0b0110, "vcmpbfp128 $VD, $VA, $VB">;
+def VCMPEQUW128 : VMX128_Cmp<0b1000, "vcmpequw128 $VD, $VA, $VB">;
+let Defs = [CR6] in {
+def VCMPEQFP128_rec : VMX128_Cmp<0b0001, "vcmpeqfp128. $VD, $VA, $VB">;
+def VCMPGEFP128_rec : VMX128_Cmp<0b0011, "vcmpgefp128. $VD, $VA, $VB">;
+def VCMPGTFP128_rec : VMX128_Cmp<0b0101, "vcmpgtfp128. $VD, $VA, $VB">;
+def VCMPBFP128_rec  : VMX128_Cmp<0b0111, "vcmpbfp128. $VD, $VA, $VB">;
+def VCMPEQUW128_rec : VMX128_Cmp<0b1001, "vcmpequw128. $VD, $VA, $VB">;
+}
+
+class VMX128_Op6<bits<4> xo, bit b27, string name,
+                 InstrItinClass itin>
+    : VMX128_VX3<6, xo, b27, (outs vr128rc:$VD),
+                 (ins vr128rc:$VA, vr128rc:$VB),
+                 !strconcat(name, " $VD, $VA, $VB"), itin>;
+def VMAXFP128 : VMX128_Op6<0b1010, 0, "vmaxfp128", IIC_VecFP>;
+def VMINFP128 : VMX128_Op6<0b1011, 0, "vminfp128", IIC_VecFP>;
+def VMRGHW128 : VMX128_Op6<0b1100, 0, "vmrghw128", IIC_VecPerm>;
+def VMRGLW128 : VMX128_Op6<0b1101, 0, "vmrglw128", IIC_VecPerm>;
+def VRLW128   : VMX128_Op6<0b0001, 1, "vrlw128", IIC_VecGeneral>;
+def VSLW128   : VMX128_Op6<0b0011, 1, "vslw128", IIC_VecGeneral>;
+def VSRAW128  : VMX128_Op6<0b0101, 1, "vsraw128", IIC_VecGeneral>;
+def VSRW128   : VMX128_Op6<0b0111, 1, "vsrw128", IIC_VecGeneral>;
+def VSRO128   : VMX128_VX3<5, 0b1111, 1, (outs vr128rc:$VD),
+                           (ins vr128rc:$VA, vr128rc:$VB),
+                           "vsro128 $VD, $VA, $VB", IIC_VecGeneral>;
+
+def VCFPSXWS128  : VMX128_SImm<0b0100011, "vcfpsxws128 $VD, $VB, $IMM", IIC_VecFP>;
+def VCFPUXWS128  : VMX128_UImm<0b0100111, "vcfpuxws128 $VD, $VB, $IMM", IIC_VecFP>;
+def VCSXWFP128   : VMX128_SImm<0b0101011, "vcsxwfp128 $VD, $VB, $IMM", IIC_VecFP>;
+def VCUXWFP128   : VMX128_UImm<0b0101111, "vcuxwfp128 $VD, $VB, $IMM", IIC_VecFP>;
+def VRFIM128     : VMX128_Unary<0b0110011, "vrfim128 $VD, $VB", IIC_VecFP>;
+def VRFIN128     : VMX128_Unary<0b0110111, "vrfin128 $VD, $VB", IIC_VecFP>;
+def VRFIP128     : VMX128_Unary<0b0111011, "vrfip128 $VD, $VB", IIC_VecFP>;
+def VRFIZ128     : VMX128_Unary<0b0111111, "vrfiz128 $VD, $VB", IIC_VecFP>;
+def VUPKHSB128   : VMX128_Unary<0b0111000, "vupkhsb128 $VD, $VB", IIC_VecGeneral>;
+def VUPKLSB128   : VMX128_Unary<0b0111100, "vupklsb128 $VD, $VB", IIC_VecGeneral>;
+def VREFP128     : VMX128_Unary<0b1100011, "vrefp128 $VD, $VB", IIC_VecFP>;
+def VRSQRTEFP128 : VMX128_Unary<0b1100111, "vrsqrtefp128 $VD, $VB", IIC_VecFP>;
+def VEXPTEFP128  : VMX128_Unary<0b1101011, "vexptefp128 $VD, $VB", IIC_VecFP>;
+def VLOGEFP128   : VMX128_Unary<0b1101111, "vlogefp128 $VD, $VB", IIC_VecFP>;
+def VSPLTW128    : VMX128_UImm<0b1110011, "vspltw128 $VD, $VB, $IMM", IIC_VecPerm>;
+def VSPLTISW128  : VMX128_SImm<0b1110111, "vspltisw128 $VD, $VB, $IMM", IIC_VecPerm>;
+def VUPKD3D128   : VMX128_UImm<0b1111111, "vupkd3d128 $VD, $VB, $IMM", IIC_VecGeneral>;
+
+def VPERM128   : VMX128_Perm<"vperm128 $VD, $VA, $VB, $VC">;
+def VSLDOI128  : VMX128_Sldoi<"vsldoi128 $VD, $VA, $VB, $SHB">;
+def VPERMWI128 : VMX128_Permwi<"vpermwi128 $VD, $VB, $PERM">;
+def VPKD3D128  : VMX128_Pkd3d<"vpkd3d128 $VD, $VB, $X, $Y, $Z">;
+def VRLIMI128  : VMX128_Rlimi<"vrlimi128 $VD, $VB, $IMM, $Z">;
+}
+}
+
+let Predicates = [HasAltivec] in {
 
 //===----------------------------------------------------------------------===//
 // Additional Altivec Patterns
@@ -880,11 +1188,13 @@ def : Pat<(v8i16 (rotl v8i16:$vA, v8i16:$vB)),
 def : Pat<(v4i32 (rotl v4i32:$vA, v4i32:$vB)),
           (v4i32 (VRLW v4i32:$vA, v4i32:$vB))>;
 
+let Predicates = [HasAltivec, NoVMX128] in {
 // Multiply
 def : Pat<(mul v8i16:$vA, v8i16:$vB), (VMLADDUHM $vA, $vB, (v8i16(V_SET0H)))>;
 
 // Add
 def : Pat<(add (mul v8i16:$vA, v8i16:$vB), v8i16:$vC), (VMLADDUHM $vA, $vB, $vC)>;
+}
 
 // Saturating adds/subtracts.
 def : Pat<(v16i8 (saddsat v16i8:$vA, v16i8:$vB)), (v16i8 (VADDSBS $vA, $vB))>;
