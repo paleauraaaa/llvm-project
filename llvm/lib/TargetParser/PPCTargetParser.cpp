@@ -68,6 +68,7 @@ StringRef normalizeCPUName(StringRef CPUName) {
       .Cases("powerpc", "powerpc32", "ppc")
       .Case("powerpc64", "ppc64")
       .Case("powerpc64le", "ppc64le")
+      .Case("Xenon", "xenon")
       .Default(CPUName);
 }
 
@@ -105,6 +106,8 @@ StringRef getNormalizedPPCTargetCPU(const Triple &T, StringRef CPUName) {
   // default to a more generic option for each architecture. (except on AIX)
   if (T.isOSAIX())
     return "pwr7";
+  else if (T.isOSXbox360())
+    return "xenon";
   else if (T.getArch() == Triple::ppc64le)
     return "ppc64le";
   else if (T.getArch() == Triple::ppc64)
