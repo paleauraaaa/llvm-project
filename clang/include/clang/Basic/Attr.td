@@ -4974,3 +4974,10 @@ def NoTrivialAutoVarInit: InheritableAttr {
   let Documentation = [NoTrivialAutoVarInitDocs];
   let SimpleHandler = 1;
 }
+
+def IntrinType: InheritableAttr {
+  let Spellings = [Declspec<"intrin_type">];
+  let Subjects = SubjectList<[Record]>;
+  let Documentation = [IntrinTypeDocs];
+  let LangOpts = [MicrosoftExt];
+}
