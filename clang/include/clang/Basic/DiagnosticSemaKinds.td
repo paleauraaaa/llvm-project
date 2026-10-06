@@ -3681,6 +3681,10 @@ def err_attribute_invalid_on_decl : Error<
 def warn_type_attribute_deprecated_on_decl : Warning<
   "applying attribute %0 to a declaration is deprecated; apply it to the type instead">,
   InGroup<DeprecatedAttributes>;
+def warn_unknown_intrin_type : Warning<
+  "%0 is not a recognized intrinsic type; attribute %1 is ignored">,
+  InGroup<UnknownIntrinType>;
+
 def warn_declspec_attribute_ignored : Warning<
   "attribute %0 is ignored, place it after "
   "\"%select{class|struct|interface|union|enum|enum class|enum struct}1\" to apply attribute to "
