@@ -181,7 +181,7 @@ entry:
 ; CHECK-LABEL: test_dyn_alloca_stack_args:
 ; The dynamic allocation stores the old SP as the new backchain and returns
 ; newSP + 16 bytes of linkage + 96 bytes reserved for this call's parameters.
-; CHECK: addi 4, 31, 128
+; CHECK: addi 4, 31, 144
 ; CHECK: stwux 4, 1, 5
 ; CHECK: addi 3, 1, 112
 ; CHECK-NOT: stdux
@@ -230,3 +230,26 @@ declare void @callee()
 declare void @callee_ten_args(i64, i64, i64, i64, i64, i64, i64, i64, i64, i64)
 
 attributes #0 = { "probe-stack"="inline-asm" }
+declare void @ext(i64)
+
+define void @test_save_area_layout(i64 %a) {
+entry:
+  call void asm sideeffect "", "~{r14},~{r31},~{f14},~{f31},~{v64},~{v65},~{v127}"()
+  call void @ext(i64 %a)
+  ret void
+}
+
+; The frame holds, from the top: the LR slot, the GPR save area, the FPR save
+; area, and the VR save area. The VR128 spills are 16-byte aligned.
+; CHECK-LABEL: test_save_area_layout:
+; CHECK:      stwu 1, -[[#FRAME:]](1)
+; CHECK-DAG:  std 12, [[#FRAME - 8]](1)
+; CHECK-DAG:  std 31, [[#FRAME - 16]](1)
+; CHECK-DAG:  std 14, [[#FRAME - 152]](1)
+; CHECK-DAG:  stfd 31, [[#FRAME - 160]](1)
+; CHECK-DAG:  stfd 14, [[#FRAME - 296]](1)
+; CHECK-DAG:  li [[V64:[0-9]+]], [[#FRAME - 320]]
+; CHECK-DAG:  li [[V65:[0-9]+]], [[#FRAME - 336]]
+; CHECK-DAG:  stvx128 64, 1, [[V64]]
+; CHECK-DAG:  stvx128 65, 1, [[V65]]
+; CHECK:      bl ext
