@@ -2283,80 +2283,96 @@ void PPCFrameLowering::processFunctionBeforeFrameFinalized(MachineFunction &MF,
     LowerBound = TCSPDelta;
   }
 
-  // The Floating-point register save area is right below the back chain word
-  // of the previous stack frame.
-  if (HasFPSaveArea) {
-    for (unsigned i = 0, e = FPRegs.size(); i != e; ++i) {
-      int FI = FPRegs[i].getFrameIdx();
+  auto PlaceFPRs = [&]() {
+    // The Floating-point register save area is right below the back chain word
+    // of the previous stack frame.
+    if (HasFPSaveArea) {
+      for (unsigned i = 0, e = FPRegs.size(); i != e; ++i) {
+        int FI = FPRegs[i].getFrameIdx();
 
-      MFI.setObjectOffset(FI, LowerBound + MFI.getObjectOffset(FI));
+        MFI.setObjectOffset(FI, LowerBound + MFI.getObjectOffset(FI));
+      }
+
+      LowerBound -= (31 - TRI->getEncodingValue(MinFPR) + 1) * 8;
     }
+  };
 
-    LowerBound -= (31 - TRI->getEncodingValue(MinFPR) + 1) * 8;
-  }
-
-  // Check whether the frame pointer register is allocated. If so, make sure it
-  // is spilled to the correct offset.
-  if (needsFP(MF)) {
-    int FI = PFI->getFramePointerSaveIndex();
-    assert(FI && "No Frame Pointer Save Slot!");
-    MFI.setObjectOffset(FI, LowerBound + MFI.getObjectOffset(FI));
-    // FP is R31/X31, so no need to update MinGPR/MinG8R.
-    HasGPSaveArea = true;
-  }
-
-  if (PFI->usesPICBase()) {
-    int FI = PFI->getPICBasePointerSaveIndex();
-    assert(FI && "No PIC Base Pointer Save Slot!");
-    MFI.setObjectOffset(FI, LowerBound + MFI.getObjectOffset(FI));
-
-    MinGPR = std::min<unsigned>(MinGPR, PPC::R30);
-    HasGPSaveArea = true;
-  }
-
-  const PPCRegisterInfo *RegInfo = Subtarget.getRegisterInfo();
-  if (RegInfo->hasBasePointer(MF)) {
-    int FI = PFI->getBasePointerSaveIndex();
-    assert(FI && "No Base Pointer Save Slot!");
-    MFI.setObjectOffset(FI, LowerBound + MFI.getObjectOffset(FI));
-
-    Register BP = RegInfo->getBaseRegister(MF);
-    if (PPC::G8RCRegClass.contains(BP)) {
-      MinG8R = std::min<unsigned>(MinG8R, BP);
-      HasG8SaveArea = true;
-    } else if (PPC::GPRCRegClass.contains(BP)) {
-      MinGPR = std::min<unsigned>(MinGPR, BP);
+  auto PlaceGPRs = [&]() {
+    // Check whether the frame pointer register is allocated. If so, make sure it
+    // is spilled to the correct offset.
+    if (needsFP(MF)) {
+      int FI = PFI->getFramePointerSaveIndex();
+      assert(FI && "No Frame Pointer Save Slot!");
+      MFI.setObjectOffset(FI, LowerBound + MFI.getObjectOffset(FI));
+      // FP is R31/X31, so no need to update MinGPR/MinG8R.
       HasGPSaveArea = true;
     }
-  }
 
-  // General register save area starts right below the Floating-point
-  // register save area.
-  if (HasGPSaveArea || HasG8SaveArea) {
-    // Move general register save area spill slots down, taking into account
-    // the size of the Floating-point register save area.
-    for (unsigned i = 0, e = GPRegs.size(); i != e; ++i) {
-      if (!GPRegs[i].isSpilledToReg()) {
-        int FI = GPRegs[i].getFrameIdx();
-        MFI.setObjectOffset(FI, LowerBound + MFI.getObjectOffset(FI));
+    if (PFI->usesPICBase()) {
+      int FI = PFI->getPICBasePointerSaveIndex();
+      assert(FI && "No PIC Base Pointer Save Slot!");
+      MFI.setObjectOffset(FI, LowerBound + MFI.getObjectOffset(FI));
+
+      MinGPR = std::min<unsigned>(MinGPR, PPC::R30);
+      HasGPSaveArea = true;
+    }
+
+    const PPCRegisterInfo *RegInfo = Subtarget.getRegisterInfo();
+    if (RegInfo->hasBasePointer(MF)) {
+      int FI = PFI->getBasePointerSaveIndex();
+      assert(FI && "No Base Pointer Save Slot!");
+      MFI.setObjectOffset(FI, LowerBound + MFI.getObjectOffset(FI));
+
+      Register BP = RegInfo->getBaseRegister(MF);
+      if (PPC::G8RCRegClass.contains(BP)) {
+        MinG8R = std::min<unsigned>(MinG8R, BP);
+        HasG8SaveArea = true;
+      } else if (PPC::GPRCRegClass.contains(BP)) {
+        MinGPR = std::min<unsigned>(MinGPR, BP);
+        HasGPSaveArea = true;
       }
     }
 
-    // Move general register save area spill slots down, taking into account
-    // the size of the Floating-point register save area.
-    for (unsigned i = 0, e = G8Regs.size(); i != e; ++i) {
-      if (!G8Regs[i].isSpilledToReg()) {
-        int FI = G8Regs[i].getFrameIdx();
-        MFI.setObjectOffset(FI, LowerBound + MFI.getObjectOffset(FI));
+    // General register save area starts right below the Floating-point
+    // register save area.
+    if (HasGPSaveArea || HasG8SaveArea) {
+      // Move general register save area spill slots down, taking into account
+      // the size of the Floating-point register save area.
+      for (unsigned i = 0, e = GPRegs.size(); i != e; ++i) {
+        if (!GPRegs[i].isSpilledToReg()) {
+          int FI = GPRegs[i].getFrameIdx();
+          MFI.setObjectOffset(FI, LowerBound + MFI.getObjectOffset(FI));
+        }
       }
+
+      // Move general register save area spill slots down, taking into account
+      // the size of the Floating-point register save area.
+      for (unsigned i = 0, e = G8Regs.size(); i != e; ++i) {
+        if (!G8Regs[i].isSpilledToReg()) {
+          int FI = G8Regs[i].getFrameIdx();
+          MFI.setObjectOffset(FI, LowerBound + MFI.getObjectOffset(FI));
+        }
+      }
+
+      unsigned MinReg =
+        std::min<unsigned>(TRI->getEncodingValue(MinGPR),
+                           TRI->getEncodingValue(MinG8R));
+
+      const unsigned GPRegSize = Subtarget.isPPC64() ? 8 : 4;
+      LowerBound -= (31 - MinReg + 1) * GPRegSize;
     }
+  };
 
-    unsigned MinReg =
-      std::min<unsigned>(TRI->getEncodingValue(MinGPR),
-                         TRI->getEncodingValue(MinG8R));
-
-    const unsigned GPRegSize = Subtarget.isPPC64() ? 8 : 4;
-    LowerBound -= (31 - MinReg + 1) * GPRegSize;
+  // Xbox 360 frames hold, from the top: the LR slot, the GPR save area, the
+  // FPR save area, then the VR save area. Other ABIs place FPRs above GPRs.
+  if (Subtarget.isTargetXbox360()) {
+    if (MustSaveLR(MF, PPC::LR))
+      LowerBound -= 8;
+    PlaceGPRs();
+    PlaceFPRs();
+  } else {
+    PlaceFPRs();
+    PlaceGPRs();
   }
 
   // For 32-bit only, the CR save area is below the general register
