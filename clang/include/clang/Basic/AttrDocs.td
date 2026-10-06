@@ -9026,3 +9026,11 @@ Declares that a function potentially allocates heap memory, and prevents any pot
 of ``nonallocating`` by the compiler.
   }];
 }
+
+def IntrinTypeDocs : Documentation {
+  let Category = DocCatDecl;
+  let Heading = "intrin_type";
+  let Content = [{
+Declares that a record corresponds to an intrinsic type, which is used by the compiler for optimization and code generation purposes.
+  }];
+}
