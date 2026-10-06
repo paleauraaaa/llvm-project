@@ -191,21 +191,21 @@ entry:
 
 define void @test_nonvolatile_clobbers() {
 entry:
-  call void asm sideeffect "", "~{r14},~{f14},~{v20},~{v31}"()
+  call void asm sideeffect "", "~{r14},~{f14},~{v14},~{v20},~{v31},~{v64},~{v127}"()
   ret void
 }
 
 ; CHECK-LABEL: test_nonvolatile_clobbers:
+; Only V64-V127 are nonvolatile; V14, V20 and V31 must not be saved.
+; CHECK-NOT: {{stvx |lvx }}
 ; CHECK-DAG: std 14, {{-?[0-9]+}}(1)
 ; CHECK-DAG: stfd 14, {{-?[0-9]+}}(1)
 ; CHECK-DAG: ld 14, {{-?[0-9]+}}(1)
 ; CHECK-DAG: lfd 14, {{-?[0-9]+}}(1)
-; CHECK-DAG: li 3, -480
-; CHECK-DAG: stvx 20, 1, 3
-; CHECK-DAG: lvx 20, 1, 3
-; CHECK-DAG: li 3, -304
-; CHECK-DAG: stvx 31, 1, 3
-; CHECK-DAG: lvx 31, 1, 3
+; CHECK-DAG: stvx128 64, 1, {{[0-9]+}}
+; CHECK-DAG: stvx128 127, 1, {{[0-9]+}}
+; CHECK-DAG: lvx128 64, 1, {{[0-9]+}}
+; CHECK-DAG: lvx128 127, 1, {{[0-9]+}}
 ; CHECK: blr
 
 define void @test_nonvolatile_cr_clobbers() {
@@ -220,10 +220,10 @@ entry:
 ; CHECK: #APP
 ; CHECK: #NO_APP
 ; CHECK: lwz [[CRSCRATCH]], 8(1)
-; CHECK-DAG: mtocrf 32, [[CRSCRATCH]]
-; CHECK-DAG: mtocrf 16, [[CRSCRATCH]]
-; CHECK-DAG: mtocrf 8, [[CRSCRATCH]]
-; CHECK-DAG: mtocrf 4, [[CRSCRATCH]]
+; CHECK-DAG: mtcrf 32, [[CRSCRATCH]]
+; CHECK-DAG: mtcrf 16, [[CRSCRATCH]]
+; CHECK-DAG: mtcrf 8, [[CRSCRATCH]]
+; CHECK-DAG: mtcrf 4, [[CRSCRATCH]]
 ; CHECK: blr
 
 declare void @callee()

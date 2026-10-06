@@ -2255,7 +2255,7 @@ void PPCFrameLowering::processFunctionBeforeFrameFinalized(MachineFunction &MF,
                PPC::CRRCRegClass.contains(Reg)) {
       ; // do nothing, as we already know whether CRs are spilled
     } else if (PPC::VRRCRegClass.contains(Reg) ||
-               // PPC::VR128RCRegClass.contains(Reg) ||
+               PPC::VR128RCRegClass.contains(Reg) ||
                PPC::SPERCRegClass.contains(Reg)) {
       // Altivec and SPE are mutually exclusive, but have the same stack
       // alignment requirements, so overload the save area for both cases.
