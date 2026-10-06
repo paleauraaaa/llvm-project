@@ -553,6 +553,9 @@ createPPC64_SVR4_TargetCodeGenInfo(CodeGenModule &CGM, PPC64_SVR4_ABIKind Kind,
                                    bool SoftFloatABI);
 
 std::unique_ptr<TargetCodeGenInfo>
+createPPC64_Xbox360_TargetCodeGenInfo(CodeGenModule &CGM);
+
+std::unique_ptr<TargetCodeGenInfo>
 createRISCVTargetCodeGenInfo(CodeGenModule &CGM, unsigned XLen, unsigned FLen,
                              bool EABI);
 

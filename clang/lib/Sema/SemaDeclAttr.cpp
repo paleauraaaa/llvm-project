@@ -6030,6 +6030,32 @@ static void handleDeprecatedAttr(Sema &S, Decl *D, const ParsedAttr &AL) {
   D->addAttr(::new (S.Context) DeprecatedAttr(S.Context, AL, Str, Replacement));
 }
 
+struct IntrinTypeInfo {
+  StringRef Name;
+};
+
+static void handleIntrinTypeAttr(Sema &S, Decl *D, const ParsedAttr &AL) {
+  static std::array<IntrinTypeInfo, 1> Infos = {
+    { /*.Name = */"__vector4" }
+  };
+
+  auto *RD = cast<RecordDecl>(D);
+  IntrinTypeInfo* Info = nullptr;
+  for (auto &I : Infos) {
+    if (RD->getName() == I.Name) {
+      Info = &I;
+      break;
+    }
+  }
+
+  if (!Info) {
+    S.Diag(AL.getLoc(), diag::warn_unknown_intrin_type) << RD << AL;
+    return;
+  }
+
+  D->addAttr(::new (S.Context) IntrinTypeAttr(S.Context, AL));
+}
+
 static bool isGlobalVar(const Decl *D) {
   if (const auto *S = dyn_cast<VarDecl>(D))
     return S->hasGlobalStorage();
@@ -6858,6 +6884,9 @@ ProcessDeclAttribute(Sema &S, Scope *scope, Decl *D, const ParsedAttr &AL,
     break;
   case ParsedAttr::AT_Ownership:
     handleOwnershipAttr(S, D, AL);
+    break;
+  case ParsedAttr::AT_IntrinType:
+    handleIntrinTypeAttr(S, D, AL);
     break;
   case ParsedAttr::AT_Naked:
     handleNakedAttr(S, D, AL);

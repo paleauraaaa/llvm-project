@@ -196,6 +196,9 @@ createTargetCodeGenInfo(CodeGenModule &CGM) {
   case llvm::Triple::ppc64:
     if (Triple.isOSAIX())
       return createAIXTargetCodeGenInfo(CGM, /*Is64Bit=*/true);
+    
+    if (Triple.isOSXbox360())
+      return createPPC64_Xbox360_TargetCodeGenInfo(CGM);
 
     if (Triple.isOSBinFormatELF()) {
       PPC64_SVR4_ABIKind Kind = PPC64_SVR4_ABIKind::ELFv1;
