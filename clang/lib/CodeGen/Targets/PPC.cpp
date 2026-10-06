@@ -1020,6 +1020,192 @@ void PPC64_SVR4_TargetCodeGenInfo::emitTargetMetadata(
   }
 }
 
+// Xbox 360
+namespace {
+/// PPC64_Xbox360ABIInfo - The Xbox 360 ABI information.
+class PPC64_Xbox360_ABIInfo : public ABIInfo {
+  const bool Is64Bit;
+  const unsigned PtrByteSize;
+  CharUnits getParamTypeAlignment(QualType Ty) const;
+  RValue EmitVAArg(CodeGenFunction &CGF, Address VAListAddr,
+                   QualType Ty, AggValueSlot Slot) const;
+
+  static bool isIntrinType(QualType Ty) {
+    const RecordDecl *RD = Ty->getAsRecordDecl();
+    return RD && RD->hasAttr<IntrinTypeAttr>();
+  }
+
+  static llvm::Type *getVector4Type(CodeGen::CodeGenTypes &CGT) {
+    return llvm::FixedVectorType::get(
+        llvm::Type::getFloatTy(CGT.getLLVMContext()), 4);
+  }
+public:
+  PPC64_Xbox360_ABIInfo(CodeGen::CodeGenTypes &CGT)
+      : ABIInfo(CGT), Is64Bit(true), PtrByteSize(8) {}
+
+  bool isPromotableTypeForABI(QualType Ty) const;
+
+  ABIArgInfo classifyReturnType(QualType RetTy) const;
+  ABIArgInfo classifyArgumentType(QualType Ty) const;
+
+  void computeInfo(CGFunctionInfo &FI) const override {
+    if (!getCXXABI().classifyReturnType(FI)) {
+      if (isIntrinType(FI.getReturnType())) {
+        FI.getReturnInfo() = ABIArgInfo::getDirect(getVector4Type(CGT));
+      } else {
+        FI.getReturnInfo() = classifyReturnType(FI.getReturnType());
+      }
+    }
+
+    for (auto &I : FI.arguments()) {
+      // We rely on the default argument classification for the most part.
+      // One exception:  An aggregate containing a single floating-point
+      // or vector item must be passed in a register if one is available.
+      if (isIntrinType(I.type)) {
+        I.info = ABIArgInfo::getDirect(getVector4Type(CGT));
+        continue;
+      }
+      I.info = classifyArgumentType(I.type);
+    }
+  }
+};
+
+class PPC64_Xbox360_TargetCodeGenInfo : public TargetCodeGenInfo {
+  const bool Is64Bit;
+
+public:
+  PPC64_Xbox360_TargetCodeGenInfo(CodeGen::CodeGenTypes &CGT)
+      : TargetCodeGenInfo(std::make_unique<PPC64_Xbox360_ABIInfo>(CGT)),
+        Is64Bit(true) {}
+  int getDwarfEHStackPointer(CodeGen::CodeGenModule &M) const override {
+    return 1; // r1 is the dedicated stack pointer
+  }
+};
+
+} // namespace
+
+// Return true if the ABI requires Ty to be passed sign- or zero-
+// extended to 32/64 bits.
+bool PPC64_Xbox360_ABIInfo::isPromotableTypeForABI(QualType Ty) const {
+  // Treat an enum type as its underlying type.
+  if (const EnumType *EnumTy = Ty->getAs<EnumType>())
+    Ty = EnumTy->getDecl()->getIntegerType();
+
+  // Promotable integer types are required to be promoted by the ABI.
+  if (getContext().isPromotableIntegerType(Ty))
+    return true;
+
+  // For 64 bit mode, in addition to the usual promotable integer types, we also
+  // need to extend all 32-bit types, since the ABI requires promotion to 64
+  // bits.
+  if (const BuiltinType *BT = Ty->getAs<BuiltinType>())
+    switch (BT->getKind()) {
+    case BuiltinType::Int:
+    case BuiltinType::UInt:
+      return true;
+    default:
+      break;
+    }
+
+  return false;
+}
+
+ABIArgInfo PPC64_Xbox360_ABIInfo::classifyReturnType(QualType RetTy) const {
+  if (RetTy->isAnyComplexType())
+    return ABIArgInfo::getDirect();
+
+  if (RetTy->isVectorType())
+    return ABIArgInfo::getDirect();
+
+  if (RetTy->isVoidType())
+    return ABIArgInfo::getIgnore();
+
+  if (isAggregateTypeForABI(RetTy))
+    return getNaturalAlignIndirect(RetTy);
+
+  return (isPromotableTypeForABI(RetTy) ? ABIArgInfo::getExtend(RetTy)
+                                        : ABIArgInfo::getDirect());
+}
+
+ABIArgInfo PPC64_Xbox360_ABIInfo::classifyArgumentType(QualType Ty) const {
+  Ty = useFirstFieldIfTransparentUnion(Ty);
+
+  if (Ty->isAnyComplexType())
+    return ABIArgInfo::getDirect();
+
+  if (Ty->isVectorType())
+    return ABIArgInfo::getDirect();
+
+  if (isAggregateTypeForABI(Ty)) {
+    // Records with non-trivial destructors/copy-constructors should not be
+    // passed by value.
+    if (CGCXXABI::RecordArgABI RAA = getRecordArgABI(Ty, getCXXABI()))
+      return getNaturalAlignIndirect(Ty, RAA == CGCXXABI::RAA_DirectInMemory);
+
+    CharUnits CCAlign = getParamTypeAlignment(Ty);
+    CharUnits TyAlign = getContext().getTypeAlignInChars(Ty);
+
+    return ABIArgInfo::getIndirect(CCAlign, /*ByVal*/ true,
+                                   /*Realign*/ TyAlign > CCAlign);
+  }
+
+  return (isPromotableTypeForABI(Ty)
+              ? ABIArgInfo::getExtend(Ty, CGT.ConvertType(Ty))
+              : ABIArgInfo::getDirect());
+}
+
+CharUnits PPC64_Xbox360_ABIInfo::getParamTypeAlignment(QualType Ty) const {
+  // Complex types are passed just like their elements.
+  if (const ComplexType *CTy = Ty->getAs<ComplexType>())
+    Ty = CTy->getElementType();
+
+  if (Ty->isVectorType())
+    return CharUnits::fromQuantity(16);
+
+  // If the structure contains a vector type, the alignment is 16.
+  if (isRecordWithSIMDVectorType(getContext(), Ty))
+    return CharUnits::fromQuantity(16);
+
+  return CharUnits::fromQuantity(PtrByteSize);
+}
+
+RValue PPC64_Xbox360_ABIInfo::EmitVAArg(CodeGenFunction &CGF, Address VAListAddr,
+                                     QualType Ty, AggValueSlot Slot) const {
+  auto TypeInfo = getContext().getTypeInfoInChars(Ty);
+  TypeInfo.Align = getParamTypeAlignment(Ty);
+
+  CharUnits SlotSize = CharUnits::fromQuantity(8);
+
+  // If we have a complex type and the base type is smaller than 8 bytes,
+  // the ABI calls for the real and imaginary parts to be right-adjusted
+  // in separate doublewords.  However, Clang expects us to produce a
+  // pointer to a structure with the two parts packed tightly.  So generate
+  // loads of the real and imaginary parts relative to the va_list pointer,
+  // and store them to a temporary structure.
+  if (const ComplexType *CTy = Ty->getAs<ComplexType>()) {
+    CharUnits EltSize = TypeInfo.Width / 2;
+    if (EltSize < SlotSize)
+      return complexTempStructure(CGF, VAListAddr, Ty, SlotSize, EltSize, CTy);
+  }
+
+  // Otherwise, just use the general rule.
+  //
+  // The PPC64 ABI passes some arguments in integer registers, even to variadic
+  // functions. To allow va_list to use the simple "void*" representation,
+  // variadic calls allocate space in the argument area for the integer argument
+  // registers, and variadic functions spill their integer argument registers to
+  // this area in their prologues. When aggregates smaller than a register are
+  // passed this way, they are passed in the least significant bits of the
+  // register, which means that after spilling on big-endian targets they will
+  // be right-aligned in their argument slot. This is uncommon; for a variety of
+  // reasons, other big-endian targets don't end up right-aligning aggregate
+  // types this way, and so right-alignment only applies to fundamental types.
+  // So on PPC64, we must force the use of right-alignment even for aggregates.
+  return emitVoidPtrVAArg(CGF, VAListAddr, Ty, /*Indirect*/ false, TypeInfo,
+                          SlotSize, /*AllowHigher*/ true, Slot,
+                          /*ForceRightAdjust*/ true);
+}
+
 bool
 PPC64TargetCodeGenInfo::initDwarfEHRegSizeTable(CodeGen::CodeGenFunction &CGF,
                                                 llvm::Value *Address) const {
@@ -1049,4 +1235,9 @@ std::unique_ptr<TargetCodeGenInfo> CodeGen::createPPC64_SVR4_TargetCodeGenInfo(
     CodeGenModule &CGM, PPC64_SVR4_ABIKind Kind, bool SoftFloatABI) {
   return std::make_unique<PPC64_SVR4_TargetCodeGenInfo>(CGM.getTypes(), Kind,
                                                         SoftFloatABI);
+}
+
+std::unique_ptr<TargetCodeGenInfo> CodeGen::createPPC64_Xbox360_TargetCodeGenInfo(
+    CodeGenModule &CGM) {
+  return std::make_unique<PPC64_Xbox360_TargetCodeGenInfo>(CGM.getTypes());
 }
