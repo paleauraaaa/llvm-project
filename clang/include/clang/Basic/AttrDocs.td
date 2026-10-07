@@ -9034,3 +9034,22 @@ def IntrinTypeDocs : Documentation {
 Declares that a record corresponds to an intrinsic type, which is used by the compiler for optimization and code generation purposes.
   }];
 }
+
+def PassInRegDocs : Documentation {
+  let Category = DocCatDecl;
+  let Heading = "passinreg";
+  let Content = [{
+Available on PowerPC64 with Microsoft extensions enabled. Instructs the
+compiler to pass and return a class, struct, or union in registers instead of
+through memory, which avoids load-hit-store stalls. The record must consist of
+a single ``float``, ``double``, or ``__vector4`` member.
+
+.. code-block:: c++
+
+  __declspec(passinreg) struct fcomplex {
+    __vector4 vec;
+  };
+
+  fcomplex add(fcomplex a, fcomplex b); // a, b and the result use registers
+  }];
+}

@@ -4982,3 +4982,11 @@ def IntrinType: InheritableAttr {
   let LangOpts = [MicrosoftExt];
   let Args = [UnsignedArgument<"SizeInBits", 1>, UnsignedArgument<"AlignInBits", 1>];
 }
+
+def PassInReg: InheritableAttr {
+  let Spellings = [Declspec<"passinreg">];
+  let Subjects = SubjectList<[Record]>;
+  let Documentation = [PassInRegDocs];
+  let LangOpts = [MicrosoftExt];
+  let SimpleHandler = 1;
+}
