@@ -3684,6 +3684,10 @@ def warn_type_attribute_deprecated_on_decl : Warning<
 def warn_unknown_intrin_type : Warning<
   "%0 is not a recognized intrinsic type; attribute %1 is ignored">,
   InGroup<UnknownIntrinType>;
+def warn_passinreg_invalid_layout : Warning<
+  "'passinreg' type %0 must consist of a single float, double, or __vector4 "
+  "member; attribute is ignored">,
+  InGroup<PassInRegInvalidLayout>;
 def err_intrin_type_mismatch : Error<
   "intrinsic type %0 has size %1 and alignment %2, but the compiler expects "
   "size %3 and alignment %4">;
