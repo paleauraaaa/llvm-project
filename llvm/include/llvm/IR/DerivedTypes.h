@@ -237,7 +237,6 @@ class StructType : public Type {
   /// This is null if the type is an literal struct or if it is a identified
   /// type that has an empty name.
   void *SymbolTableEntry = nullptr;
-
 public:
   StructType(const StructType &) = delete;
   StructType &operator=(const StructType &) = delete;

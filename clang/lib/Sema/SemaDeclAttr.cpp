@@ -6032,11 +6032,13 @@ static void handleDeprecatedAttr(Sema &S, Decl *D, const ParsedAttr &AL) {
 
 struct IntrinTypeInfo {
   StringRef Name;
+  size_t SizeInBits;
+  size_t AlignInBits;
 };
 
 static void handleIntrinTypeAttr(Sema &S, Decl *D, const ParsedAttr &AL) {
   static std::array<IntrinTypeInfo, 1> Infos = {
-    { /*.Name = */"__vector4" }
+    { /*.Name = */"__vector4", /*.SizeInBits = */128, /*.AlignInBits = */128 }
   };
 
   auto *RD = cast<RecordDecl>(D);
@@ -6053,7 +6055,7 @@ static void handleIntrinTypeAttr(Sema &S, Decl *D, const ParsedAttr &AL) {
     return;
   }
 
-  D->addAttr(::new (S.Context) IntrinTypeAttr(S.Context, AL));
+  D->addAttr(::new (S.Context) IntrinTypeAttr(S.Context, AL, Info->SizeInBits, Info->AlignInBits));
 }
 
 static bool isGlobalVar(const Decl *D) {
