@@ -19348,6 +19348,15 @@ void Sema::ActOnFields(Scope *S, SourceLocation RecLoc, Decl *EnclosingDecl,
     // Handle attributes before checking the layout.
     ProcessDeclAttributeList(S, Record, Attrs);
 
+    if (const auto *Attr = Record->getAttr<IntrinTypeAttr>()) {
+      size_t SizeInBits = Context.getTypeSize(Record->getTypeForDecl());
+      size_t AlignInBits = Context.getTypeAlign(Record->getTypeForDecl());
+      if (SizeInBits != Attr->getSizeInBits() || AlignInBits != Attr->getAlignInBits())
+        Diag(Record->getLocation(), diag::err_intrin_type_mismatch)
+          << Record << SizeInBits << AlignInBits << Attr->getSizeInBits()
+          << Attr->getAlignInBits();
+    }
+
     // Check to see if a FieldDecl is a pointer to a function.
     auto IsFunctionPointerOrForwardDecl = [&](const Decl *D) {
       const FieldDecl *FD = dyn_cast<FieldDecl>(D);

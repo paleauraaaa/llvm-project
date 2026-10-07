@@ -4980,4 +4980,5 @@ def IntrinType: InheritableAttr {
   let Subjects = SubjectList<[Record]>;
   let Documentation = [IntrinTypeDocs];
   let LangOpts = [MicrosoftExt];
+  let Args = [UnsignedArgument<"SizeInBits", 1>, UnsignedArgument<"AlignInBits", 1>];
 }
