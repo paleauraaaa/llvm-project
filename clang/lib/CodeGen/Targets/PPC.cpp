@@ -1039,6 +1039,25 @@ class PPC64_Xbox360_ABIInfo : public ABIInfo {
     return llvm::FixedVectorType::get(
         llvm::Type::getFloatTy(CGT.getLLVMContext()), 4);
   }
+
+  llvm::Type *getPassInRegCoerceType(QualType Ty) const {
+    const RecordDecl *RD = Ty->getAsRecordDecl();
+    if (!RD || !RD->hasAttr<PassInRegAttr>())
+      return nullptr;
+
+    auto It = RD->field_begin();
+    if (It == RD->field_end())
+      return nullptr;
+
+    QualType FT = It->getType();
+    if (isIntrinType(FT))
+      return getVector4Type(CGT);
+    if (FT->isSpecificBuiltinType(BuiltinType::Float) ||
+        FT->isSpecificBuiltinType(BuiltinType::Double))
+      return CGT.ConvertType(FT);
+    return nullptr;
+  }
+
 public:
   PPC64_Xbox360_ABIInfo(CodeGen::CodeGenTypes &CGT)
       : ABIInfo(CGT), Is64Bit(true), PtrByteSize(8) {}
@@ -1052,6 +1071,8 @@ public:
     if (!getCXXABI().classifyReturnType(FI)) {
       if (isIntrinType(FI.getReturnType())) {
         FI.getReturnInfo() = ABIArgInfo::getDirect(getVector4Type(CGT));
+      } else if (llvm::Type *T = getPassInRegCoerceType(FI.getReturnType())) {
+        FI.getReturnInfo() = ABIArgInfo::getDirect(T);
       } else {
         FI.getReturnInfo() = classifyReturnType(FI.getReturnType());
       }
@@ -1063,6 +1084,9 @@ public:
       // or vector item must be passed in a register if one is available.
       if (isIntrinType(I.type)) {
         I.info = ABIArgInfo::getDirect(getVector4Type(CGT));
+        continue;
+      } else if (llvm::Type *T = getPassInRegCoerceType(I.type)) {
+        I.info = ABIArgInfo::getDirect(T);
         continue;
       }
       I.info = classifyArgumentType(I.type);

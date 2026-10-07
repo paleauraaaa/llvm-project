@@ -19357,6 +19357,48 @@ void Sema::ActOnFields(Scope *S, SourceLocation RecLoc, Decl *EnclosingDecl,
           << Attr->getAlignInBits();
     }
 
+    if (Record->hasAttr<PassInRegAttr>()) {
+      auto IsPassInRegValid = [&]() {
+        if (const auto *CR = dyn_cast<CXXRecordDecl>(Record)) {
+          if (CR->getNumBases() || CR->getNumVBases() || CR->isPolymorphic())
+            return false;
+        }
+        
+        if (Record->fields().empty())
+          return false;
+
+        if (std::distance(Record->fields().begin(), Record->fields().end()) != 1)
+          return false;
+
+        if (const auto *Field = *Record->fields().begin()) {
+          if (Field->isBitField())
+            return false;
+
+          QualType FieldType = Field->getType();
+          FieldType = FieldType.getCanonicalType().getUnqualifiedType();
+          if (const auto *Builtin = FieldType->getAs<BuiltinType>()) {
+            if (Builtin->getKind() != BuiltinType::Float &&
+                Builtin->getKind() != BuiltinType::Double) {
+              return false;
+            }
+          } else if (const auto *RT = FieldType->getAs<RecordType>()) {
+            const auto* RD = RT->getDecl();
+            if (!RD->hasAttr<IntrinTypeAttr>() || RD->getName() != "__vector4")
+              return false;
+          } else {
+            return false;
+          }
+        }
+
+        return true;
+      };
+      
+      if (!Record->isDependentContext() && !IsPassInRegValid()) {
+        Diag(Record->getLocation(), diag::warn_passinreg_invalid_layout) << Record;
+        Record->dropAttr<PassInRegAttr>();
+      }
+    }
+
     // Check to see if a FieldDecl is a pointer to a function.
     auto IsFunctionPointerOrForwardDecl = [&](const Decl *D) {
       const FieldDecl *FD = dyn_cast<FieldDecl>(D);

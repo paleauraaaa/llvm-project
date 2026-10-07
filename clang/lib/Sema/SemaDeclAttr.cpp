@@ -6058,6 +6058,10 @@ static void handleIntrinTypeAttr(Sema &S, Decl *D, const ParsedAttr &AL) {
   D->addAttr(::new (S.Context) IntrinTypeAttr(S.Context, AL, Info->SizeInBits, Info->AlignInBits));
 }
 
+static void handlePassInRegAttr(Sema &S, Decl *D, const ParsedAttr &AL) {
+  D->addAttr(::new (S.Context) PassInRegAttr(S.Context, AL));
+}
+
 static bool isGlobalVar(const Decl *D) {
   if (const auto *S = dyn_cast<VarDecl>(D))
     return S->hasGlobalStorage();
