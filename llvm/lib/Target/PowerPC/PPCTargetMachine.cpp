@@ -281,6 +281,13 @@ static Reloc::Model getEffectiveRelocModel(const Triple &TT,
     report_fatal_error("invalid relocation model, AIX only supports PIC",
                        false);
 
+  if (TT.isXbox360()) {
+    if (RM && *RM != Reloc::Static)
+      report_fatal_error(
+          "Xbox 360 only supports the static relocation model", false);
+    return Reloc::Static;
+  }
+
   if (RM)
     return *RM;
 

@@ -46,11 +46,11 @@ public:
   getDefaultUnwindTableLevel(const llvm::opt::ArgList &Args) const override {
     return UnwindTableLevel::Asynchronous;
   }
-  bool isPICDefault() const override { return true; }
+  bool isPICDefault() const override { return false; }
   bool isPIEDefault(const llvm::opt::ArgList &Args) const override {
     return false;
   }
-  bool isPICDefaultForced() const override { return true; }
+  bool isPICDefaultForced() const override { return false; }
 
   void
   AddClangSystemIncludeArgs(const llvm::opt::ArgList &DriverArgs,
