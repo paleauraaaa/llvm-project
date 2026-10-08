@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -triple ppc64-ibm-xbox360 -Wno-deprecated-non-prototype -emit-llvm -o - %s | FileCheck %s
+// RUN: %clang_cc1 -triple ppc64-ibm-xbox360 -mrelocation-model static -Wno-deprecated-non-prototype -emit-llvm -o - %s | FileCheck %s
 
 void old_style();
 

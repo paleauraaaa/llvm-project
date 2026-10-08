@@ -283,7 +283,8 @@ entry:
 declare void @var_mix(i64, ...)
 
 ; CHECK-LABEL: name: call_var_mix
-; CHECK: BL {{.*}}var_mix{{.*}}implicit $x3, implicit $f1, implicit $x4, implicit $x5, implicit $v1, implicit $x7, implicit $x8, implicit $x9, implicit $x10, implicit $f2
+; CHECK: BL {{.*}}var_mix{{.*}}implicit $x3, implicit $f1, implicit $x4, implicit $x5, implicit $v1, implicit $x7, implicit $x8, implicit $x9, implicit {{(killed )?}}$x10
+; CHECK-NOT: implicit $f2
 define void @call_var_mix() {
 entry:
   call void (i64, ...) @var_mix(
@@ -310,12 +311,13 @@ entry:
 
 declare void @old_style_many(...)
 
-; After GPR3-GPR10 are filled, old-style doubles remain in FPRs and get
-; backing copies in the argument area.
+; Only the first eight doublewords of an old-style call use registers.
 ; CHECK-LABEL: name: call_old_style_many
 ; CHECK-DAG: STD {{.*}}, 80, $x1
 ; CHECK-DAG: STD {{.*}}, 88, $x1
-; CHECK: BL {{.*}}old_style_many{{.*}}implicit $f1, implicit $x3, implicit $f2, implicit $x4, implicit $f3, implicit $x5, implicit $f4, implicit $x6, implicit $f5, implicit $x7, implicit $f6, implicit $x8, implicit $f7, implicit $x9, implicit $f8, implicit $x10, implicit $f9, implicit $f10
+; CHECK: BL {{.*}}old_style_many{{.*}}implicit $f1, implicit $x3, implicit $f2, implicit $x4, implicit $f3, implicit $x5, implicit $f4, implicit $x6, implicit $f5, implicit $x7, implicit $f6, implicit $x8, implicit $f7, implicit $x9, implicit $f8, implicit $x10
+; CHECK-NOT: implicit $f9
+; CHECK-NOT: implicit $f10
 define void @call_old_style_many() {
 entry:
   call void (...) @old_style_many(

@@ -3,7 +3,7 @@
 ; save nonvolatile state with stw/std/stfd/stvx or via millicode calls, and restore LR before
 ; returning.
 ;
-; RUN: llc -mtriple=ppc64-ibm-xbox360 %s -o - | FileCheck %s
+; RUN: llc -verify-machineinstrs -mtriple=ppc64-ibm-xbox360 %s -o - | FileCheck %s
 
 target triple = "ppc64-ibm-xbox360"
 
@@ -28,13 +28,13 @@ entry:
 
 ; CHECK-LABEL: test:
 ; CHECK: mflr 12
+; CHECK-NEXT: stw 12, -8(1)
 ; CHECK-NEXT: stwu 1, -144(1)
-; CHECK-NEXT: addi 5, 1, 96
-; CHECK-NEXT: std 12, 136(1)
+; CHECK-NEXT: addi 5, 1, 80
 ; CHECK: stvx 1, 0, 3
 ; CHECK: bl callee
 ; CHECK-NEXT: addi 1, 1, 144
-; CHECK-NEXT: ld 12, -8(1)
+; CHECK-NEXT: lwz 12, -8(1)
 ; CHECK-NEXT: mtlr 12
 ; CHECK-NEXT: blr
 
@@ -67,13 +67,13 @@ entry:
 
 ; CHECK-LABEL: test_struct:
 ; CHECK: mflr 12
+; CHECK-NEXT: stw 12, -8(1)
 ; CHECK-NEXT: stwu 1, -112(1)
-; CHECK-NEXT: std 12, 104(1)
-; CHECK-NEXT: stb 3, 111(1)
-; CHECK-NEXT: std 4, 96(1)
+; CHECK-NEXT: stb 3, 103(1)
+; CHECK-NEXT: std 4, 88(1)
 ; CHECK-NEXT: bl callee
 ; CHECK-NEXT: addi 1, 1, 112
-; CHECK-NEXT: ld 12, -8(1)
+; CHECK-NEXT: lwz 12, -8(1)
 ; CHECK-NEXT: mtlr 12
 ; CHECK-NEXT: blr
 
@@ -86,9 +86,12 @@ entry:
 }
 
 ; CHECK-LABEL: test_dyn_alloca_call:
+; CHECK: extsw
 ; CHECK: stwux
 ; CHECK-NOT: stdux
 ; CHECK: bl callee
+; CHECK-NEXT: lwz 1, 0(1)
+; CHECK-NEXT: lwz 12, -8(1)
 
 define void @test_probed_dyn_alloca_call(i64 %n) #0 {
 entry:
@@ -112,8 +115,8 @@ entry:
 }
 
 ; CHECK-LABEL: test_nonleaf_min_frame:
+; CHECK: stw 12, -8(1)
 ; CHECK: stwu 1, -96(1)
-; CHECK: std 12, 88(1)
 ; CHECK: bl callee
 
 define void @test_leaf_redzone_limit() {
@@ -180,10 +183,11 @@ entry:
 
 ; CHECK-LABEL: test_dyn_alloca_stack_args:
 ; The dynamic allocation stores the old SP as the new backchain and returns
-; newSP + 16 bytes of linkage + 96 bytes reserved for this call's parameters.
-; CHECK: addi 4, 31, 144
-; CHECK: stwux 4, 1, 5
-; CHECK: addi 3, 1, 112
+; newSP + 16 bytes of linkage + 80 bytes reserved for this call's parameters.
+; CHECK-DAG: addi [[BACKCHAIN:[0-9]+]], 31, 128
+; CHECK-DAG: extsw [[NEG_SIZE:[0-9]+]], 3
+; CHECK: stwux [[BACKCHAIN]], 1, [[NEG_SIZE]]
+; CHECK: addi 3, 1, 96
 ; CHECK-NOT: stdux
 ; CHECK-DAG: std {{[0-9]+}}, 80(1)
 ; CHECK-DAG: std {{[0-9]+}}, 88(1)
@@ -242,14 +246,16 @@ entry:
 ; The frame holds, from the top: the LR slot, the GPR save area, the FPR save
 ; area, and the VR save area. The VR128 spills are 16-byte aligned.
 ; CHECK-LABEL: test_save_area_layout:
-; CHECK:      stwu 1, -[[#FRAME:]](1)
-; CHECK-DAG:  std 12, [[#FRAME - 8]](1)
-; CHECK-DAG:  std 31, [[#FRAME - 16]](1)
-; CHECK-DAG:  std 14, [[#FRAME - 152]](1)
-; CHECK-DAG:  stfd 31, [[#FRAME - 160]](1)
-; CHECK-DAG:  stfd 14, [[#FRAME - 296]](1)
-; CHECK-DAG:  li [[V64:[0-9]+]], [[#FRAME - 320]]
-; CHECK-DAG:  li [[V65:[0-9]+]], [[#FRAME - 336]]
+; CHECK-DAG:  stw 12, -8(1)
+; CHECK-DAG:  std 31, -16(1)
+; CHECK-DAG:  std 14, -152(1)
+; CHECK-DAG:  stfd 31, -160(1)
+; CHECK-DAG:  stfd 14, -296(1)
+; CHECK-DAG:  li [[V64:[0-9]+]], -320
+; CHECK-DAG:  li [[V65:[0-9]+]], -336
 ; CHECK-DAG:  stvx128 64, 1, [[V64]]
 ; CHECK-DAG:  stvx128 65, 1, [[V65]]
+; CHECK:      stwu 1, -[[#FRAME:]](1)
 ; CHECK:      bl ext
+; CHECK:      addi 1, 1, [[#FRAME]]
+; CHECK:      lwz 12, -8(1)
