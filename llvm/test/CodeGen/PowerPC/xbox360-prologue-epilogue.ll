@@ -251,10 +251,12 @@ entry:
 ; CHECK-DAG:  std 14, -152(1)
 ; CHECK-DAG:  stfd 31, -160(1)
 ; CHECK-DAG:  stfd 14, -296(1)
-; CHECK-DAG:  li [[V64:[0-9]+]], -320
-; CHECK-DAG:  li [[V65:[0-9]+]], -336
+; CHECK-DAG:  li [[V64:[0-9]+]], -1328
+; CHECK-DAG:  li [[V65:[0-9]+]], -1312
+; CHECK-DAG:  li [[V127:[0-9]+]], -320
 ; CHECK-DAG:  stvx128 64, 1, [[V64]]
 ; CHECK-DAG:  stvx128 65, 1, [[V65]]
+; CHECK-DAG:  stvx128 127, 1, [[V127]]
 ; CHECK:      stwu 1, -[[#FRAME:]](1)
 ; CHECK:      bl ext
 ; CHECK:      addi 1, 1, [[#FRAME]]

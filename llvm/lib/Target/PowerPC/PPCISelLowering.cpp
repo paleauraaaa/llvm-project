@@ -7784,7 +7784,7 @@ SDValue PPCTargetLowering::LowerCall_Xbox360(
 //        |     +-----------------------------------+
 //        |     |             Saved FPRs            | <-- 0-18 double words
 //        |     +-----------------------------------+
-//        |     |       Saved vector registers      | <-- 0-64 quad words, must be quad word-aligned (vector registers are 128 bits)
+//        |     |             Saved VRs             | <-- 0-64 quad words, must be quad word-aligned
 //        |     +-----------------------------------+
 //        |     |           Local variables         | <-- arbitary size, can be 0 bytes, must be quad word-aligned
 //        |     +-----------------------------------+

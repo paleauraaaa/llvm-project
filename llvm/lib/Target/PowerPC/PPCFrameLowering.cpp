@@ -311,8 +311,18 @@ const PPCFrameLowering::SpillSlot *PPCFrameLowering::getCalleeSavedSpillSlots(
       CALLEE_SAVED_FPRS, CALLEE_SAVED_GPRS64, CALLEE_SAVED_VRS};
 
   // LR is saved separately; FPSCR, CTR, and XER are volatile.
-  static const SpillSlot Xbox360Offsets[] = {
-    CALLEE_SAVED_FPRS, CALLEE_SAVED_GPRS64, CALLEE_SAVED_VRS};
+  static const auto Xbox360Offsets = [&]() {
+    SmallVector<SpillSlot, 100> Slots = {
+        CALLEE_SAVED_FPRS, CALLEE_SAVED_GPRS64};
+    const auto *TRI = Subtarget.getRegisterInfo();
+    // Match __savevmx_n: VR127 is nearest the preceding save area.
+    for (MCPhysReg Reg : PPC::VR128RCRegClass) {
+      unsigned RegNum = TRI->getEncodingValue(Reg);
+      if (RegNum >= 64)
+        Slots.push_back({Reg, -int(128 - RegNum) * 16});
+    }
+    return Slots;
+  }();
 
   if (Subtarget.is64BitELFABI()) {
     NumEntries = std::size(ELFOffsets64);
@@ -326,7 +336,7 @@ const PPCFrameLowering::SpillSlot *PPCFrameLowering::getCalleeSavedSpillSlots(
 
   if (Subtarget.isTargetXbox360()) {
     NumEntries = std::size(Xbox360Offsets);
-    return Xbox360Offsets;
+    return Xbox360Offsets.data();
   }
 
   assert(Subtarget.isAIXABI() && "Unexpected ABI.");
