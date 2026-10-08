@@ -989,7 +989,6 @@ void WinCOFFWriter::recordRelocation(MCAssembler &Asm,
     case COFF::IMAGE_REL_PPC_SECREL16:
     case COFF::IMAGE_REL_PPC_SECRELLO:
     case COFF::IMAGE_REL_PPC_SECTION:
-    //case COFF::IMAGE_REL_PPC_TOKEN:
     case COFF::IMAGE_REL_PPC_SECREL:
     case COFF::IMAGE_REL_PPC_REFHI:
     case COFF::IMAGE_REL_PPC_REFLO:
@@ -1022,6 +1021,8 @@ void WinCOFFWriter::recordRelocation(MCAssembler &Asm,
       // be followed by IMAGE_REL_PPC_PAIR
       auto RelocPair = Reloc;
       RelocPair.Data.Type = COFF::IMAGE_REL_PPC_PAIR;
+      // PAIR stores the signed 16-bit addend in SymbolTableIndex.
+      RelocPair.Data.SymbolTableIndex = static_cast<uint16_t>(FixedValue);
       Sec->Relocations.push_back(RelocPair);
     }
   }
