@@ -1414,7 +1414,9 @@ PPCTargetLowering::PPCTargetLowering(const PPCTargetMachine &TM,
   else
     setMaxAtomicSizeInBitsSupported(32);
 
-  setStackPointerRegisterToSaveRestore(Subtarget.getStackPointerRegister());
+  setStackPointerRegisterToSaveRestore(
+      Subtarget.isTargetXbox360() ? PPC::R1
+                                 : Subtarget.getStackPointerRegister());
 
   // We have target-specific dag combine patterns for the following nodes:
   setTargetDAGCombine({ISD::AND, ISD::ADD, ISD::SHL, ISD::SRA, ISD::SRL,
@@ -3272,7 +3274,7 @@ unsigned PPCTargetLowering::getJumpTableEncoding() const {
 }
 
 bool PPCTargetLowering::isJumpTableRelative() const {
-  if (UseAbsoluteJumpTables)
+  if (UseAbsoluteJumpTables || Subtarget.isTargetXbox360())
     return false;
   if (Subtarget.isPPC64() || Subtarget.isAIXABI())
     return true;
@@ -5275,7 +5277,10 @@ static SDValue EmitTailCallStoreFPAndRetAddr(SelectionDAG &DAG, SDValue Chain,
     const PPCSubtarget &Subtarget = MF.getSubtarget<PPCSubtarget>();
     const PPCFrameLowering *FL = Subtarget.getFrameLowering();
     int SlotSize = Subtarget.isPPC64() ? 8 : 4;
-    int NewRetAddrLoc = SPDiff + FL->getReturnSaveOffset();
+    int NewRetAddrLoc =
+        SPDiff + (Subtarget.isTargetXbox360()
+                      ? -(int64_t)FL->getReturnSaveOffset()
+                      : FL->getReturnSaveOffset());
     int NewRetAddr = MF.getFrameInfo().CreateFixedObject(SlotSize,
                                                          NewRetAddrLoc, true);
     SDValue NewRetAddrFrIdx =
@@ -7362,10 +7367,7 @@ SDValue PPCTargetLowering::LowerCall_Xbox360(
     }
 
     unsigned NumBytesActuallyUsed = NumBytes;
-    if (HasParameterArea)
-      NumBytes = std::max(NumBytes, LinkageSize + (8 * RegByteSize));
-    else
-      NumBytes = LinkageSize;
+    NumBytes = std::max(NumBytes, LinkageSize + (8 * RegByteSize));
 
     // Tail call needs the stack to be aligned.
     if (getTargetMachine().Options.GuaranteedTailCallOpt && IsFastCall)
@@ -7546,6 +7548,10 @@ SDValue PPCTargetLowering::LowerCall_Xbox360(
                                               MachinePointerInfo(), ObjType);
 
                     MemOpChains.push_back(Load.getValue(1));
+                    if (LoadSizeInBits < 64)
+                        Load = DAG.getNode(
+                            ISD::SHL, dl, RegVT, Load,
+                            DAG.getConstant(64 - LoadSizeInBits, dl, MVT::i32));
                     RegsToPass.push_back(std::make_pair(GPR[GPR_idx++], Load));
                     ArgOffset += RegByteSize;
                 } else {
@@ -7602,7 +7608,8 @@ SDValue PPCTargetLowering::LowerCall_Xbox360(
             bool NeededLoad = false;
 
             // First load the argument into the next available FPR.
-            if (FPR_idx != NumFPRs)
+            if (FPR_idx != NumFPRs &&
+                (!CFlags.IsVarArg || GPR_idx != NumGPRs))
                 RegsToPass.push_back(std::make_pair(FPR[FPR_idx++], Arg));
 
             // Next, load the argument into GPR or stack slot if needed.
@@ -7700,7 +7707,7 @@ SDValue PPCTargetLowering::LowerCall_Xbox360(
             SDValue Store =
                 DAG.getStore(Chain, dl, Arg, PtrOff, MachinePointerInfo());
             MemOpChains.push_back(Store);
-            if (VR_idx != NumVRs) {
+            if (VR_idx != NumVRs && GPR_idx + 2 <= NumGPRs) {
                 SDValue Load =
                     DAG.getLoad(MVT::v4f32, dl, Store, PtrOff, MachinePointerInfo());
                 MemOpChains.push_back(Load.getValue(1));
@@ -7771,17 +7778,17 @@ SDValue PPCTargetLowering::LowerCall_Xbox360(
 // High Memory  +-----------------------------------+
 //        +-->  |             Back chain            | <-- 1 word
 //        |     +-----------------------------------+ <-- 1 reserved word in between
-//        |     |           Return address          | <-- 1 word (lower word of LR, only used for non-leaf functions but always present)
+//        |     |           Return address          | <-- 1 word plus padding when LR must be saved
 //        |     +-----------------------------------+ <-- 1 reserved word in between
 //        |     |             Saved GPRs            | <-- 0-18 double words (the full 64-bit register is saved, even if the function only uses the lower 32 bits)
 //        |     +-----------------------------------+
 //        |     |             Saved FPRs            | <-- 0-18 double words
 //        |     +-----------------------------------+
-//        |     |       Saved vector registers      | <-- 0-19 quad words, must be quad word-aligned (vector registers are 128 bits)
+//        |     |       Saved vector registers      | <-- 0-64 quad words, must be quad word-aligned (vector registers are 128 bits)
 //        |     +-----------------------------------+
 //        |     |           Local variables         | <-- arbitary size, can be 0 bytes, must be quad word-aligned
 //        |     +-----------------------------------+
-//        |     |          _alloca() space          | <-- arbitary size, can be 0 bytes, presumably must be at least double if not quad word-aligned
+//        |     |          _alloca() space          | <-- size is a multiple of 16 bytes
 //        |     +-----------------------------------+
 //        |     |    Additional stack parameters    | <-- arbitary size, can be 0 bytes, presumably must be at least double if not quad word-aligned
 //        |     +-----------------------------------+
@@ -7790,7 +7797,7 @@ SDValue PPCTargetLowering::LowerCall_Xbox360(
 // SP-->  +---  |            Back chain             | <-- 1 word (if non-leaf function) or 0 words (if leaf function)
 // Low Memory   +-----------------------------------+ <-- 1 reserved word afterwards if non-leaf function
 //
-// (for clarity's sake, word == 32 bits here, and all fields are always present unless otherwise noted)
+// (for clarity's sake, word == 32 bits here)
 //
 
 SDValue PPCTargetLowering::LowerFormalArguments_Xbox360(
@@ -7828,15 +7835,9 @@ SDValue PPCTargetLowering::LowerFormalArguments_Xbox360(
     const unsigned Num_FPR_Regs = std::size(FPR);
     const unsigned Num_VR_Regs = std::size(VR);
 
-    bool HasParameterArea = isVarArg;
+    bool HasParameterArea = CallConv != CallingConv::Fast || isVarArg;
     unsigned ParamAreaSize = Num_GPR_Regs * RegByteSize;
-    unsigned PreParamAreaSize = 8;
-    // TODO: implement IsLeaf and CanUseRedZone checks.
-    bool IsLeaf = false;
-    bool CanUseRedZone = false;
-    bool RequiresLinkageArea = !IsLeaf || !CanUseRedZone;
-    if (RequiresLinkageArea)
-        PreParamAreaSize += LinkageSize;
+    unsigned PreParamAreaSize = LinkageSize;
     unsigned NumBytes = PreParamAreaSize;
     unsigned AvailableFPRs = Num_FPR_Regs;
     unsigned AvailableVRs = Num_VR_Regs;
@@ -7932,18 +7933,24 @@ SDValue PPCTargetLowering::LowerFormalArguments_Xbox360(
 
             // Handle aggregates smaller than 8 bytes.
             if (ObjSize < RegByteSize) {
-                // The value of the object is its address, which differs from the
-                // address of the enclosing doubleword on big-endian systems.
+                bool RightJustify =
+                    ObjSize == 1 || ObjSize == 2 || ObjSize == 4;
                 SDValue Arg = FIN;
-                SDValue ArgOff = DAG.getConstant(RegByteSize - ObjSize, dl, RegVT);
-                Arg = DAG.getNode(ISD::ADD, dl, ArgOff.getValueType(), Arg, ArgOff);
+                if (RightJustify) {
+                    SDValue ArgOff =
+                        DAG.getConstant(RegByteSize - ObjSize, dl, RegVT);
+                    Arg = DAG.getNode(ISD::ADD, dl, RegVT, Arg, ArgOff);
+                }
                 InVals.push_back(Arg);
 
                 if (GPR_idx != Num_GPR_Regs) {
                     Register VReg = MF.addLiveIn(GPR[GPR_idx++], &PPC::G8RCRegClass);
                     FuncInfo->addLiveInAttr(VReg, Flags);
                     SDValue Val = DAG.getCopyFromReg(Chain, dl, VReg, RegVT);
-                    EVT ObjType = EVT::getIntegerVT(*DAG.getContext(), ObjSize * 8);
+                    EVT ObjType = RightJustify
+                                      ? EVT::getIntegerVT(*DAG.getContext(),
+                                                          ObjSize * 8)
+                                      : RegVT;
                     SDValue Store =
                         DAG.getTruncStore(Val.getValue(1), dl, Val, Arg,
                               MachinePointerInfo(&*FuncArg), ObjType);
@@ -7973,9 +7980,14 @@ SDValue PPCTargetLowering::LowerFormalArguments_Xbox360(
                     Addr = DAG.getNode(ISD::ADD, dl, Off.getValueType(), Addr, Off);
                 }
                 unsigned StoreSizeInBits = std::min(RegByteSize, (ObjSize - j)) * 8;
+                SDValue StoreChain = Val.getValue(1);
+                if (StoreSizeInBits < 64)
+                    Val = DAG.getNode(
+                        ISD::SRL, dl, RegVT, Val,
+                        DAG.getConstant(64 - StoreSizeInBits, dl, MVT::i32));
                 EVT ObjType = EVT::getIntegerVT(*DAG.getContext(), StoreSizeInBits);
                 SDValue Store =
-                    DAG.getTruncStore(Val.getValue(1), dl, Val, Addr,
+                    DAG.getTruncStore(StoreChain, dl, Val, Addr,
                             MachinePointerInfo(&*FuncArg, j), ObjType);
                 MemOps.push_back(Store);
                 ++GPR_idx;
@@ -8031,7 +8043,8 @@ SDValue PPCTargetLowering::LowerFormalArguments_Xbox360(
             case MVT::f64:
             // These can be scalar arguments or elements of a float array type
             // passed directly.
-            if (FPR_idx != Num_FPR_Regs) {
+            if (FPR_idx != Num_FPR_Regs &&
+                (!isVarArg || GPR_idx != Num_GPR_Regs)) {
                 unsigned VReg;
 
                 if (ObjectVT == MVT::f32)
@@ -8082,7 +8095,8 @@ SDValue PPCTargetLowering::LowerFormalArguments_Xbox360(
             // These can be scalar arguments or elements of a vector array type
             // passed directly.  The latter are used to implement ELFv2 homogenous
             // vector aggregates.
-            if (VR_idx != Num_VR_Regs) {
+            if (VR_idx != Num_VR_Regs &&
+                (!isVarArg || GPR_idx + 2 <= Num_GPR_Regs)) {
                 Register VReg = MF.addLiveIn(VR[VR_idx], &PPC::VRRCRegClass);
                 ArgVal = DAG.getCopyFromReg(Chain, dl, VReg, ObjectVT);
                 ++VR_idx;
@@ -8111,10 +8125,7 @@ SDValue PPCTargetLowering::LowerFormalArguments_Xbox360(
 
     // Area that is at least reserved in the caller of this function.
     unsigned MinReservedArea;
-    if (HasParameterArea)
-        MinReservedArea = std::max(ArgOffset, PreParamAreaSize + 8 * RegByteSize);
-    else
-        MinReservedArea = PreParamAreaSize;
+    MinReservedArea = std::max(ArgOffset, PreParamAreaSize + 8 * RegByteSize);
 
     // Set the size that is at least reserved in caller of this function.  Tail
     // call optimized functions' reserved stack space needs to be aligned so that
@@ -8962,11 +8973,14 @@ SDValue PPCTargetLowering::LowerSTACKRESTORE(SDValue Op,
 
   // Construct the stack pointer operand.
   unsigned SP = Subtarget.getStackPointerRegister();
-  SDValue StackPtr = DAG.getRegister(SP, PtrVT);
+  EVT RegVT = Subtarget.getScalarIntVT();
+  SDValue StackPtr = DAG.getRegister(SP, RegVT);
 
   // Get the operands for the STACKRESTORE.
   SDValue Chain = Op.getOperand(0);
   SDValue SaveSP = Op.getOperand(1);
+  if (Subtarget.isTargetXbox360())
+    SaveSP = DAG.getZExtOrTrunc(SaveSP, dl, RegVT);
 
   // Load the old link SP.
   SDValue LoadLinkSP =
@@ -8993,6 +9007,8 @@ SDValue PPCTargetLowering::getReturnAddrFrameIndex(SelectionDAG &DAG) const {
   if (!RASI) {
     // Find out what the fix offset of the frame pointer save area.
     int LROffset = Subtarget.getFrameLowering()->getReturnSaveOffset();
+    if (Subtarget.isTargetXbox360())
+      LROffset = -LROffset;
     // Allocate the frame index for frame pointer save area.
     RASI = MF.getFrameInfo().CreateFixedObject(isPPC64 ? 8 : 4, LROffset, false);
     // Save the result.
@@ -9042,7 +9058,10 @@ SDValue PPCTargetLowering::LowerDYNAMIC_STACKALLOC(SDValue Op,
   SDValue SizeForNeg = Size;
   EVT SizeVT = SizeForNeg.getValueType();
   if (SizeVT.bitsLT(NegSizeVT))
-    SizeForNeg = DAG.getNode(ISD::ANY_EXTEND, dl, NegSizeVT, SizeForNeg);
+    SizeForNeg =
+        DAG.getNode(Subtarget.isTargetXbox360() ? ISD::ZERO_EXTEND
+                                               : ISD::ANY_EXTEND,
+                    dl, NegSizeVT, SizeForNeg);
   else if (SizeVT.bitsGT(NegSizeVT))
     SizeForNeg = DAG.getNode(ISD::TRUNCATE, dl, NegSizeVT, SizeForNeg);
 
@@ -18522,8 +18541,11 @@ SDValue PPCTargetLowering::LowerRETURNADDR(SDValue Op,
                     LowerFRAMEADDR(Op, DAG), MachinePointerInfo());
     // Xbox 360 only stores the lower word of LR, account for that special case here.
     SDValue Offset =
-        DAG.getConstant(Subtarget.getFrameLowering()->getReturnSaveOffset(), dl,
-                        Subtarget.isPPC64() && !Subtarget.isTargetXbox360() ? MVT::i64 : MVT::i32);
+        DAG.getSignedConstant(
+            Subtarget.isTargetXbox360()
+                ? -int64_t(Subtarget.getFrameLowering()->getReturnSaveOffset())
+                : Subtarget.getFrameLowering()->getReturnSaveOffset(),
+            dl, PtrVT);
     return DAG.getLoad(PtrVT, dl, DAG.getEntryNode(),
                        DAG.getNode(ISD::ADD, dl, PtrVT, FrameAddr, Offset),
                        MachinePointerInfo());
