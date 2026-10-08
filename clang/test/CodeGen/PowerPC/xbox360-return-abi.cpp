@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -triple ppc64-ibm-xbox360 -emit-llvm -o - %s | FileCheck %s
+// RUN: %clang_cc1 -triple ppc64-ibm-xbox360 -mrelocation-model static -emit-llvm -o - %s | FileCheck %s
 
 typedef __attribute__((vector_size(16))) int vector4i;
 

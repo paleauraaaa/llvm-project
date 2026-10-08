@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -triple powerpc64-unknown-unknown -fms-extensions -emit-llvm -o - %s | FileCheck %s
+// RUN: %clang_cc1 -triple powerpc64-ibm-xbox360 -fms-extensions -emit-llvm -o - %s | FileCheck %s
 
 typedef struct __declspec(intrin_type) __declspec(align(16)) __vector4 {
   float v[4];

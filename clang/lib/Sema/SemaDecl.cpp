@@ -19353,8 +19353,10 @@ void Sema::ActOnFields(Scope *S, SourceLocation RecLoc, Decl *EnclosingDecl,
       size_t AlignInBits = Context.getTypeAlign(Record->getTypeForDecl());
       if (SizeInBits != Attr->getSizeInBits() || AlignInBits != Attr->getAlignInBits())
         Diag(Record->getLocation(), diag::err_intrin_type_mismatch)
-          << Record << SizeInBits << AlignInBits << Attr->getSizeInBits()
-          << Attr->getAlignInBits();
+          << Record << Context.toCharUnitsFromBits(SizeInBits).getQuantity()
+          << Context.toCharUnitsFromBits(AlignInBits).getQuantity()
+          << Context.toCharUnitsFromBits(Attr->getSizeInBits()).getQuantity()
+          << Context.toCharUnitsFromBits(Attr->getAlignInBits()).getQuantity();
     }
 
     if (Record->hasAttr<PassInRegAttr>()) {
