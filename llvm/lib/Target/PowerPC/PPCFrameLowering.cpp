@@ -82,8 +82,6 @@ static unsigned computeBasePointerSaveOffset(const PPCSubtarget &STI) {
   if (STI.is32BitELFABI() && STI.getTargetMachine().isPositionIndependent())
     return -12U;
 
-  if (STI.isTargetXbox360())
-    return -8U;
   // Second slot in the general purpose register save area.
   return STI.isPPC64() ? -16U : -8U;
 }
@@ -312,7 +310,7 @@ const PPCFrameLowering::SpillSlot *PPCFrameLowering::getCalleeSavedSpillSlots(
   static const SpillSlot AIXOffsets64[] = {
       CALLEE_SAVED_FPRS, CALLEE_SAVED_GPRS64, CALLEE_SAVED_VRS};
 
-  // FIXME: probably need to save LR/FPCSR/CTR/XER here
+  // LR is saved separately; FPSCR, CTR, and XER are volatile.
   static const SpillSlot Xbox360Offsets[] = {
     CALLEE_SAVED_FPRS, CALLEE_SAVED_GPRS64, CALLEE_SAVED_VRS};
 
@@ -429,13 +427,11 @@ PPCFrameLowering::determineFrameLayout(const MachineFunction &MF,
 
   // Get the maximum call frame size of all the calls.
   unsigned maxCallFrameSize = MFI.getMaxCallFrameSize();
-  // Xbox 360 has two reserved words in its stack frame that aren't accounted
-  // for elsewhere in this function.
-  if(MF.getSubtarget().getTargetTriple().isXbox360())
-    maxCallFrameSize += 8;
 
   // Maximum call frame needs to be at least big enough for linkage area.
   unsigned minCallFrameSize = getLinkageSize();
+  if (Subtarget.isTargetXbox360() && MFI.hasVarSizedObjects())
+    minCallFrameSize += 64;
   maxCallFrameSize = std::max(maxCallFrameSize, minCallFrameSize);
 
   // If we have dynamic alloca then maxCallFrameSize needs to be aligned so
@@ -753,7 +749,7 @@ void PPCFrameLowering::emitPrologue(MachineFunction &MF,
 
   Register SPReg       = Subtarget.getStackPointerRegister();
   Register BPReg       = RegInfo->getBaseRegister(MF);
-  Register FPReg       = isPPC64 && !isXbox360 ? PPC::X31 : PPC::R31;
+  Register FPReg       = isPPC64 ? PPC::X31 : PPC::R31;
   Register LRReg       = isPPC64 ? PPC::LR8 : PPC::LR;
   Register ScratchReg;
   Register TempReg     = isPPC64 ? PPC::X12 : PPC::R12; // another scratch reg
@@ -830,6 +826,12 @@ void PPCFrameLowering::emitPrologue(MachineFunction &MF,
   // saves are waiting for the update on the store with update to complete.
   MachineBasicBlock::iterator StackUpdateLoc = MBBI;
   bool MovingStackUpdateDown = false;
+
+  if (isXbox360)
+    while (StackUpdateLoc != MBB.end() &&
+           (StackUpdateLoc->getFlag(MachineInstr::FrameSetup) ||
+            StackUpdateLoc->isDebugInstr()))
+      ++StackUpdateLoc;
 
   // Check if we can move the stack update.
   if (stackUpdateCanBeMoved(MF)) {
@@ -940,7 +942,8 @@ void PPCFrameLowering::emitPrologue(MachineFunction &MF,
   // used by the hash store instruction.
   auto SaveLR = [&](int64_t Offset) {
     assert(MustSaveLR && "LR is not required to be saved!");
-    BuildMI(MBB, StackUpdateLoc, dl, StoreInst)
+    BuildMI(MBB, isXbox360 ? MBBI : StackUpdateLoc, dl,
+            isXbox360 ? StoreWordInst : StoreInst)
         .addReg(ScratchReg, getKillRegState(!HasROPProtect))
         .addImm(Offset)
         .addReg(SPReg);
@@ -965,8 +968,8 @@ void PPCFrameLowering::emitPrologue(MachineFunction &MF,
     }
   };
 
-  if (MustSaveLR && HasFastMFLR && !isXbox360)
-      SaveLR(LROffset);
+  if (MustSaveLR && (HasFastMFLR || isXbox360))
+      SaveLR(isXbox360 ? -LROffset : LROffset);
 
   if (MustSaveCR &&
       !(SingleScratchReg && MustSaveLR)) {
@@ -979,7 +982,7 @@ void PPCFrameLowering::emitPrologue(MachineFunction &MF,
 
   // Skip the rest if this is a leaf function & all spills fit in the Red Zone.
   if (!FrameSize) {
-    if (MustSaveLR && !HasFastMFLR)
+    if (MustSaveLR && !HasFastMFLR && !isXbox360)
       SaveLR(isXbox360 ? -LROffset : LROffset);
     return;
   }
@@ -1018,7 +1021,7 @@ void PPCFrameLowering::emitPrologue(MachineFunction &MF,
   if (TLI.hasInlineStackProbe(MF) && FrameSize > TLI.getStackProbeSize(MF)) {
     // To be consistent with other targets, a pseudo instruction is emitted and
     // will be later expanded in `inlineStackProbe`.
-    BuildMI(MBB, MBBI, dl,
+    BuildMI(MBB, isXbox360 ? StackUpdateLoc : MBBI, dl,
             TII.get(isPPC64 ? PPC::PROBED_STACKALLOC_64
                             : PPC::PROBED_STACKALLOC_32))
         .addDef(TempReg)
@@ -1058,7 +1061,8 @@ void PPCFrameLowering::emitPrologue(MachineFunction &MF,
             .addReg(TempReg, RegState::Kill);
       }
 
-      BuildMI(MBB, MBBI, dl, StoreUpdtIdxInst, SPReg)
+      BuildMI(MBB, isXbox360 ? StackUpdateLoc : MBBI, dl,
+              StoreUpdtIdxInst, SPReg)
           .addReg(SPReg, RegState::Kill)
           .addReg(SPReg)
           .addReg(ScratchReg);
@@ -1068,8 +1072,10 @@ void PPCFrameLowering::emitPrologue(MachineFunction &MF,
           .addImm(NegFrameSize)
           .addReg(SPReg);
     } else {
-      TII.materializeImmPostRA(MBB, MBBI, dl, ScratchReg, NegFrameSize);
-      BuildMI(MBB, MBBI, dl, StoreUpdtIdxInst, SPReg)
+      TII.materializeImmPostRA(MBB, isXbox360 ? StackUpdateLoc : MBBI,
+                              dl, ScratchReg, NegFrameSize);
+      BuildMI(MBB, isXbox360 ? StackUpdateLoc : MBBI, dl,
+              StoreUpdtIdxInst, SPReg)
           .addReg(SPReg, RegState::Kill)
           .addReg(SPReg)
           .addReg(ScratchReg);
@@ -1204,12 +1210,9 @@ void PPCFrameLowering::emitPrologue(MachineFunction &MF,
   }
 
   // Save the LR now.
-  if (MustSaveLR &&
-      ((!HasSTUX && !HasFastMFLR && isInt<16>(FrameSize + LROffset) &&
-        !HasROPProtect) ||
-       isXbox360)) {
-    const int64_t SaveLROffset = (isXbox360 ? -LROffset : LROffset) + FrameSize;
-    SaveLR(SaveLROffset);
+  if (MustSaveLR && !isXbox360 && !HasSTUX && !HasFastMFLR &&
+      isInt<16>(FrameSize + LROffset) && !HasROPProtect) {
+    SaveLR(LROffset + FrameSize);
   }
 
   // Add Call Frame Information for the instructions we generated above.
@@ -1795,6 +1798,11 @@ void PPCFrameLowering::emitEpilogue(MachineFunction &MF,
   // to be executed before the restores of the callee saves which means
   // that the callee saves can hide the latency from the MTLR instrcution.
   MachineBasicBlock::iterator StackUpdateLoc = MBBI;
+  if (isXbox360)
+    while (StackUpdateLoc != MBB.begin() &&
+           (std::prev(StackUpdateLoc)->getFlag(MachineInstr::FrameDestroy) ||
+            std::prev(StackUpdateLoc)->isDebugInstr()))
+      --StackUpdateLoc;
   if (stackUpdateCanBeMoved(MF)) {
     const std::vector<CalleeSavedInfo> & Info = MFI.getCalleeSavedInfo();
     for (CalleeSavedInfo CSI : Info) {
@@ -1830,7 +1838,7 @@ void PPCFrameLowering::emitEpilogue(MachineFunction &MF,
     // If the function has a base pointer, the stack pointer has been copied
     // to it so we can restore it by copying in the other direction.
     if (HasRedZone && HasBP) {
-      BuildMI(MBB, MBBI, dl, OrInst, RBReg).
+      BuildMI(MBB, isXbox360 ? StackUpdateLoc : MBBI, dl, OrInst, RBReg).
         addReg(BPReg).
         addReg(BPReg);
     }
@@ -1843,11 +1851,12 @@ void PPCFrameLowering::emitEpilogue(MachineFunction &MF,
       if (!HasRedZone)
         RBReg = FPReg;
       if (!isLargeFrame) {
-        BuildMI(MBB, MBBI, dl, AddImmInst, RBReg)
+        BuildMI(MBB, isXbox360 ? StackUpdateLoc : MBBI, dl, AddImmInst, RBReg)
           .addReg(FPReg).addImm(FrameSize);
       } else {
-        TII.materializeImmPostRA(MBB, MBBI, dl, ScratchReg, FrameSize);
-        BuildMI(MBB, MBBI, dl, AddInst)
+        TII.materializeImmPostRA(MBB, isXbox360 ? StackUpdateLoc : MBBI,
+                                dl, ScratchReg, FrameSize);
+        BuildMI(MBB, isXbox360 ? StackUpdateLoc : MBBI, dl, AddInst)
           .addReg(RBReg)
           .addReg(FPReg)
           .addReg(ScratchReg);
@@ -1878,7 +1887,8 @@ void PPCFrameLowering::emitEpilogue(MachineFunction &MF,
             .addReg(FPReg);
         RBReg = FPReg;
       }
-      BuildMI(MBB, StackUpdateLoc, dl, LoadInst, RBReg)
+      BuildMI(MBB, StackUpdateLoc, dl,
+              isXbox360 ? LoadWordInst : LoadInst, RBReg)
         .addImm(0)
         .addReg(SPReg);
     }
@@ -1908,7 +1918,8 @@ void PPCFrameLowering::emitEpilogue(MachineFunction &MF,
   // a base register anyway, because it may happen to be R0.
   bool LoadedLR = false;
   if (MustSaveLR && RBReg == SPReg && isInt<16>(LROffset+SPAdd)) {
-    BuildMI(MBB, StackUpdateLoc, dl, LoadInst, ScratchReg)
+    BuildMI(MBB, StackUpdateLoc, dl,
+            isXbox360 ? LoadWordInst : LoadInst, ScratchReg)
       .addImm(LROffset+SPAdd)
       .addReg(RBReg);
     LoadedLR = true;
@@ -1966,7 +1977,8 @@ void PPCFrameLowering::emitEpilogue(MachineFunction &MF,
 
     // Now load the LR from the caller's stack frame.
     if (MustSaveLR && !LoadedLR)
-      BuildMI(MBB, MBBI, dl, LoadInst, ScratchReg)
+      BuildMI(MBB, MBBI, dl,
+              isXbox360 ? LoadWordInst : LoadInst, ScratchReg)
         .addImm(LROffset)
         .addReg(SPReg);
   }
@@ -2111,6 +2123,13 @@ void PPCFrameLowering::determineCalleeSaves(MachineFunction &MF,
   int FPSI = FI->getFramePointerSaveIndex();
   const bool isPPC64 = Subtarget.isPPC64();
   MachineFrameInfo &MFI = MF.getFrameInfo();
+
+  if (Subtarget.isTargetXbox360() && FI->mustSaveLR() &&
+      !FI->getReturnAddrSaveIndex()) {
+    // Reserve both the LR word and its padding before laying out locals.
+    FI->setReturnAddrSaveIndex(
+        MFI.CreateFixedObject(8, -(int64_t)getReturnSaveOffset(), true));
+  }
 
   // If the frame pointer save index hasn't been defined yet.
   if (!FPSI && needsFP(MF)) {
@@ -2655,7 +2674,10 @@ bool PPCFrameLowering::spillCalleeSavedRegisters(
                                        I.getFrameIdx(), RC, TRI);
         else
           TII.storeRegToStackSlot(MBB, MI, Reg, !IsLiveIn, I.getFrameIdx(), RC,
-                                  TRI, Register());
+                                  TRI, Register(),
+                                  Subtarget.isTargetXbox360()
+                                      ? MachineInstr::FrameSetup
+                                      : MachineInstr::NoFlags);
       }
     }
   }
@@ -2829,7 +2851,10 @@ bool PPCFrameLowering::restoreCalleeSavedRegisters(
                                         TRI);
         else
           TII.loadRegFromStackSlot(MBB, I, Reg, CSI[i].getFrameIdx(), RC, TRI,
-                                   Register());
+                                   Register(),
+                                   Subtarget.isTargetXbox360()
+                                       ? MachineInstr::FrameDestroy
+                                       : MachineInstr::NoFlags);
 
         assert(I != MBB.begin() &&
                "loadRegFromStackSlot didn't insert any code!");
@@ -2870,6 +2895,8 @@ uint64_t PPCFrameLowering::getBasePointerSaveOffset() const {
 }
 
 bool PPCFrameLowering::enableShrinkWrapping(const MachineFunction &MF) const {
+  if (Subtarget.isTargetXbox360())
+    return false;
   if (MF.getInfo<PPCFunctionInfo>()->shrinkWrapDisabled())
     return false;
   return !MF.getSubtarget<PPCSubtarget>().is32BitELFABI();

@@ -474,7 +474,9 @@ public:
                                 MachineBasicBlock::iterator MBBI,
                                 unsigned SrcReg, bool isKill, int FrameIndex,
                                 const TargetRegisterClass *RC,
-                                const TargetRegisterInfo *TRI) const;
+                                const TargetRegisterInfo *TRI,
+                                MachineInstr::MIFlag Flags =
+                                    MachineInstr::NoFlags) const;
 
   void loadRegFromStackSlot(
       MachineBasicBlock &MBB, MachineBasicBlock::iterator MBBI,
@@ -489,7 +491,9 @@ public:
                                  MachineBasicBlock::iterator MBBI,
                                  unsigned DestReg, int FrameIndex,
                                  const TargetRegisterClass *RC,
-                                 const TargetRegisterInfo *TRI) const;
+                                 const TargetRegisterInfo *TRI,
+                                 MachineInstr::MIFlag Flags =
+                                     MachineInstr::NoFlags) const;
 
   unsigned getStoreOpcodeForSpill(const TargetRegisterClass *RC) const;
 

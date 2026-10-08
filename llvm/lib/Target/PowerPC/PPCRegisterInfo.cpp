@@ -780,17 +780,17 @@ void PPCRegisterInfo::lowerDynamicAlloc(MachineBasicBlock::iterator II) const {
   bool KillNegSizeReg = MI.getOperand(1).isKill();
   Register NegSizeReg = MI.getOperand(1).getReg();
 
-  prepareDynamicAlloca(II, NegSizeReg, KillNegSizeReg, Reg);
-
   // On Xbox360 ppc64, stack update uses STWUX8, which expects a G8RC offset.
   // Dynamic alloca size often arrives in a 32-bit GPR, so widen it first.
   if (Use64BitStackOps && Subtarget.isTargetXbox360()) {
     Register WideNegSizeReg = MF.getRegInfo().createVirtualRegister(G8RC);
-    BuildMI(MBB, II, dl, TII.get(TargetOpcode::COPY), WideNegSizeReg)
+    BuildMI(MBB, II, dl, TII.get(PPC::EXTSW_32_64), WideNegSizeReg)
         .addReg(NegSizeReg, getKillRegState(KillNegSizeReg));
     NegSizeReg = WideNegSizeReg;
     KillNegSizeReg = true;
   }
+
+  prepareDynamicAlloca(II, NegSizeReg, KillNegSizeReg, Reg);
 
   // Grow the stack and update the stack pointer link, then determine the
   // address of new allocated space.
@@ -871,7 +871,9 @@ void PPCRegisterInfo::prepareDynamicAlloca(MachineBasicBlock::iterator II,
           .addReg(PPC::R31)
           .addImm(FrameSize);
   } else if (Use64BitStackOps) {
-    BuildMI(MBB, II, dl, TII.get(PPC::LD), FramePointer)
+    BuildMI(MBB, II, dl,
+            TII.get(Subtarget.isTargetXbox360() ? PPC::LWZ8 : PPC::LD),
+            FramePointer)
         .addImm(0)
         .addReg(PPC::X1);
   } else {
@@ -1709,15 +1711,20 @@ PPCRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
 
   // Replace the FrameIndex with base register with GPR1 (SP) or GPR31 (FP).
   Register FrameReg = FrameIndex < 0 ? getBaseRegister(MF) : getFrameRegister(MF);
+  bool IsXboxCalleeSave =
+      Subtarget.isTargetXbox360() &&
+      (MI.getFlag(MachineInstr::FrameSetup) ||
+       MI.getFlag(MachineInstr::FrameDestroy));
+  if (IsXboxCalleeSave)
+    FrameReg = PPC::X1;
   if (Subtarget.isTargetXbox360() &&
-      (FrameReg == PPC::X1 || FrameReg == PPC::X31)) {
+      PPC::G8RCRegClass.contains(FrameReg)) {
     const TargetRegisterClass *FrameRC =
         TII.getRegClass(MI.getDesc(), FIOperandNum, this, MF);
     if (FrameRC && !FrameRC->contains(FrameReg)) {
-      if (FrameReg == PPC::X1 && FrameRC->contains(PPC::R1))
-        FrameReg = PPC::R1;
-      else if (FrameReg == PPC::X31 && FrameRC->contains(PPC::R31))
-        FrameReg = PPC::R31;
+      Register WordReg = getSubReg(FrameReg, PPC::sub_32);
+      if (FrameRC->contains(WordReg))
+        FrameReg = WordReg;
     }
   }
   MI.getOperand(FIOperandNum).ChangeToRegister(FrameReg, false);
@@ -1738,7 +1745,7 @@ PPCRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
   // that because we didn't call all the pieces that compute it for naked
   // functions.
   if (!MF.getFunction().hasFnAttribute(Attribute::Naked)) {
-    if (!(hasBasePointer(MF) && FrameIndex < 0))
+    if (!IsXboxCalleeSave && !(hasBasePointer(MF) && FrameIndex < 0))
       Offset += MFI.getStackSize();
   }
 
@@ -1877,7 +1884,7 @@ Register PPCRegisterInfo::getBaseRegister(const MachineFunction &MF) const {
   if (!hasBasePointer(MF))
     return getFrameRegister(MF);
 
-  if (TM.isPPC64() && !TM.getTargetTriple().isXbox360())
+  if (TM.isPPC64())
     return PPC::X30;
 
   if (Subtarget.isSVR4ABI() && TM.isPositionIndependent())
