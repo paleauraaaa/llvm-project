@@ -474,6 +474,7 @@ public:
       // Xbox 360 only uses 32-bit pointers since the console only has 512MB of memory.
       DataLayout = "E-m:w-S128-p:32:32-Fi32-i64:64-i128:128-n32:64-v128:128";
       LongDoubleWidth = DoubleWidth = LongDoubleAlign = DoubleAlign = 64;
+      LongDoubleFormat = &llvm::APFloat::IEEEdouble();
     } else if ((Triple.getArch() == llvm::Triple::ppc64le)) {
       DataLayout = "e-m:e-Fn32-i64:64-i128:128-n32:64";
       ABI = "elfv2";
