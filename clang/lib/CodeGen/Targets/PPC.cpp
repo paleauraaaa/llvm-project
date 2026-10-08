@@ -1068,14 +1068,20 @@ public:
   ABIArgInfo classifyArgumentType(QualType Ty) const;
 
   void computeInfo(CGFunctionInfo &FI) const override {
-    if (!getCXXABI().classifyReturnType(FI)) {
-      if (isIntrinType(FI.getReturnType())) {
-        FI.getReturnInfo() = ABIArgInfo::getDirect(getVector4Type(CGT));
-      } else if (llvm::Type *T = getPassInRegCoerceType(FI.getReturnType())) {
-        FI.getReturnInfo() = ABIArgInfo::getDirect(T);
+    // Xbox passinreg is an explicit override of the default C++ aggregate
+    // return ABI, including the Microsoft ABI's indirect instance returns.
+    if (llvm::Type *T = getPassInRegCoerceType(FI.getReturnType())) {
+      FI.getReturnInfo() = ABIArgInfo::getDirect(T);
+    } else if (isIntrinType(FI.getReturnType())) {
+      if (FI.isInstanceMethod()) {
+        CharUnits Align = getContext().getTypeAlignInChars(FI.getReturnType());
+        FI.getReturnInfo() = ABIArgInfo::getIndirect(Align, /*ByVal=*/false);
+        FI.getReturnInfo().setSRetAfterThis(true);
       } else {
-        FI.getReturnInfo() = classifyReturnType(FI.getReturnType());
+        FI.getReturnInfo() = ABIArgInfo::getDirect(getVector4Type(CGT));
       }
+    } else if (!getCXXABI().classifyReturnType(FI)) {
+      FI.getReturnInfo() = classifyReturnType(FI.getReturnType());
     }
 
     for (auto &I : FI.arguments()) {
@@ -1186,10 +1192,8 @@ CharUnits PPC64_Xbox360_ABIInfo::getParamTypeAlignment(QualType Ty) const {
   if (Ty->isVectorType())
     return CharUnits::fromQuantity(16);
 
-  // If the structure contains a vector type, the alignment is 16.
-  if (isRecordWithSIMDVectorType(getContext(), Ty))
-    return CharUnits::fromQuantity(16);
-
+  // Xbox vector-containing aggregates are passed as integer aggregates, so
+  // only standalone vector arguments require 16-byte parameter alignment.
   return CharUnits::fromQuantity(PtrByteSize);
 }
 
