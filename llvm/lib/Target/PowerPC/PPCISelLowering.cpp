@@ -7409,6 +7409,7 @@ SDValue PPCTargetLowering::LowerCall_Xbox360(
     // ArgOffset tracks where the next argument would land in the call frame.
     // Start at the linkage area so register assignment starts at parameter 0.
     unsigned ArgOffset = LinkageSize;
+    unsigned VectorArgBytes = 0;
 
     SmallVector<std::pair<unsigned, SDValue>, 8> RegsToPass;
     SmallVector<TailCallArgumentInfo, 8> TailCallArguments;
@@ -7439,10 +7440,14 @@ SDValue PPCTargetLowering::LowerCall_Xbox360(
         };
 
         if (!IsFastCall) {
+            unsigned UnalignedArgOffset = ArgOffset;
             ComputePtrOff();
+            if (!CFlags.IsVarArg && !Flags.isByVal() && ArgVT.isVector())
+                VectorArgBytes += ArgOffset - UnalignedArgOffset;
 
-            /* Compute GPR index associated with argument offset.  */
-            GPR_idx = (ArgOffset - LinkageSize) / RegByteSize;
+            // Prototyped vectors and their alignment padding occupy the
+            // parameter image, but do not consume GPR argument slots.
+            GPR_idx = (ArgOffset - LinkageSize - VectorArgBytes) / RegByteSize;
             GPR_idx = std::min(GPR_idx, NumGPRs);
         }
 
@@ -7743,8 +7748,10 @@ SDValue PPCTargetLowering::LowerCall_Xbox360(
                 ArgOffset += 16;
         }
 
-        if (!IsFastCall)
+        if (!IsFastCall) {
             ArgOffset += 16;
+            VectorArgBytes += 16;
+        }
         break;
         }
     }
@@ -7855,6 +7862,7 @@ SDValue PPCTargetLowering::LowerFormalArguments_Xbox360(
     // entry to a function on PPC, the arguments start after the linkage area,
     // although the first ones are often in registers.
     unsigned ArgOffset = PreParamAreaSize;
+    unsigned VectorArgBytes = 0;
     unsigned GPR_idx = 0, FPR_idx = 0, VR_idx = 0;
     SmallVector<SDValue, 8> MemOps;
     Function::const_arg_iterator FuncArg = MF.getFunction().arg_begin();
@@ -7885,10 +7893,15 @@ SDValue PPCTargetLowering::LowerFormalArguments_Xbox360(
         };
 
         if (CallConv != CallingConv::Fast) {
+            unsigned UnalignedArgOffset = ArgOffset;
             ComputeArgOffset();
+            if (!isVarArg && !Flags.isByVal() &&
+                (ObjectVT.isVector() || ObjectVT == MVT::f128))
+                VectorArgBytes += ArgOffset - UnalignedArgOffset;
 
-            /* Compute GPR index associated with argument offset.  */
-            GPR_idx = (ArgOffset - PreParamAreaSize) / RegByteSize;
+            // Keep the GPR slots independent of prototyped vector slots.
+            GPR_idx =
+                (ArgOffset - PreParamAreaSize - VectorArgBytes) / RegByteSize;
             GPR_idx = std::min(GPR_idx, Num_GPR_Regs);
         }
 
@@ -8105,8 +8118,11 @@ SDValue PPCTargetLowering::LowerFormalArguments_Xbox360(
                     ComputeArgOffset();
                 needsLoad = true;
             }
-            if (CallConv != CallingConv::Fast || needsLoad)
+            if (CallConv != CallingConv::Fast || needsLoad) {
                 ArgOffset += 16;
+                if (!isVarArg && CallConv != CallingConv::Fast)
+                    VectorArgBytes += 16;
+            }
             break;
         }
 
