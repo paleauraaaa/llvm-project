@@ -1,0 +1,46 @@
+# RUN: split-file %s %t.dir
+# RUN: llvm-mc -filetype=obj -triple=ppc64-ibm-xbox360 %t.dir/refs.s -o %t.refs.obj
+# RUN: llvm-mc -filetype=obj -triple=ppc64-ibm-xbox360 %t.dir/defs.s -o %t.defs.obj
+# RUN: lld-link /machine:ppcbe /entry:main /subsystem:console /fixed /base:0x82000000 /out:%t.exe %t.refs.obj %t.defs.obj
+# RUN: llvm-objdump -s --section=.text %t.exe | FileCheck %s
+
+# target = 0x12348000. Check low-half sign boundaries, carries, negative
+# addends, reversed halves, standalone REFLOs and section-local addends.
+# CHECK: 82001000 3c601235 38638000 3c801235 38849234
+# CHECK: 82001010 3ca01235 38a5ffff 3cc01235 38c60000
+# CHECK: 82001020 3ce01236 38e70000 3d001234 39080000
+# CHECK: 82001030 3929ffff 3d201234 3d408200 394a1058
+# CHECK: 82001040 3d608200 396bffff 398c8000 3da01235
+# CHECK: 82001050 4e800020 00000000
+
+#--- refs.s
+.text
+.globl main
+main:
+  lis 3, target@ha
+  addi 3, 3, target@l
+  lis 4, target+0x1234@ha
+  addi 4, 4, target+0x1234@l
+  lis 5, target+0x7fff@ha
+  addi 5, 5, target+0x7fff@l
+  lis 6, target+0x8000@ha
+  addi 6, 6, target+0x8000@l
+  lis 7, target+0x18000@ha
+  addi 7, 7, target+0x18000@l
+  lis 8, target-0x8000@ha
+  addi 8, 8, target-0x8000@l
+  addi 9, 9, target-0x8001@l
+  lis 9, target-0x8001@ha
+  lis 10, .Llocal+4@ha
+  addi 10, 10, .Llocal+4@l
+  lis 11, .Llocal-0x1055@ha
+  addi 11, 11, .Llocal-0x1055@l
+  addi 12, 12, target@l
+  lis 13, target@ha
+  blr
+.Llocal:
+  .long 0
+
+#--- defs.s
+.globl target
+.set target, 0x12348000

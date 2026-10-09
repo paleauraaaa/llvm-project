@@ -533,12 +533,6 @@ void SectionChunk::applyRelPPC(uint8_t *off, uint16_t type, OutputSection *os,
     break;
   }
 
-  case IMAGE_REL_PPC_REFHI:
-    add16be(off + 2, (s + imageBase) >> 16);
-    break;
-  case IMAGE_REL_PPC_REFLO:
-    add16be(off + 2, s + imageBase);
-    break;
   default:
     error("unsupported relocation type 0x" + Twine::utohexstr(type) + " in " +
           toString(file));
@@ -616,13 +610,13 @@ void SectionChunk::applyRelocation(uint8_t *off,
     ArrayRef<coff_relocation> Relocs = getRelocs();
     const coff_relocation *Reloc = &rel;
     if (Reloc == Relocs.begin() ||
-        (Reloc - 1)->Type != IMAGE_REL_PPC_REFHI ||
+        ((Reloc - 1)->Type != IMAGE_REL_PPC_REFHI &&
+         (Reloc - 1)->Type != IMAGE_REL_PPC_REFLO) ||
         (Reloc - 1)->VirtualAddress != rel.VirtualAddress) {
-      error("IMAGE_REL_PPC_PAIR relocation is not preceded by REFHI in " +
+      error("IMAGE_REL_PPC_PAIR relocation is not preceded by REFHI or REFLO in " +
             toString(file));
       return;
     }
-    add16be(off + 2, SignExtend64<16>(rel.SymbolTableIndex));
     return;
   }
 
@@ -650,6 +644,29 @@ void SectionChunk::applyRelocation(uint8_t *off,
   // Compute the RVA of the relocation for relative relocations.
   uint64_t p = rva + rel.VirtualAddress;
   uint64_t imageBase = ctx.config.imageBase;
+  if (getArch() == Triple::ppc64 &&
+      (rel.Type == IMAGE_REL_PPC_REFHI || rel.Type == IMAGE_REL_PPC_REFLO)) {
+    ArrayRef<coff_relocation> relocs = getRelocs();
+    const coff_relocation *pair = &rel + 1;
+    if (pair == relocs.end() || pair->Type != IMAGE_REL_PPC_PAIR ||
+        pair->VirtualAddress != rel.VirtualAddress) {
+      error("IMAGE_REL_PPC_REFHI or REFLO relocation is not followed by PAIR in " +
+            toString(file));
+      return;
+    }
+    uint64_t hi = read16be(off + 2);
+    uint64_t lo = pair->SymbolTableIndex;
+    if (rel.Type == IMAGE_REL_PPC_REFLO)
+      std::swap(hi, lo);
+    // The instruction and PAIR hold the adjusted high and signed low halves
+    // of the addend, respectively (reversed for REFLO).
+    uint64_t address = s + imageBase + ((hi & 0xffff) << 16) +
+                       SignExtend64<16>(lo);
+    write16be(off + 2, rel.Type == IMAGE_REL_PPC_REFHI
+                          ? (address + 0x8000) >> 16
+                          : address);
+    return;
+  }
   switch (getArch()) {
   case Triple::x86_64:
     applyRelX64(off, rel.Type, os, s, p, imageBase);

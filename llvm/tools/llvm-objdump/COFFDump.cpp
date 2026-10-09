@@ -640,6 +640,12 @@ static bool getPDataSection(const COFFObjectFile *Obj,
 Error objdump::getCOFFRelocationValueString(const COFFObjectFile *Obj,
                                             const RelocationRef &Rel,
                                             SmallVectorImpl<char> &Result) {
+  if (Obj->getMachine() == COFF::IMAGE_FILE_MACHINE_PPCBE &&
+      Rel.getType() == COFF::IMAGE_REL_PPC_PAIR) {
+    raw_svector_ostream(Result)
+        << format_hex(Obj->getCOFFRelocation(Rel)->SymbolTableIndex, 6);
+    return Error::success();
+  }
   symbol_iterator SymI = Rel.getSymbol();
   Expected<StringRef> SymNameOrErr = SymI->getName();
   if (!SymNameOrErr)

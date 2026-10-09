@@ -1016,13 +1016,20 @@ void WinCOFFWriter::recordRelocation(MCAssembler &Asm,
     }
 
     if (Header.Machine == COFF::IMAGE_FILE_MACHINE_PPCBE &&
-        Reloc.Data.Type == COFF::IMAGE_REL_PPC_REFHI) {
-      // IMAGE_REL_PPC_REFHI and IMAGE_REL_PPC_SECRELHI *must*
-      // be followed by IMAGE_REL_PPC_PAIR
+        (Reloc.Data.Type == COFF::IMAGE_REL_PPC_REFHI ||
+         Reloc.Data.Type == COFF::IMAGE_REL_PPC_REFLO)) {
+      // Both halves require a PAIR, including standalone or reordered REFLOs.
       auto RelocPair = Reloc;
       RelocPair.Data.Type = COFF::IMAGE_REL_PPC_PAIR;
-      // PAIR stores the signed 16-bit addend in SymbolTableIndex.
-      RelocPair.Data.SymbolTableIndex = static_cast<uint16_t>(FixedValue);
+      // Store the complementary half of the addend in the PAIR payload.
+      // Adjusting the high half accounts for sign extension of the low half.
+      if (Reloc.Data.Type == COFF::IMAGE_REL_PPC_REFHI) {
+        RelocPair.Data.SymbolTableIndex = static_cast<uint16_t>(FixedValue);
+        FixedValue = (FixedValue + 0x8000) >> 16;
+      } else {
+        RelocPair.Data.SymbolTableIndex =
+            static_cast<uint16_t>((FixedValue + 0x8000) >> 16);
+      }
       Sec->Relocations.push_back(RelocPair);
     }
   }

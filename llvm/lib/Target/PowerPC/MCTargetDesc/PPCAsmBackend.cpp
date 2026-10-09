@@ -157,6 +157,11 @@ public:
     if (!Value) return;           // Doesn't change encoding.
 
     unsigned Offset = Fixup.getOffset();
+    // Xbox COFF relocations address the instruction, not its immediate field.
+    if (TT.isXbox360() &&
+        (Kind == PPC::fixup_ppc_half16 || Kind == PPC::fixup_ppc_half16ds ||
+         Kind == PPC::fixup_ppc_half16dq))
+      Offset += 2;
     unsigned NumBytes = getFixupKindNumBytes(Kind);
 
     // For each byte of the fragment that the fixup touches, mask in the bits
