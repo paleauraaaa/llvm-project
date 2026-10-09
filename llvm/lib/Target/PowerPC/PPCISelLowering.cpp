@@ -4204,10 +4204,10 @@ static Align CalculateStackSlotAlignment(EVT ArgVT, EVT OrigVT,
 
 static Align CalculateXbox360StackSlotAlignment(EVT ArgVT, EVT OrigVT,
                                                ISD::ArgFlagsTy Flags,
-                                               bool UseAggregatePadding) {
+                                               bool IsNamedArg) {
   // MSVC aligns aggregate slots by size, independently of the type alignment.
-  if (UseAggregatePadding && Flags.isByVal())
-    return Align(Flags.getByValSize() > 8 ? 16 : 8);
+  if (Flags.isByVal())
+    return Align(IsNamedArg && Flags.getByValSize() > 8 ? 16 : 8);
   return CalculateStackSlotAlignment(ArgVT, OrigVT, Flags, 8);
 }
 
@@ -7367,7 +7367,7 @@ SDValue PPCTargetLowering::LowerCall_Xbox360(
 
         /* Respect alignment of argument on the stack.  */
         auto Alignement = CalculateXbox360StackSlotAlignment(
-            ArgVT, OrigVT, Flags, !IsFastCall && !CFlags.IsVarArg);
+            ArgVT, OrigVT, Flags, !CFlags.IsVarArg || Outs[i].IsFixed);
         NumBytes = alignTo(NumBytes, Alignement);
 
         NumBytes += CalculateStackSlotSize(ArgVT, Flags, RegByteSize);
@@ -7440,7 +7440,7 @@ SDValue PPCTargetLowering::LowerCall_Xbox360(
         auto ComputePtrOff = [&]() {
             /* Respect alignment of argument on the stack.  */
             auto Alignment = CalculateXbox360StackSlotAlignment(
-                ArgVT, OrigVT, Flags, !IsFastCall && !CFlags.IsVarArg);
+                ArgVT, OrigVT, Flags, !CFlags.IsVarArg || Outs[i].IsFixed);
             ArgOffset = alignTo(ArgOffset, Alignment);
 
             PtrOff = DAG.getConstant(ArgOffset, dl, StackPtr.getValueType());
@@ -7451,7 +7451,7 @@ SDValue PPCTargetLowering::LowerCall_Xbox360(
         if (!IsFastCall) {
             unsigned UnalignedArgOffset = ArgOffset;
             ComputePtrOff();
-            if (!CFlags.IsVarArg && (Flags.isByVal() || ArgVT.isVector()))
+            if (Flags.isByVal() || (!CFlags.IsVarArg && ArgVT.isVector()))
                 NonGPRArgBytes += ArgOffset - UnalignedArgOffset;
 
             // Prototyped vectors and vector/aggregate alignment padding
@@ -7896,8 +7896,7 @@ SDValue PPCTargetLowering::LowerFormalArguments_Xbox360(
         auto ComputeArgOffset = [&]() {
             /* Respect alignment of argument on the stack.  */
             Alignment = CalculateXbox360StackSlotAlignment(
-                ObjectVT, OrigVT, Flags,
-                CallConv != CallingConv::Fast && !isVarArg);
+                ObjectVT, OrigVT, Flags, /*IsNamedArg=*/true);
             ArgOffset = alignTo(ArgOffset, Alignment);
             CurArgOffset = ArgOffset;
         };
@@ -7905,8 +7904,8 @@ SDValue PPCTargetLowering::LowerFormalArguments_Xbox360(
         if (CallConv != CallingConv::Fast) {
             unsigned UnalignedArgOffset = ArgOffset;
             ComputeArgOffset();
-            if (!isVarArg &&
-                (Flags.isByVal() || ObjectVT.isVector() || ObjectVT == MVT::f128))
+            if (Flags.isByVal() ||
+                (!isVarArg && (ObjectVT.isVector() || ObjectVT == MVT::f128)))
                 NonGPRArgBytes += ArgOffset - UnalignedArgOffset;
 
             // Keep GPR slots independent of vector slots and alignment padding.
@@ -8171,7 +8170,8 @@ SDValue PPCTargetLowering::LowerFormalArguments_Xbox360(
         // If this function is vararg, store any remaining integer argument regs
         // to their spots on the stack so that they may be loaded by dereferencing
         // the result of va_next.
-        for (GPR_idx = (ArgOffset - PreParamAreaSize) / RegByteSize;
+        for (GPR_idx = (ArgOffset - PreParamAreaSize - NonGPRArgBytes) /
+                       RegByteSize;
             GPR_idx < Num_GPR_Regs; ++GPR_idx) {
                 Register VReg = MF.addLiveIn(GPR[GPR_idx], &PPC::G8RCRegClass);
                 SDValue Val = DAG.getCopyFromReg(Chain, dl, VReg, RegVT);
