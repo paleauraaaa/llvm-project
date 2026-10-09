@@ -1149,8 +1149,14 @@ ABIArgInfo PPC64_Xbox360_ABIInfo::classifyReturnType(QualType RetTy) const {
   if (RetTy->isVoidType())
     return ABIArgInfo::getIgnore();
 
-  if (isAggregateTypeForABI(RetTy))
+  if (isAggregateTypeForABI(RetTy)) {
+    uint64_t Bits = getContext().getTypeSize(RetTy);
+    // Xbox MSVC returns only these ordinary aggregate sizes directly in R3,
+    // as an integer memory image rather than a floating-point value.
+    if (Bits == 8 || Bits == 16 || Bits == 32 || Bits == 64)
+      return ABIArgInfo::getDirect(llvm::IntegerType::get(getVMContext(), Bits));
     return getNaturalAlignIndirect(RetTy);
+  }
 
   return (isPromotableTypeForABI(RetTy) ? ABIArgInfo::getExtend(RetTy)
                                         : ABIArgInfo::getDirect());
