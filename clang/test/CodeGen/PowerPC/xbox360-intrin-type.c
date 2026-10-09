@@ -10,7 +10,7 @@ struct Plain {
 
 // The intrinsic type is passed and returned directly as <4 x float>.
 // CHECK-LABEL: define dso_local <4 x float> @add(
-// CHECK-SAME: <4 x float> %a.coerce, <4 x float> %b.coerce, i32 noundef signext %n)
+// CHECK-SAME: <4 x float> %a.coerce, <4 x float> %b.coerce, i32 noundef %n)
 __vector4 add(__vector4 a, __vector4 b, int n) {
   __vector4 r = a;
   r.v[0] += b.v[0];
@@ -18,7 +18,7 @@ __vector4 add(__vector4 a, __vector4 b, int n) {
 }
 
 // CHECK-LABEL: define dso_local signext i32 @use(
-// CHECK: call <4 x float> @add(<4 x float> %{{.*}}, <4 x float> %{{.*}}, i32 noundef signext %{{.*}})
+// CHECK: call <4 x float> @add(<4 x float> %{{.*}}, <4 x float> %{{.*}}, i32 noundef %{{.*}})
 int use(int x) {
   __vector4 a = {{0, 0, 0, 0}};
   __vector4 b = add(a, a, x);
@@ -27,5 +27,5 @@ int use(int x) {
 
 // Other aggregates keep the default classification.
 // CHECK-LABEL: define dso_local signext i32 @plain(
-// CHECK-SAME: ptr noundef byval(%struct.Plain) align 8 %p, i32 noundef signext %y)
+// CHECK-SAME: ptr noundef byval(%struct.Plain) align 8 %p, i32 noundef %y)
 int plain(struct Plain p, int y) { return p.a + y; }

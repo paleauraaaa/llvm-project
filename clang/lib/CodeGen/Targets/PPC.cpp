@@ -1184,9 +1184,9 @@ ABIArgInfo PPC64_Xbox360_ABIInfo::classifyArgumentType(QualType Ty) const {
                                    /*Realign*/ TyAlign > CCAlign);
   }
 
-  return (isPromotableTypeForABI(Ty)
-              ? ABIArgInfo::getExtend(Ty, CGT.ConvertType(Ty))
-              : ABIArgInfo::getDirect());
+  // Xbox MSVC does not guarantee the upper bits of integer argument registers.
+  // Keep the source width so callees perform any required extension themselves.
+  return ABIArgInfo::getDirect();
 }
 
 CharUnits PPC64_Xbox360_ABIInfo::getParamTypeAlignment(QualType Ty) const {
