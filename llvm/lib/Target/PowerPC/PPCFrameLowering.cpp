@@ -35,6 +35,9 @@ STATISTIC(NumPESpillVSR, "Number of spills to vector in prologue");
 STATISTIC(NumPEReloadVSR, "Number of reloads from vector in epilogue");
 STATISTIC(NumPrologProbed, "Number of prologues probed");
 
+static constexpr uint64_t XboxStackProbeSize = 4096;
+static constexpr uint64_t XboxInlineProbeLimit = 5 * XboxStackProbeSize;
+
 static cl::opt<bool>
 EnablePEVectorSpills("ppc-enable-pe-vector-spills",
                      cl::desc("Enable spills in prologue to vector registers."),
@@ -1046,6 +1049,24 @@ void PPCFrameLowering::emitPrologue(MachineFunction &MF,
           .addReg(SPReg);
     }
   } else {
+    auto EmitXboxProbe = [&]() {
+      if (!FI->usesXboxStackProbe())
+        return;
+      if (ScratchReg != PPC::X12)
+        BuildMI(MBB, StackUpdateLoc, dl, TII.get(PPC::OR8), PPC::X12)
+            .addReg(ScratchReg)
+            .addReg(ScratchReg);
+      BuildMI(MBB, StackUpdateLoc, dl, TII.get(PPC::XBOX_STACK_PROBE))
+          .addExternalSymbol("_RtlCheckStack12");
+      ScratchReg = PPC::X12;
+    };
+    if (isXbox360 && !FI->usesXboxStackProbe()) {
+      for (uint64_t Offset = XboxStackProbeSize; Offset < FrameSize;
+           Offset += XboxStackProbeSize)
+        BuildMI(MBB, StackUpdateLoc, dl, TII.get(PPC::LD), ScratchReg)
+            .addImm(-int64_t(Offset))
+            .addReg(SPReg);
+    }
     // This condition must be kept in sync with canUseAsPrologue.
     if (HasBP && MaxAlign > 1) {
       if (isPPC64)
@@ -1071,12 +1092,13 @@ void PPCFrameLowering::emitPrologue(MachineFunction &MF,
             .addReg(TempReg, RegState::Kill);
       }
 
+      EmitXboxProbe();
       BuildMI(MBB, isXbox360 ? StackUpdateLoc : MBBI, dl,
               StoreUpdtIdxInst, SPReg)
           .addReg(SPReg, RegState::Kill)
           .addReg(SPReg)
           .addReg(ScratchReg);
-    } else if (!isLargeFrame) {
+    } else if (!isLargeFrame && !FI->usesXboxStackProbe()) {
       BuildMI(MBB, StackUpdateLoc, dl, StoreUpdtInst, SPReg)
           .addReg(SPReg)
           .addImm(NegFrameSize)
@@ -1084,6 +1106,7 @@ void PPCFrameLowering::emitPrologue(MachineFunction &MF,
     } else {
       TII.materializeImmPostRA(MBB, isXbox360 ? StackUpdateLoc : MBBI,
                               dl, ScratchReg, NegFrameSize);
+      EmitXboxProbe();
       BuildMI(MBB, isXbox360 ? StackUpdateLoc : MBBI, dl,
               StoreUpdtIdxInst, SPReg)
           .addReg(SPReg, RegState::Kill)
@@ -2218,6 +2241,45 @@ void PPCFrameLowering::processFunctionBeforeFrameFinalized(MachineFunction &MF,
   // Get callee saved register information.
   MachineFrameInfo &MFI = MF.getFrameInfo();
   const std::vector<CalleeSavedInfo> &CSI = MFI.getCalleeSavedInfo();
+
+  if (Subtarget.isTargetXbox360() &&
+      !Subtarget.getTargetLowering()->hasInlineStackProbe(MF)) {
+    // The save areas still overlap here; include their combined extent and
+    // room for scavenging/alignment before deciding whether to reserve LR.
+    uint64_t GPRSaveSize = 0, FPRSaveSize = 0, VRSaveSize = 0;
+    for (const CalleeSavedInfo &CS : CSI) {
+      if (CS.isSpilledToReg())
+        continue;
+      int64_t Offset = MFI.getObjectOffset(CS.getFrameIdx());
+      if (Offset >= 0)
+        continue;
+      uint64_t Size = -Offset;
+      Register Reg = CS.getReg();
+      if (PPC::GPRCRegClass.contains(Reg) || PPC::G8RCRegClass.contains(Reg))
+        GPRSaveSize = std::max(GPRSaveSize, Size);
+      else if (PPC::F8RCRegClass.contains(Reg))
+        FPRSaveSize = std::max(FPRSaveSize, Size);
+      else if (PPC::VR128RCRegClass.contains(Reg))
+        VRSaveSize = std::max(VRSaveSize, Size);
+    }
+    uint64_t FrameBound = determineFrameLayout(MF, true) +
+                          GPRSaveSize + FPRSaveSize + VRSaveSize +
+                          MFI.getMaxAlign().value() + 16;
+    if (FrameBound >= XboxInlineProbeLimit ||
+        (Subtarget.getRegisterInfo()->hasBasePointer(MF) &&
+         FrameBound > XboxStackProbeSize)) {
+      PPCFunctionInfo *FI = MF.getInfo<PPCFunctionInfo>();
+      FI->setUsesXboxStackProbe();
+      FI->setLRStoreRequired();
+      FI->setMustSaveLR(true);
+      if (!FI->getReturnAddrSaveIndex())
+        FI->setReturnAddrSaveIndex(
+            MFI.CreateFixedObject(8, -(int64_t)getReturnSaveOffset(), true));
+      MFI.setHasCalls(true);
+      MFI.setMaxCallFrameSize(std::max<uint64_t>(
+          MFI.getMaxCallFrameSize(), getLinkageSize() + 64));
+    }
+  }
 
   // If the function is shrink-wrapped, and if the function has a tail call, the
   // tail call might not be in the new RestoreBlock, so real branch instruction

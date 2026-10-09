@@ -951,6 +951,13 @@ void PPCAsmPrinter::emitInstruction(const MachineInstr *MI) {
   // Lower multi-instruction pseudo operations.
   switch (MI->getOpcode()) {
   default: break;
+  case PPC::XBOX_STACK_PROBE: {
+    MCInst Call;
+    LowerPPCMachineInstrToMCInst(MI, Call, *this);
+    Call.setOpcode(PPC::BL);
+    EmitToStreamer(*OutStreamer, Call);
+    return;
+  }
   case TargetOpcode::PATCHABLE_FUNCTION_ENTER: {
     assert(!Subtarget->isAIXABI() &&
            "AIX does not support patchable function entry!");

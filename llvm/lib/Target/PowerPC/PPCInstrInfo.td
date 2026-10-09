@@ -391,6 +391,8 @@ def PPCcr6unset : SDNode<"PPCISD::CR6UNSET", SDTNone,
 def SDTDynOp  : SDTypeProfile<1, 2, []>;
 def SDTDynAreaOp  : SDTypeProfile<1, 1, []>;
 def PPCdynalloc   : SDNode<"PPCISD::DYNALLOC", SDTDynOp, [SDNPHasChain]>;
+def PPCxboxprobedalloca : SDNode<"PPCISD::XBOX_PROBED_ALLOCA", SDTDynOp,
+                               [SDNPHasChain, SDNPMayLoad, SDNPMayStore]>;
 def PPCdynareaoffset   : SDNode<"PPCISD::DYNAREAOFFSET", SDTDynAreaOp, [SDNPHasChain]>;
 def PPCprobedalloca : SDNode<"PPCISD::PROBED_ALLOCA", SDTDynOp, [SDNPHasChain]>;
 
@@ -1207,6 +1209,17 @@ let Defs = [R1], Uses = [R1] in
 def DYNALLOC : PPCEmitTimePseudo<(outs gprc:$result), (ins gprc:$negsize, memri:$fpsi), "#DYNALLOC",
                        [(set i32:$result,
                              (PPCdynalloc i32:$negsize, iaddr:$fpsi))]>;
+let Defs = [X1, X0, X11, X12, LR, CTR, CR0], Uses = [X1],
+    isCall = 1, hasSideEffects = 1, mayLoad = 1, mayStore = 1 in
+def XBOX_PROBED_ALLOCA : PPCEmitTimePseudo<(outs gprc:$result),
+    (ins gprc:$negsize, memri:$fpsi), "#XBOX_PROBED_ALLOCA",
+    [(set i32:$result, (PPCxboxprobedalloca i32:$negsize, iaddr:$fpsi))]>;
+
+// This runtime call preserves argument registers and the displacement in R12.
+let Defs = [X0, X11, LR, CTR, CR0], Uses = [X1, X12],
+    isCall = 1, hasSideEffects = 1, mayLoad = 1 in
+def XBOX_STACK_PROBE : PPCEmitTimePseudo<(outs), (ins calltarget:$LI),
+                                       "#XBOX_STACK_PROBE", []>;
 def DYNAREAOFFSET : PPCEmitTimePseudo<(outs i32imm:$result), (ins memri:$fpsi), "#DYNAREAOFFSET",
                        [(set i32:$result, (PPCdynareaoffset iaddr:$fpsi))]>;
 // Probed alloca to support stack clash protection.

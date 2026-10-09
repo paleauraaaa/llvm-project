@@ -184,9 +184,10 @@ entry:
 ; CHECK-LABEL: test_dyn_alloca_stack_args:
 ; The dynamic allocation stores the old SP as the new backchain and returns
 ; newSP + 16 bytes of linkage + 80 bytes reserved for this call's parameters.
-; CHECK-DAG: addi [[BACKCHAIN:[0-9]+]], 31, 128
-; CHECK-DAG: extsw [[NEG_SIZE:[0-9]+]], 3
-; CHECK: stwux [[BACKCHAIN]], 1, [[NEG_SIZE]]
+; CHECK: extsw
+; CHECK: bl _RtlCheckStack12
+; CHECK-NEXT: lwz [[BACKCHAIN:[0-9]+]], 0(1)
+; CHECK-NEXT: stwux [[BACKCHAIN]], 1, 12
 ; CHECK: addi 3, 1, 96
 ; CHECK-NOT: stdux
 ; CHECK-DAG: std {{[0-9]+}}, 80(1)

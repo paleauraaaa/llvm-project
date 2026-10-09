@@ -1739,6 +1739,7 @@ const char *PPCTargetLowering::getTargetNodeName(unsigned Opcode) const {
   case PPCISD::ATOMIC_CMP_SWAP_8: return "PPCISD::ATOMIC_CMP_SWAP_8";
   case PPCISD::ATOMIC_CMP_SWAP_16: return "PPCISD::ATOMIC_CMP_SWAP_16";
   case PPCISD::DYNALLOC:        return "PPCISD::DYNALLOC";
+  case PPCISD::XBOX_PROBED_ALLOCA: return "PPCISD::XBOX_PROBED_ALLOCA";
   case PPCISD::DYNAREAOFFSET:   return "PPCISD::DYNAREAOFFSET";
   case PPCISD::PROBED_ALLOCA:   return "PPCISD::PROBED_ALLOCA";
   case PPCISD::GlobalBaseReg:   return "PPCISD::GlobalBaseReg";
@@ -9099,6 +9100,11 @@ SDValue PPCTargetLowering::LowerDYNAMIC_STACKALLOC(SDValue Op,
   SDValue FPSIdx = getFramePointerFrameIndex(DAG);
   SDValue Ops[3] = { Chain, NegSize, FPSIdx };
   SDVTList VTs = DAG.getVTList(PtrVT, MVT::Other);
+  if (Subtarget.isTargetXbox360() && !UseProbedAlloca) {
+    MF.getFrameInfo().setHasCalls(true);
+    MF.getInfo<PPCFunctionInfo>()->setLRStoreRequired();
+    return DAG.getNode(PPCISD::XBOX_PROBED_ALLOCA, dl, VTs, Ops);
+  }
   if (UseProbedAlloca) {
     if (Subtarget.isPPC64()) {
       SDValue Probe = DAG.getNode(PPCISD::PROBED_ALLOCA, dl,

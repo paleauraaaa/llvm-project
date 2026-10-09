@@ -138,6 +138,9 @@ namespace llvm {
     /// compute an allocation on the stack.
     DYNALLOC,
 
+    /// Dynamic Xbox allocation using the runtime stack-probing helper.
+    XBOX_PROBED_ALLOCA,
+
     /// This instruction is lowered in PPCRegisterInfo::eliminateFrameIndex to
     /// compute an offset from native SP to the address  of the most recent
     /// dynamic alloca.
