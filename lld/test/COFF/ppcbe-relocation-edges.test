@@ -12,10 +12,11 @@
 # RUN: lld-link /machine:ppcbe /entry:foo /include:bar /include:baz /opt:icf /base:0x10000 /out:%t.pair-icf.exe %t.pair-icf.obj
 # RUN: llvm-objdump -s --section=.text %t.pair-icf.exe | FileCheck --check-prefix=PAIR-ICF %s
 
-# PAIR: 11000 3c60ffff 4e800020
+# PAIR: 11000 3c600001 4e800020
 
-# PAIR-ERROR: IMAGE_REL_PPC_PAIR relocation is not preceded by REFHI
-# PAIR-ERROR: IMAGE_REL_PPC_PAIR relocation is not preceded by REFHI
+# PAIR-ERROR: IMAGE_REL_PPC_PAIR relocation is not preceded by REFHI or REFLO
+# PAIR-ERROR: IMAGE_REL_PPC_REFHI or REFLO relocation is not followed by PAIR
+# PAIR-ERROR: IMAGE_REL_PPC_PAIR relocation is not preceded by REFHI or REFLO
 
 # BRANCH-ERROR: misaligned IMAGE_REL_PPC_REL24 relocation
 # BRANCH-ERROR: misaligned IMAGE_REL_PPC_REL14 relocation
@@ -28,7 +29,7 @@
 
 # SECREL16-ERROR: overflow in IMAGE_REL_PPC_SECREL16 relocation
 
-# PAIR-ICF: 11000 3c600000 4e800020 3c60ffff 4e800020
+# PAIR-ICF: 11000 3c600001 4e800020 3c600001 4e800020
 
 #--- pair-addend.yaml
 --- !COFF
