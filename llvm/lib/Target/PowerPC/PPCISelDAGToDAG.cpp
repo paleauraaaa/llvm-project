@@ -247,24 +247,30 @@ namespace {
     /// addressing mode of DSForm instructions (a base register, plus a signed
     /// 16-bit displacement that is a multiple of 4.
     bool SelectDSForm(SDNode *Parent, SDValue N, SDValue &Disp, SDValue &Base) {
-      return PPCLowering->SelectOptimalAddrMode(Parent, N, Disp, Base, *CurDAG,
-                                                Align(4)) == PPC::AM_DSForm;
+      return widenXboxAddress(
+          PPCLowering->SelectOptimalAddrMode(Parent, N, Disp, Base, *CurDAG,
+                                            Align(4)) == PPC::AM_DSForm,
+          Base, &Disp, N);
     }
 
     /// SelectDQForm - Returns true if address N can be represented by the
     /// addressing mode of DQForm instructions (a base register, plus a signed
     /// 16-bit displacement that is a multiple of 16.
     bool SelectDQForm(SDNode *Parent, SDValue N, SDValue &Disp, SDValue &Base) {
-      return PPCLowering->SelectOptimalAddrMode(Parent, N, Disp, Base, *CurDAG,
-                                                Align(16)) == PPC::AM_DQForm;
+      return widenXboxAddress(
+          PPCLowering->SelectOptimalAddrMode(Parent, N, Disp, Base, *CurDAG,
+                                            Align(16)) == PPC::AM_DQForm,
+          Base, &Disp, N);
     }
 
     /// SelectDForm - Returns true if address N can be represented by
     /// the addressing mode of DForm instructions (a base register, plus a
     /// signed 16-bit immediate.
     bool SelectDForm(SDNode *Parent, SDValue N, SDValue &Disp, SDValue &Base) {
-      return PPCLowering->SelectOptimalAddrMode(Parent, N, Disp, Base, *CurDAG,
-                                                std::nullopt) == PPC::AM_DForm;
+      return widenXboxAddress(
+          PPCLowering->SelectOptimalAddrMode(Parent, N, Disp, Base, *CurDAG,
+                                            std::nullopt) == PPC::AM_DForm,
+          Base, &Disp, N);
     }
 
     /// SelectPCRelForm - Returns true if address N can be represented by
@@ -286,16 +292,20 @@ namespace {
     /// SelectXForm - Returns true if address N can be represented by the
     /// addressing mode of XForm instructions (an indexed [r+r] operation).
     bool SelectXForm(SDNode *Parent, SDValue N, SDValue &Disp, SDValue &Base) {
-      return PPCLowering->SelectOptimalAddrMode(Parent, N, Disp, Base, *CurDAG,
-                                                std::nullopt) == PPC::AM_XForm;
+      return widenXboxAddress(
+          PPCLowering->SelectOptimalAddrMode(Parent, N, Disp, Base, *CurDAG,
+                                            std::nullopt) == PPC::AM_XForm,
+          Disp, &Base, N, true);
     }
 
     /// SelectForceXForm - Given the specified address, force it to be
     /// represented as an indexed [r+r] operation (an XForm instruction).
     bool SelectForceXForm(SDNode *Parent, SDValue N, SDValue &Disp,
                           SDValue &Base) {
-      return PPCLowering->SelectForceXFormMode(N, Disp, Base, *CurDAG) ==
-             PPC::AM_XForm;
+      return widenXboxAddress(
+          PPCLowering->SelectForceXFormMode(N, Disp, Base, *CurDAG) ==
+              PPC::AM_XForm,
+          Disp, &Base, N, true);
     }
 
     /// SelectAddrIdx - Given the specified address, check to see if it can be
@@ -305,8 +315,10 @@ namespace {
     /// bit signed displacement.
     /// Returns false if it can be represented by [r+imm], which are preferred.
     bool SelectAddrIdx(SDValue N, SDValue &Base, SDValue &Index) {
-      return PPCLowering->SelectAddressRegReg(N, Base, Index, *CurDAG,
-                                              std::nullopt);
+      return widenXboxAddress(
+          PPCLowering->SelectAddressRegReg(N, Base, Index, *CurDAG,
+                                          std::nullopt),
+          Base, &Index, N, true);
     }
 
     /// SelectAddrIdx4 - Given the specified address, check to see if it can be
@@ -316,8 +328,9 @@ namespace {
     /// displacement must be a multiple of 4.
     /// Returns false if it can be represented by [r+imm], which are preferred.
     bool SelectAddrIdxX4(SDValue N, SDValue &Base, SDValue &Index) {
-      return PPCLowering->SelectAddressRegReg(N, Base, Index, *CurDAG,
-                                              Align(4));
+      return widenXboxAddress(
+          PPCLowering->SelectAddressRegReg(N, Base, Index, *CurDAG, Align(4)),
+          Base, &Index, N, true);
     }
 
     /// SelectAddrIdx16 - Given the specified address, check to see if it can be
@@ -327,14 +340,17 @@ namespace {
     /// displacement must be a multiple of 16.
     /// Returns false if it can be represented by [r+imm], which are preferred.
     bool SelectAddrIdxX16(SDValue N, SDValue &Base, SDValue &Index) {
-      return PPCLowering->SelectAddressRegReg(N, Base, Index, *CurDAG,
-                                              Align(16));
+      return widenXboxAddress(
+          PPCLowering->SelectAddressRegReg(N, Base, Index, *CurDAG, Align(16)),
+          Base, &Index, N, true);
     }
 
     /// SelectAddrIdxOnly - Given the specified address, force it to be
     /// represented as an indexed [r+r] operation.
     bool SelectAddrIdxOnly(SDValue N, SDValue &Base, SDValue &Index) {
-      return PPCLowering->SelectAddressRegRegOnly(N, Base, Index, *CurDAG);
+      return widenXboxAddress(
+          PPCLowering->SelectAddressRegRegOnly(N, Base, Index, *CurDAG),
+          Base, &Index, N, true);
     }
 
     /// SelectAddrImm - Returns true if the address N can be represented by
@@ -343,23 +359,27 @@ namespace {
     /// displacement.
     bool SelectAddrImm(SDValue N, SDValue &Disp,
                        SDValue &Base) {
-      return PPCLowering->SelectAddressRegImm(N, Disp, Base, *CurDAG,
-                                              std::nullopt);
+      return widenXboxAddress(
+          PPCLowering->SelectAddressRegImm(N, Disp, Base, *CurDAG, std::nullopt),
+          Base, &Disp, N);
     }
 
     /// SelectAddrImmX4 - Returns true if the address N can be represented by
     /// a base register plus a signed 16-bit displacement that is a multiple of
     /// 4 (last parameter). Suitable for use by STD and friends.
     bool SelectAddrImmX4(SDValue N, SDValue &Disp, SDValue &Base) {
-      return PPCLowering->SelectAddressRegImm(N, Disp, Base, *CurDAG, Align(4));
+      return widenXboxAddress(
+          PPCLowering->SelectAddressRegImm(N, Disp, Base, *CurDAG, Align(4)),
+          Base, &Disp, N);
     }
 
     /// SelectAddrImmX16 - Returns true if the address N can be represented by
     /// a base register plus a signed 16-bit displacement that is a multiple of
     /// 16(last parameter). Suitable for use by STXV and friends.
     bool SelectAddrImmX16(SDValue N, SDValue &Disp, SDValue &Base) {
-      return PPCLowering->SelectAddressRegImm(N, Disp, Base, *CurDAG,
-                                              Align(16));
+      return widenXboxAddress(
+          PPCLowering->SelectAddressRegImm(N, Disp, Base, *CurDAG, Align(16)),
+          Base, &Disp, N);
     }
 
     /// SelectAddrImmX34 - Returns true if the address N can be represented by
@@ -372,6 +392,57 @@ namespace {
     // Select an address into a single register.
     bool SelectAddr(SDValue N, SDValue &Base) {
       Base = N;
+      return widenXboxAddress(true, Base);
+    }
+
+    // Memory instructions use G8RC addresses even when the ABI uses i32
+    // pointers. Do not constrain a shared i32 calculation to G8RC.
+    bool widenXboxAddress(bool Selected, SDValue &Base,
+                          SDValue *Offset = nullptr,
+                          SDValue Address = SDValue(), bool Indexed = false) {
+      if (!Selected || !Subtarget->isTargetXbox360())
+        return Selected;
+      // Complete pointer arithmetic at the ABI width before extending,
+      // including signed displacements and relocation low halves.
+      if (Offset && Address.getValueType() == MVT::i32) {
+        if (Indexed) {
+          Base = CurDAG->getRegister(PPC::ZERO8, MVT::i64);
+          *Offset = Address;
+        } else if (!isa<FrameIndexSDNode>(Base)) {
+          Base = Address;
+          *Offset = CurDAG->getTargetConstant(0, SDLoc(Address), MVT::i32);
+        }
+      }
+      auto Widen = [&](SDValue &Value) {
+        if (Value.getValueType() != MVT::i32)
+          return;
+        if (auto *FI = dyn_cast<FrameIndexSDNode>(Value)) {
+          if (Value.getOpcode() == ISD::FrameIndex) {
+            SDLoc DL(Value);
+            Value = SDValue(CurDAG->getMachineNode(
+                                PPC::ADDI8, DL, MVT::i64,
+                                CurDAG->getTargetFrameIndex(FI->getIndex(),
+                                                           MVT::i64),
+                                getI64Imm(0, DL)),
+                            0);
+          }
+          return;
+        }
+        if (auto *Reg = dyn_cast<RegisterSDNode>(Value)) {
+          if (Reg->getReg() == PPC::ZERO8) {
+            Value = CurDAG->getRegister(PPC::ZERO8, MVT::i64);
+            return;
+          }
+        }
+        SDLoc DL(Value);
+        Value = SDValue(CurDAG->getMachineNode(
+                            PPC::RLDICL_32_64, DL, MVT::i64, Value,
+                            getI64Imm(0, DL), getI64Imm(32, DL)),
+                        0);
+      };
+      Widen(Base);
+      if (Offset && Indexed)
+        Widen(*Offset);
       return true;
     }
 

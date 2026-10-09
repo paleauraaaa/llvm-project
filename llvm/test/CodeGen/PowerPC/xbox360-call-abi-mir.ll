@@ -335,7 +335,8 @@ declare void @take_14_vectors(<4 x i32>, <4 x i32>, <4 x i32>, <4 x i32>,
 
 ; The 14th vector goes to an aligned stack slot after 13 vector registers.
 ; CHECK-LABEL: name: call_14_vectors
-; CHECK: renamable $r5 = ADDI $r1, 224,
+; CHECK: renamable $r[[VADDR:[0-9]+]] = ADDI $r1, 224,
+; CHECK: renamable $x[[VADDR]] = RLDICL {{.*}}$x[[VADDR]], 0, 32
 ; CHECK: ADJCALLSTACKDOWN 240
 ; CHECK: STVX {{.*}}(store (s128))
 ; CHECK: BL {{.*}}take_14_vectors{{.*}}implicit killed $v1, implicit $v2, implicit $v3, implicit $v4, implicit $v5, implicit killed $v6, implicit killed $v7, implicit killed $v8, implicit killed $v9, implicit killed $v10, implicit killed $v11, implicit killed $v12, implicit killed $v13
@@ -362,7 +363,8 @@ declare void @take_scalar_and_14_vectors(i64, <4 x i32>, <4 x i32>,
 ; The scalar advances the cursor from 16 to 24; the first vector is aligned
 ; up to 32, leaving the 14th vector at the aligned offset 240.
 ; CHECK-LABEL: name: call_mixed_14_vectors
-; CHECK: renamable $r6 = ADDI $r1, 240,
+; CHECK: renamable $r[[MIXADDR:[0-9]+]] = ADDI $r1, 240,
+; CHECK: renamable $x[[MIXADDR]] = RLDICL {{.*}}$x[[MIXADDR]], 0, 32
 ; CHECK: ADJCALLSTACKDOWN 256
 ; CHECK: STVX {{.*}}(store (s128))
 ; CHECK: BL {{.*}}take_scalar_and_14_vectors
