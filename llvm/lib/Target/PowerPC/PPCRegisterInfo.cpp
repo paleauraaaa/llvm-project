@@ -766,6 +766,7 @@ void PPCRegisterInfo::lowerDynamicAlloc(MachineBasicBlock::iterator II) const {
   const TargetInstrInfo &TII = *Subtarget.getInstrInfo();
   bool Use64BitStackOps = TM.isPPC64();
   DebugLoc dl = MI.getDebugLoc();
+  bool UseXboxProbe = MI.getOpcode() == PPC::XBOX_PROBED_ALLOCA;
 
   // Get the maximum call stack size.
   unsigned maxCallFrameSize = MFI.getMaxCallFrameSize();
@@ -791,6 +792,20 @@ void PPCRegisterInfo::lowerDynamicAlloc(MachineBasicBlock::iterator II) const {
   }
 
   prepareDynamicAlloca(II, NegSizeReg, KillNegSizeReg, Reg);
+
+  if (UseXboxProbe) {
+    BuildMI(MBB, II, dl, TII.get(PPC::OR8), PPC::X12)
+        .addReg(NegSizeReg, getKillRegState(KillNegSizeReg))
+        .addReg(NegSizeReg);
+    BuildMI(MBB, II, dl, TII.get(PPC::XBOX_STACK_PROBE))
+        .addExternalSymbol("_RtlCheckStack12");
+    // The helper clobbers R11, so obtain the backchain after probing.
+    BuildMI(MBB, II, dl, TII.get(PPC::LWZ8), Reg)
+        .addImm(0)
+        .addReg(PPC::X1);
+    NegSizeReg = PPC::X12;
+    KillNegSizeReg = true;
+  }
 
   // Grow the stack and update the stack pointer link, then determine the
   // address of new allocated space.
@@ -861,7 +876,9 @@ void PPCRegisterInfo::prepareDynamicAlloca(MachineBasicBlock::iterator II,
   const TargetRegisterClass *G8RC = &PPC::G8RCRegClass;
   const TargetRegisterClass *GPRC = &PPC::GPRCRegClass;
 
-  if (MaxAlign < TargetAlign && isInt<16>(FrameSize)) {
+  if (MI.getOpcode() == PPC::XBOX_PROBED_ALLOCA) {
+    // The caller obtains the backchain after the runtime helper call.
+  } else if (MaxAlign < TargetAlign && isInt<16>(FrameSize)) {
     if (Use64BitStackOps)
       BuildMI(MBB, II, dl, TII.get(PPC::ADDI8), FramePointer)
           .addReg(PPC::X31)
@@ -1657,7 +1674,8 @@ PPCRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
 
   // Special case for dynamic alloca.
   if (FPSI && FrameIndex == FPSI &&
-      (OpC == PPC::DYNALLOC || OpC == PPC::DYNALLOC8)) {
+      (OpC == PPC::DYNALLOC || OpC == PPC::DYNALLOC8 ||
+       OpC == PPC::XBOX_PROBED_ALLOCA)) {
     lowerDynamicAlloc(II);
     // lowerDynamicAlloc erases II
     return true;

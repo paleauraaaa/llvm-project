@@ -61,6 +61,9 @@ private:
   /// PEI.
   bool MustSaveLR = false;
 
+  /// Whether the fixed frame requires a runtime probe in its prologue.
+  bool UsesXboxStackProbe = false;
+
   /// MustSaveTOC - Indicates that the TOC save needs to be performed in the
   /// prologue of the function. This is typically the case when there are
   /// indirect calls in the function and it is more profitable to save the
@@ -197,6 +200,8 @@ public:
   /// which is used in PIC generation), or if the LR stack slot is explicitly
   /// referenced by builtin_return_address.
   void setMustSaveLR(bool U) { MustSaveLR = U; }
+  bool usesXboxStackProbe() const { return UsesXboxStackProbe; }
+  void setUsesXboxStackProbe() { UsesXboxStackProbe = true; }
   bool mustSaveLR() const    { return MustSaveLR; }
 
   void setMustSaveTOC(bool U) { MustSaveTOC = U; }

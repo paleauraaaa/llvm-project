@@ -11,11 +11,13 @@ declare void @consume(ptr, ptr, ptr, i64)
 ; CHECK: stwu 1, -[[#FRAME:]](1)
 ; CHECK: mr 31, 1
 ; CHECK: ld 6, [[#FRAME+80]](31)
-; CHECK: addi [[CHAIN1:[0-9]+]], 31, [[#FRAME]]
-; CHECK: stwux [[CHAIN1]], 1,
+; CHECK: bl _RtlCheckStack12
+; CHECK-NEXT: lwz [[CHAIN1:[0-9]+]], 0(1)
+; CHECK-NEXT: stwux [[CHAIN1]], 1, 12
 ; CHECK: addi {{[0-9]+}}, 1, 80
-; CHECK: addi [[CHAIN2:[0-9]+]], 31, [[#FRAME]]
-; CHECK: stwux [[CHAIN2]], 1,
+; CHECK: bl _RtlCheckStack12
+; CHECK-NEXT: lwz [[CHAIN2:[0-9]+]], 0(1)
+; CHECK-NEXT: stwux [[CHAIN2]], 1, 12
 ; CHECK: addi {{[0-9]+}}, 1, 80
 ; CHECK: stb {{[0-9]+}}, [[#LOCAL:]](31)
 ; CHECK: bl consume
