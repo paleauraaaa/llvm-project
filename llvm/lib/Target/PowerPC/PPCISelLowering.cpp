@@ -6010,8 +6010,9 @@ PPCTargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
     bool IsCalleeExternalSymbol = isa<ExternalSymbolSDNode>(Callee);
 
     isTailCall =
+        !MF.getInfo<PPCFunctionInfo>()->getSRetReturnReg() &&
         isEligibleForTCO(GV, CallConv, CallerCC, CB, isVarArg, Outs, Ins,
-                         &(MF.getFunction()), IsCalleeExternalSymbol);
+                        &(MF.getFunction()), IsCalleeExternalSymbol);
     if (isTailCall) {
       ++NumTailCalls;
       if (!getTargetMachine().Options.GuaranteedTailCallOpt)
@@ -8158,6 +8159,18 @@ SDValue PPCTargetLowering::LowerFormalArguments_Xbox360(
             ArgVal = DAG.getLoad(ObjectVT, dl, Chain, FIN, MachinePointerInfo());
         }
 
+        if (Flags.isSRet()) {
+            // MSVC returns the original destination even after calls or GEPs.
+            assert(!FuncInfo->getSRetReturnReg() &&
+                   "SRet return has already been set");
+            MVT PtrVT = getPointerTy(DAG.getDataLayout());
+            Register Reg =
+                MF.getRegInfo().createVirtualRegister(getRegClassFor(PtrVT));
+            FuncInfo->setSRetReturnReg(Reg);
+            SDValue Copy = DAG.getCopyToReg(DAG.getEntryNode(), dl, Reg, ArgVal);
+            MemOps.push_back(Copy);
+        }
+
         InVals.push_back(ArgVal);
     }
 
@@ -8974,6 +8987,17 @@ PPCTargetLowering::LowerReturn(SDValue Chain, CallingConv::ID CallConv,
       Chain = DAG.getCopyToReg(Chain, dl, VA.getLocReg(), Arg, Glue);
     Glue = Chain.getValue(1);
     RetOps.push_back(DAG.getRegister(VA.getLocReg(), VA.getLocVT()));
+  }
+
+  if (Register Reg =
+          DAG.getMachineFunction().getInfo<PPCFunctionInfo>()->getSRetReturnReg()) {
+    assert(Outs.empty() && "SRet function must not return another value");
+    SDValue Ptr = DAG.getCopyFromReg(RetOps[0], dl, Reg,
+                                    getPointerTy(DAG.getDataLayout()));
+    Ptr = DAG.getNode(ISD::ZERO_EXTEND, dl, MVT::i64, Ptr);
+    Chain = DAG.getCopyToReg(Chain, dl, PPC::X3, Ptr, Glue);
+    Glue = Chain.getValue(1);
+    RetOps.push_back(DAG.getRegister(PPC::X3, MVT::i64));
   }
 
   RetOps[0] = Chain;  // Update chain.

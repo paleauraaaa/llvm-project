@@ -1805,6 +1805,18 @@ bool PPCFastISel::SelectRet(const Instruction *I) {
     }
   }
 
+  if (Register Reg = PPCFuncInfo->getSRetReturnReg()) {
+    assert(Ret->getNumOperands() == 0 &&
+           "SRet function must not return another value");
+    Register PtrReg = createResultReg(&PPC::G8RCRegClass);
+    if (!PPCEmitIntExt(MVT::i32, Reg, MVT::i64, PtrReg, true))
+      return false;
+    BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, MIMD,
+            TII.get(TargetOpcode::COPY), PPC::X3)
+        .addReg(PtrReg);
+    RetRegs.push_back(PPC::X3);
+  }
+
   MachineInstrBuilder MIB = BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, MIMD,
                                     TII.get(PPC::BLR8));
 

@@ -47,6 +47,9 @@ private:
   ///
   int ReturnAddrSaveIndex = 0;
 
+  /// Original hidden result pointer returned in R3 by the Xbox 360 ABI.
+  Register SRetReturnReg;
+
   /// Frame index where the old base pointer is stored.
   int BasePointerSaveIndex = 0;
 
@@ -174,6 +177,9 @@ public:
 
   int getReturnAddrSaveIndex() const { return ReturnAddrSaveIndex; }
   void setReturnAddrSaveIndex(int idx) { ReturnAddrSaveIndex = idx; }
+
+  Register getSRetReturnReg() const { return SRetReturnReg; }
+  void setSRetReturnReg(Register Reg) { SRetReturnReg = Reg; }
 
   int getBasePointerSaveIndex() const { return BasePointerSaveIndex; }
   void setBasePointerSaveIndex(int Idx) { BasePointerSaveIndex = Idx; }
