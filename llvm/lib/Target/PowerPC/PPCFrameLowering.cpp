@@ -1284,7 +1284,8 @@ void PPCFrameLowering::emitPrologue(MachineFunction &MF,
 
   // If there is a frame pointer, copy R1 into R31
   if (HasFP) {
-    BuildMI(MBB, MBBI, dl, OrInst, FPReg)
+    // Xbox saves precede the stack update, but FP addresses the allocated frame.
+    BuildMI(MBB, isXbox360 ? StackUpdateLoc : MBBI, dl, OrInst, FPReg)
       .addReg(SPReg)
       .addReg(SPReg);
 
