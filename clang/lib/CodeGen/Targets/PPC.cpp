@@ -1076,7 +1076,6 @@ public:
       if (FI.isInstanceMethod()) {
         CharUnits Align = getContext().getTypeAlignInChars(FI.getReturnType());
         FI.getReturnInfo() = ABIArgInfo::getIndirect(Align, /*ByVal=*/false);
-        FI.getReturnInfo().setSRetAfterThis(true);
       } else {
         FI.getReturnInfo() = ABIArgInfo::getDirect(getVector4Type(CGT));
       }

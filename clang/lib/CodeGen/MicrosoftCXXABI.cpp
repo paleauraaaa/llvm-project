@@ -1165,7 +1165,6 @@ bool MicrosoftCXXABI::classifyReturnType(CGFunctionInfo &FI) const {
       RetTy->isVectorType() && CGM.getContext().getTypeSize(RetTy) > 64) {
     CharUnits Align = CGM.getContext().getTypeAlignInChars(RetTy);
     FI.getReturnInfo() = ABIArgInfo::getIndirect(Align, /*ByVal=*/false);
-    FI.getReturnInfo().setSRetAfterThis(true);
     return true;
   }
 
@@ -1183,8 +1182,10 @@ bool MicrosoftCXXABI::classifyReturnType(CGFunctionInfo &FI) const {
     CharUnits Align = CGM.getContext().getTypeAlignInChars(FI.getReturnType());
     FI.getReturnInfo() = ABIArgInfo::getIndirect(Align, /*ByVal=*/false);
 
-    // MSVC always passes `this` before the `sret` parameter.
-    FI.getReturnInfo().setSRetAfterThis(FI.isInstanceMethod());
+    // Xbox MSVC passes the destination in R3 and `this` in R4. Other
+    // Microsoft targets pass `this` before the `sret` parameter.
+    FI.getReturnInfo().setSRetAfterThis(
+        FI.isInstanceMethod() && !CGM.getTarget().getTriple().isOSXbox360());
 
     // On AArch64, use the `inreg` attribute if the object is considered to not
     // be trivially copyable, or if this is an instance method struct return.
