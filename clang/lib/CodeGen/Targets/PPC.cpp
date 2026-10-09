@@ -1216,22 +1216,14 @@ RValue PPC64_Xbox360_ABIInfo::EmitVAArg(CodeGenFunction &CGF, Address VAListAddr
       return complexTempStructure(CGF, VAListAddr, Ty, SlotSize, EltSize, CTy);
   }
 
-  // Otherwise, just use the general rule.
-  //
-  // The PPC64 ABI passes some arguments in integer registers, even to variadic
-  // functions. To allow va_list to use the simple "void*" representation,
-  // variadic calls allocate space in the argument area for the integer argument
-  // registers, and variadic functions spill their integer argument registers to
-  // this area in their prologues. When aggregates smaller than a register are
-  // passed this way, they are passed in the least significant bits of the
-  // register, which means that after spilling on big-endian targets they will
-  // be right-aligned in their argument slot. This is uncommon; for a variety of
-  // reasons, other big-endian targets don't end up right-aligning aggregate
-  // types this way, and so right-alignment only applies to fundamental types.
-  // So on PPC64, we must force the use of right-alignment even for aggregates.
+  // Ellipsis aggregates use eight-byte slots. Only sub-doubleword aggregates
+  // whose size is a power of two are right-justified in the big-endian image.
+  bool RightAdjustAggregate =
+      isAggregateTypeForABI(Ty) && TypeInfo.Width < SlotSize &&
+      llvm::isPowerOf2_64(TypeInfo.Width.getQuantity());
   return emitVoidPtrVAArg(CGF, VAListAddr, Ty, /*Indirect*/ false, TypeInfo,
                           SlotSize, /*AllowHigher*/ true, Slot,
-                          /*ForceRightAdjust*/ true);
+                          /*ForceRightAdjust*/ RightAdjustAggregate);
 }
 
 bool

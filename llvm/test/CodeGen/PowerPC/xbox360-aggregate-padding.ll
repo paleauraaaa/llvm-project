@@ -1,5 +1,6 @@
 ; RUN: llc -mtriple=ppc64-ibm-xbox360 -verify-machineinstrs -stop-after=finalize-isel %s -o - | FileCheck %s
 ; RUN: llc -mtriple=ppc64-ibm-xbox360 -verify-machineinstrs -filetype=obj %s -o %t.obj
+; RUN: llc -mtriple=ppc64-ibm-xbox360 -verify-machineinstrs %s -o - | FileCheck %s --check-prefix=ASM
 
 %B4 = type { [4 x i8] }
 %B8 = type { [8 x i8] }
@@ -94,13 +95,49 @@ define i64 @stack17(i64 %a, i64 %b, i64 %c, i64 %d, i64 %e, i64 %f, i64 %g,
   ret i64 %sum
 }
 
-; Do not change the existing variadic ABI without a complete varargs oracle.
+; Named aggregates retain 16-byte padding, while ellipsis aggregates use eight.
 declare void @vararg(i64, ...)
 ; CHECK-LABEL: name: variadic9
-; CHECK: offset: 24, size: 16
+; CHECK: offset: 32, size: 16
 ; CHECK: BL @vararg{{.*}}implicit $x3, implicit $x4, implicit $x5, implicit $x6
 define void @variadic9(i64 %lead, ptr byval(%B9) align 1 %p, ...) {
   call void (i64, ...) @vararg(i64 %lead, ptr byval(%B9) align 1 %p, i64 42)
+  ret void
+}
+
+declare void @named_vararg(i64, ptr byval(%B9) align 1, ...)
+declare void @llvm.va_start(ptr)
+
+; CHECK-LABEL: name: named_variadic9
+; CHECK-DAG: offset: 48, size: 8
+; CHECK-DAG: offset: 32, size: 16
+; CHECK: liveins: $x3, $x4, $x5, $x6, $x7, $x8, $x9, $x10
+; CHECK: BL @named_vararg{{.*}}implicit $x3, implicit $x4, implicit $x5, implicit $x6
+define ptr @named_variadic9(i64 %lead, ptr byval(%B9) align 1 %p, ...) {
+  %ap = alloca ptr, align 4
+  call void @llvm.va_start(ptr %ap)
+  call void (i64, ptr, ...) @named_vararg(
+      i64 %lead, ptr byval(%B9) align 1 %p, i64 42)
+  %result = load ptr, ptr %ap, align 4
+  ret ptr %result
+}
+
+; A 32-byte-aligned ellipsis aggregate still begins at +24, not +32.
+; CHECK-LABEL: name: unnamed_overaligned
+; CHECK: BL @vararg{{.*}}implicit $x3, implicit $x4, implicit $x5, implicit $x6, implicit $x7, implicit $x8
+define void @unnamed_overaligned(ptr %p) {
+  call void (i64, ...) @vararg(i64 1, ptr byval(%B32) align 32 %p, i64 42)
+  ret void
+}
+
+; Stack-passed ellipsis aggregates retain their unpadded +72/+80 split.
+; CHECK-LABEL: name: unnamed_split
+; CHECK: ADJCALLSTACKDOWN 96
+; CHECK: STD {{.*}}, 88,
+; CHECK: BL @vararg{{.*}}implicit $x3, implicit $x4, implicit $x5, implicit $x6, implicit $x7, implicit $x8, implicit $x9, implicit $x10
+define void @unnamed_split(ptr %p) {
+  call void (i64, ...) @vararg(i64 1, i64 2, i64 3, i64 4, i64 5, i64 6,
+                              i64 7, ptr byval(%B9) align 1 %p, i64 42)
   ret void
 }
 
@@ -128,4 +165,21 @@ define void @original_sequence(i64 %lead, ptr byval(%B3) align 1 %a,
                        ptr byval(%B4) align 1 %b, ptr byval(%B9) align 1 %c,
                        ptr byval(%B32) align 8 %d, i64 %tail)
   ret void
+}
+
+; va_start uses the padded end of the named image (+48), while register spills
+; start with R6, not R7. The padding must not cause the first vararg to be lost.
+; CHECK-LABEL: name: named_start
+; CHECK-DAG: offset: 48, size: 8
+; CHECK-DAG: offset: 32, size: 16
+; ASM-LABEL: named_start:
+; ASM-DAG: addi {{[0-9]+}}, 1, 48
+; ASM-DAG: std 6, 48(1)
+; ASM-DAG: std 10, 80(1)
+; ASM: blr
+define ptr @named_start(i64 %lead, ptr byval(%B9) align 1 %p, ...) {
+  %ap = alloca ptr, align 4
+  call void @llvm.va_start(ptr %ap)
+  %result = load ptr, ptr %ap, align 4
+  ret ptr %result
 }
