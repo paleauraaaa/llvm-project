@@ -374,7 +374,8 @@ static bool hasNonRISpills(const MachineFunction &MF) {
 static bool MustSaveLR(const MachineFunction &MF, unsigned LR) {
   const PPCFunctionInfo *MFI = MF.getInfo<PPCFunctionInfo>();
   if (MF.getSubtarget<PPCSubtarget>().isTargetXbox360())
-    LR = PPC::LR;
+    return !MF.getRegInfo().def_empty(PPC::LR) ||
+           !MF.getRegInfo().def_empty(PPC::LR8) || MFI->isLRStoreRequired();
 
   // We need a save/restore of LR if there is any def of LR (which is
   // defined by calls, including the PIC setup sequence), or if there is
