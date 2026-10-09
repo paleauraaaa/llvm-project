@@ -4202,6 +4202,15 @@ static Align CalculateStackSlotAlignment(EVT ArgVT, EVT OrigVT,
   return Alignment;
 }
 
+static Align CalculateXbox360StackSlotAlignment(EVT ArgVT, EVT OrigVT,
+                                               ISD::ArgFlagsTy Flags,
+                                               bool UseAggregatePadding) {
+  // MSVC aligns aggregate slots by size, independently of the type alignment.
+  if (UseAggregatePadding && Flags.isByVal())
+    return Align(Flags.getByValSize() > 8 ? 16 : 8);
+  return CalculateStackSlotAlignment(ArgVT, OrigVT, Flags, 8);
+}
+
 /// CalculateStackSlotUsed - Return whether this argument will use its
 /// stack slot (instead of being passed in registers).  ArgOffset,
 /// AvailableFPRs, and AvailableVRs must hold the current argument
@@ -7357,8 +7366,8 @@ SDValue PPCTargetLowering::LowerCall_Xbox360(
         }
 
         /* Respect alignment of argument on the stack.  */
-        auto Alignement =
-            CalculateStackSlotAlignment(ArgVT, OrigVT, Flags, RegByteSize);
+        auto Alignement = CalculateXbox360StackSlotAlignment(
+            ArgVT, OrigVT, Flags, !IsFastCall && !CFlags.IsVarArg);
         NumBytes = alignTo(NumBytes, Alignement);
 
         NumBytes += CalculateStackSlotSize(ArgVT, Flags, RegByteSize);
@@ -7409,7 +7418,7 @@ SDValue PPCTargetLowering::LowerCall_Xbox360(
     // ArgOffset tracks where the next argument would land in the call frame.
     // Start at the linkage area so register assignment starts at parameter 0.
     unsigned ArgOffset = LinkageSize;
-    unsigned VectorArgBytes = 0;
+    unsigned NonGPRArgBytes = 0;
 
     SmallVector<std::pair<unsigned, SDValue>, 8> RegsToPass;
     SmallVector<TailCallArgumentInfo, 8> TailCallArguments;
@@ -7430,8 +7439,8 @@ SDValue PPCTargetLowering::LowerCall_Xbox360(
         // we'll actually use a stack slot.
         auto ComputePtrOff = [&]() {
             /* Respect alignment of argument on the stack.  */
-            auto Alignment =
-                CalculateStackSlotAlignment(ArgVT, OrigVT, Flags, RegByteSize);
+            auto Alignment = CalculateXbox360StackSlotAlignment(
+                ArgVT, OrigVT, Flags, !IsFastCall && !CFlags.IsVarArg);
             ArgOffset = alignTo(ArgOffset, Alignment);
 
             PtrOff = DAG.getConstant(ArgOffset, dl, StackPtr.getValueType());
@@ -7442,12 +7451,12 @@ SDValue PPCTargetLowering::LowerCall_Xbox360(
         if (!IsFastCall) {
             unsigned UnalignedArgOffset = ArgOffset;
             ComputePtrOff();
-            if (!CFlags.IsVarArg && !Flags.isByVal() && ArgVT.isVector())
-                VectorArgBytes += ArgOffset - UnalignedArgOffset;
+            if (!CFlags.IsVarArg && (Flags.isByVal() || ArgVT.isVector()))
+                NonGPRArgBytes += ArgOffset - UnalignedArgOffset;
 
-            // Prototyped vectors and their alignment padding occupy the
-            // parameter image, but do not consume GPR argument slots.
-            GPR_idx = (ArgOffset - LinkageSize - VectorArgBytes) / RegByteSize;
+            // Prototyped vectors and vector/aggregate alignment padding
+            // occupy the parameter image, but do not consume GPR slots.
+            GPR_idx = (ArgOffset - LinkageSize - NonGPRArgBytes) / RegByteSize;
             GPR_idx = std::min(GPR_idx, NumGPRs);
         }
 
@@ -7750,7 +7759,7 @@ SDValue PPCTargetLowering::LowerCall_Xbox360(
 
         if (!IsFastCall) {
             ArgOffset += 16;
-            VectorArgBytes += 16;
+            NonGPRArgBytes += 16;
         }
         break;
         }
@@ -7862,7 +7871,7 @@ SDValue PPCTargetLowering::LowerFormalArguments_Xbox360(
     // entry to a function on PPC, the arguments start after the linkage area,
     // although the first ones are often in registers.
     unsigned ArgOffset = PreParamAreaSize;
-    unsigned VectorArgBytes = 0;
+    unsigned NonGPRArgBytes = 0;
     unsigned GPR_idx = 0, FPR_idx = 0, VR_idx = 0;
     SmallVector<SDValue, 8> MemOps;
     Function::const_arg_iterator FuncArg = MF.getFunction().arg_begin();
@@ -7886,8 +7895,9 @@ SDValue PPCTargetLowering::LowerFormalArguments_Xbox360(
         Align Alignment;
         auto ComputeArgOffset = [&]() {
             /* Respect alignment of argument on the stack.  */
-            Alignment =
-                CalculateStackSlotAlignment(ObjectVT, OrigVT, Flags, RegByteSize);
+            Alignment = CalculateXbox360StackSlotAlignment(
+                ObjectVT, OrigVT, Flags,
+                CallConv != CallingConv::Fast && !isVarArg);
             ArgOffset = alignTo(ArgOffset, Alignment);
             CurArgOffset = ArgOffset;
         };
@@ -7895,13 +7905,13 @@ SDValue PPCTargetLowering::LowerFormalArguments_Xbox360(
         if (CallConv != CallingConv::Fast) {
             unsigned UnalignedArgOffset = ArgOffset;
             ComputeArgOffset();
-            if (!isVarArg && !Flags.isByVal() &&
-                (ObjectVT.isVector() || ObjectVT == MVT::f128))
-                VectorArgBytes += ArgOffset - UnalignedArgOffset;
+            if (!isVarArg &&
+                (Flags.isByVal() || ObjectVT.isVector() || ObjectVT == MVT::f128))
+                NonGPRArgBytes += ArgOffset - UnalignedArgOffset;
 
-            // Keep the GPR slots independent of prototyped vector slots.
+            // Keep GPR slots independent of vector slots and alignment padding.
             GPR_idx =
-                (ArgOffset - PreParamAreaSize - VectorArgBytes) / RegByteSize;
+                (ArgOffset - PreParamAreaSize - NonGPRArgBytes) / RegByteSize;
             GPR_idx = std::min(GPR_idx, Num_GPR_Regs);
         }
 
@@ -8121,7 +8131,7 @@ SDValue PPCTargetLowering::LowerFormalArguments_Xbox360(
             if (CallConv != CallingConv::Fast || needsLoad) {
                 ArgOffset += 16;
                 if (!isVarArg && CallConv != CallingConv::Fast)
-                    VectorArgBytes += 16;
+                    NonGPRArgBytes += 16;
             }
             break;
         }
