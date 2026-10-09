@@ -30,8 +30,8 @@ entry:
 ; CHECK: mflr 12
 ; CHECK-NEXT: stw 12, -8(1)
 ; CHECK-NEXT: stwu 1, -144(1)
-; CHECK-NEXT: addi 5, 1, 80
-; CHECK: stvx 1, 0, 3
+; CHECK-NEXT: addi [[VADDR:[0-9]+]], 1, 80
+; CHECK: stvx 1, 0, [[VADDR]]
 ; CHECK: bl callee
 ; CHECK-NEXT: addi 1, 1, 144
 ; CHECK-NEXT: lwz 12, -8(1)

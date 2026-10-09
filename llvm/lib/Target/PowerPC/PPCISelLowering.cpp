@@ -1217,10 +1217,17 @@ PPCTargetLowering::PPCTargetLowering(const PPCTargetMachine &TM,
     }
 
     if (Subtarget.hasVMX128()) {
-      addRegisterClass(MVT::v2i64, &PPC::VRRCRegClass);
-      addRegisterClass(MVT::v1i128, &PPC::VRRCRegClass);
-      addRegisterClass(MVT::v2i64, &PPC::VR128RCRegClass);
-      addRegisterClass(MVT::v1i128, &PPC::VR128RCRegClass);
+      // Wide lanes are useful for untyped vector storage, not Xenon arithmetic.
+      for (MVT VT : {MVT::v2i64, MVT::v1i128}) {
+        addRegisterClass(VT, &PPC::VR128RCRegClass);
+        if (!Subtarget.hasP8Altivec()) {
+          for (unsigned Op : {ISD::ADD, ISD::SUB, ISD::SHL, ISD::SRL,
+                              ISD::SRA, ISD::SETCC})
+            setOperationAction(Op, VT, Expand);
+          setOperationAction(ISD::VSELECT, VT, Promote);
+          AddPromotedToType(ISD::VSELECT, VT, MVT::v4i32);
+        }
+      }
     }
 
     if (Subtarget.hasP8Altivec()) {
@@ -3101,6 +3108,11 @@ bool PPCTargetLowering::getPreIndexedAddressParts(SDNode *N, SDValue &Base,
     Alignment = ST->getAlign();
     isLoad = false;
   } else
+    return false;
+
+  // Update-form instructions tie a G8RC address result to their base operand;
+  // that result cannot also represent an Xbox i32 pointer calculation.
+  if (Subtarget.isTargetXbox360() && Ptr.getValueType() == MVT::i32)
     return false;
 
   // Do not generate pre-inc forms for specific loads that feed scalar_to_vector

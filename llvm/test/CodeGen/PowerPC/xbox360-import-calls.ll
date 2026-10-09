@@ -72,7 +72,9 @@ entry:
 ; GLOBAL-LABEL: load_global_data:
 ; GLOBAL-NOT: @toc
 ; GLOBAL: lis 3, global_data@ha
-; GLOBAL-NEXT: lwz 3, global_data@l(3)
+; GLOBAL-NEXT: la 3, global_data@l(3)
+; GLOBAL-NEXT: clrldi 3, 3, 32
+; GLOBAL-NEXT: lwz 3, 0(3)
 ; GLOBAL-NEXT: blr
 
 define void @store_global_data(i32 %value) {
@@ -84,5 +86,7 @@ entry:
 ; GLOBAL-LABEL: store_global_data:
 ; GLOBAL-NOT: @toc
 ; GLOBAL: lis 4, global_data@ha
-; GLOBAL-NEXT: stw 3, global_data@l(4)
+; GLOBAL-NEXT: la 4, global_data@l(4)
+; GLOBAL-NEXT: clrldi 4, 4, 32
+; GLOBAL-NEXT: stw 3, 0(4)
 ; GLOBAL-NEXT: blr

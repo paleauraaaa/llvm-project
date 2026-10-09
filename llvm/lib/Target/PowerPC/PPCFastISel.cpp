@@ -402,7 +402,23 @@ bool PPCFastISel::PPCComputeAddress(const Value *Obj, Address &Addr) {
 
   // Prevent assignment of base register to X0, which is inappropriate
   // for loads and stores alike.
-  if (Addr.Base.Reg != 0)
+  if (Addr.Base.Reg != 0 && Subtarget->isTargetXbox360() &&
+      MRI.getRegClass(Addr.Base.Reg)->hasSuperClassEq(&PPC::GPRCRegClass)) {
+    if (Addr.Offset != 0) {
+      unsigned OffsetReg = PPCMaterialize32BitInt(
+          static_cast<uint32_t>(Addr.Offset), &PPC::GPRCRegClass);
+      Addr.Base.Reg = fastEmitInst_rr(PPC::ADD4, &PPC::GPRCRegClass,
+                                     Addr.Base.Reg, OffsetReg);
+      Addr.Offset = 0;
+    }
+    Register WideReg = createResultReg(&PPC::G8RC_and_G8RC_NOX0RegClass);
+    BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, MIMD,
+            TII.get(PPC::RLDICL_32_64), WideReg)
+        .addReg(Addr.Base.Reg)
+        .addImm(0)
+        .addImm(32);
+    Addr.Base.Reg = WideReg;
+  } else if (Addr.Base.Reg != 0)
     MRI.setRegClass(Addr.Base.Reg, &PPC::G8RC_and_G8RC_NOX0RegClass);
 
   return Addr.Base.Reg != 0;
@@ -1034,29 +1050,7 @@ unsigned PPCFastISel::PPCMoveToFPReg(MVT SrcVT, unsigned SrcReg,
   unsigned LoadOpc = PPC::LFD;
 
   if (SrcVT == MVT::i32) {
-    // Xbox 360 doesn't have LFIWZX or LFIWAX.
-    if (Subtarget->isTargetXbox360()) {
-      if (IsSigned)
-        llvm_unreachable("");
-
-      // zero-extend: put 32-bit word in high half (BE) and zero low half
-      Addr.Offset = 0;                    // high half for big-endian
-      if (!PPCEmitStore(MVT::i32, SrcReg, Addr)) return 0;
-      // store zero into low half
-      Register ZeroReg = createResultReg(&PPC::G8RCRegClass);
-      BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, MIMD, TII.get(PPC::LI),
-              ZeroReg).addImm(0);
-      Addr.Offset = 4;
-      if (!PPCEmitStore(MVT::i32, ZeroReg, Addr)) return 0;
-      Register ResultReg = 0;
-      Addr.Offset = 0;
-      if (!PPCEmitLoad(MVT::f32, ResultReg, Addr, &PPC::F4RCRegClass,
-                        /*IsZExt=*/true, PPC::LFS))
-         return 0;
-       return ResultReg;
-    }
-
-    if (!IsSigned) {
+    if (!IsSigned && !Subtarget->isTargetXbox360()) {
       LoadOpc = PPC::LFIWZX;
       Addr.Offset = (Subtarget->isLittleEndian()) ? 0 : 4;
     } else if (Subtarget->hasLFIWAX()) {
@@ -2026,17 +2020,20 @@ unsigned PPCFastISel::PPCMaterializeFP(const ConstantFP *CFP, MVT VT) {
 
   // Xbox 360 doesn't use TOC, so we have to handle it separately.
   if (Subtarget->isTargetXbox360()) {
-      APInt api = CFP->getValueAPF().bitcastToAPInt();
-      if (VT == MVT::f32) {
-          uint32_t Bits = (uint32_t)api.getZExtValue();
-          unsigned IntReg = PPCMaterialize32BitInt(Bits, &PPC::GPRCRegClass);
-          return PPCMoveToFPReg(MVT::i32, IntReg, /*IsSigned=*/false);
-      } else if (VT == MVT::f64) {
-          uint64_t Bits = api.getZExtValue();
-          unsigned IntReg = PPCMaterialize64BitInt(Bits, &PPC::G8RCRegClass);
-          return PPCMoveToFPReg(MVT::i64, IntReg, /*IsSigned=*/false);
-      }
-      return DestReg;
+    uint64_t Bits = CFP->getValueAPF().bitcastToAPInt().getZExtValue();
+    MVT IntVT = VT == MVT::f32 ? MVT::i32 : MVT::i64;
+    unsigned IntReg =
+        VT == MVT::f32
+            ? PPCMaterialize32BitInt(Bits, &PPC::GPRCRegClass)
+            : PPCMaterialize64BitInt(Bits, &PPC::G8RCRegClass);
+    Address Addr;
+    Addr.BaseType = Address::FrameIndexBase;
+    Addr.Base.FI =
+        MFI.CreateStackObject(VT == MVT::f32 ? 4 : 8, Alignment, false);
+    if (!PPCEmitStore(IntVT, IntReg, Addr) ||
+        !PPCEmitLoad(VT, DestReg, Addr, RC, /*IsZExt=*/false, PPC::LFD))
+      return 0;
+    return DestReg;
   }
 
   CodeModel::Model CModel = TM.getCodeModel();
@@ -2113,7 +2110,7 @@ unsigned PPCFastISel::PPCMaterializeGV(const GlobalValue *GV, MVT VT) {
   // Xbox 360 has no TOC, so we need to generate direct accesses.
   if (Subtarget->isTargetXbox360()) {
       const TargetRegisterClass *RC =
-           &PPC::G8RC_and_G8RC_NOX0RegClass; // 64-bit GPR class used by backend.
+           &PPC::GPRC_and_GPRC_NOR0RegClass;
        Register TmpReg = createResultReg(RC);
        Register DestReg = createResultReg(RC);
 
@@ -2352,8 +2349,12 @@ unsigned PPCFastISel::fastMaterializeAlloca(const AllocaInst *AI) {
     FuncInfo.StaticAllocaMap.find(AI);
 
   if (SI != FuncInfo.StaticAllocaMap.end()) {
-    Register ResultReg = createResultReg(&PPC::G8RC_and_G8RC_NOX0RegClass);
-    BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, MIMD, TII.get(PPC::ADDI8),
+    const TargetRegisterClass *RC = VT == MVT::i32
+                                       ? &PPC::GPRC_and_GPRC_NOR0RegClass
+                                       : &PPC::G8RC_and_G8RC_NOX0RegClass;
+    Register ResultReg = createResultReg(RC);
+    BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, MIMD,
+            TII.get(VT == MVT::i32 ? PPC::ADDI : PPC::ADDI8),
             ResultReg).addFrameIndex(SI->second).addImm(0);
     return ResultReg;
   }

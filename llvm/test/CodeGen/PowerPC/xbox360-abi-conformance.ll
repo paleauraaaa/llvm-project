@@ -86,9 +86,12 @@ define i8 @ninth_s3(i64 %a, i64 %b, i64 %c, i64 %d,
 
 ; ASM-LABEL: last_byte_s9:
 ; ASM: {{srdi|rldicl}} {{[0-9]+}}, 4, {{(56|8, 56)}}
-; ASM: stb {{[0-9]+}}, 24(1)
-; ASM: addi 3, 1, 16
-; ASM: lbz 3, 8(3)
+; ASM-DAG: stb {{[0-9]+}}, 24(1)
+; ASM-DAG: addi [[S9BASE:[0-9]+]], 1, 16
+; ASM: li [[S9LAST:[0-9]+]], 8
+; ASM: rlwimi [[S9LAST]], [[S9BASE]], 0, 29, 27
+; ASM: clrldi [[S9LAST]], [[S9LAST]], 32
+; ASM: lbz 3, 0([[S9LAST]])
 ; ASM: blr
 ; MIR-LABEL: name: last_byte_s9
 define i8 @last_byte_s9(ptr byval(%S9) align 1 %p) {
@@ -380,8 +383,11 @@ define ptr @caller_frame_address() {
 
 ; ASM-LABEL: caller_return_address:
 ; ASM: lwz [[CALLER_FRAME:[0-9]+]], 0({{[0-9]+}})
+; ASM-NEXT: clrldi [[CALLER_FRAME]], [[CALLER_FRAME]], 32
 ; ASM-NEXT: lwz [[CALLER_SP:[0-9]+]], 0([[CALLER_FRAME]])
-; ASM-NEXT: lwz {{[0-9]+}}, -8([[CALLER_SP]])
+; ASM-NEXT: addi [[RAADDR:[0-9]+]], [[CALLER_SP]], -8
+; ASM-NEXT: clrldi [[RAADDR]], [[RAADDR]], 32
+; ASM-NEXT: lwz {{[0-9]+}}, 0([[RAADDR]])
 define ptr @caller_return_address() {
   %p = call ptr @llvm.returnaddress(i32 1)
   ret ptr %p
