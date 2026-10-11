@@ -5507,7 +5507,13 @@ void PPCDAGToDAGISel::Select(SDNode *N) {
     // !Subtarget->isISA3_1() check.
     auto IntID = N->getConstantOperandVal(0);
     if (IntID == Intrinsic::ppc_fsels) {
-      SDValue Ops[] = {N->getOperand(1), N->getOperand(2), N->getOperand(3)};
+      SDLoc DL(N);
+      SDValue RC = CurDAG->getTargetConstant(PPC::F8RCRegClassID, DL, MVT::i32);
+      SDValue Comparand(
+          CurDAG->getMachineNode(TargetOpcode::COPY_TO_REGCLASS, DL, MVT::f64,
+                                N->getOperand(1), RC),
+          0);
+      SDValue Ops[] = {Comparand, N->getOperand(2), N->getOperand(3)};
       CurDAG->SelectNodeTo(N, PPC::FSELS, MVT::f32, Ops);
       return;
     }
