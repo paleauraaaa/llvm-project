@@ -5318,6 +5318,27 @@ void PPCDAGToDAGISel::Select(SDNode *N) {
     }
     break;
 
+  case ISD::INTRINSIC_W_CHAIN: {
+    if (N->getConstantOperandVal(1) != Intrinsic::ppc_altivec_get_vr128)
+      break;
+    if (!Subtarget->hasVMX128())
+      report_fatal_error("VMX128 register access requires the vmx128 feature");
+    unsigned RegNo = N->getConstantOperandVal(2);
+    if (RegNo >= 128)
+      report_fatal_error("invalid VMX128 vector register number");
+    Register Reg = Subtarget->getRegisterInfo()->getVMX128Register(RegNo);
+    MachineRegisterInfo &MRI = CurDAG->getMachineFunction().getRegInfo();
+    if (!MRI.isLiveIn(Reg))
+      MRI.addLiveIn(Reg);
+    if (!FuncInfo->MBB->isLiveIn(Reg))
+      FuncInfo->MBB->addLiveIn(Reg);
+    // Keep the architectural read ordered with WRITE_VR128 until post-RA
+    // expansion, rather than taking an immutable entry-block snapshot.
+    CurDAG->SelectNodeTo(N, PPC::READ_VR128, MVT::v4i32, MVT::Other,
+                        CurDAG->getRegister(Reg, MVT::v4i32), N->getOperand(0));
+    return;
+  }
+
   case ISD::INTRINSIC_VOID: {
     auto IntrinsicID = N->getConstantOperandVal(1);
     if (IntrinsicID != Intrinsic::ppc_tdw && IntrinsicID != Intrinsic::ppc_tw &&
