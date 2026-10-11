@@ -296,6 +296,9 @@ bool SemaPPC::CheckXboxVectorBuiltinDeclaration(FunctionDecl *FD,
   switch (BuiltinID) {
   default:
     return false;
+  case PPC::BI__IsIntConst:
+    Signature = "ii";
+    break;
 #define XBOX_VECTOR_BUILTIN(NAME, SIG, KIND, INTRINSIC, ICE) \
   case PPC::BI##NAME:                                     \
     Signature = SIG;                                     \

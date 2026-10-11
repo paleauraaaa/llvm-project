@@ -949,7 +949,7 @@ void PPCTargetInfo::adjust(DiagnosticsEngine &Diags, LangOptions &Opts) {
 
 ArrayRef<Builtin::Info> PPCTargetInfo::getTargetBuiltins() const {
   unsigned End = getTriple().isXbox360() ? clang::PPC::LastTSBuiltin
-                                       : clang::PPC::BI__lvx_volatile;
+                                       : clang::PPC::BI__IsIntConst;
   return llvm::ArrayRef(BuiltinInfo, End - Builtin::FirstTSBuiltin);
 }
 

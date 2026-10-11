@@ -12855,8 +12855,31 @@ static bool getBuiltinAlignArguments(const CallExpr *E, EvalInfo &Info,
   return true;
 }
 
+static bool hasXboxIntegerConstantOperands(const Expr *E) {
+  if (const auto *Ref = dyn_cast<DeclRefExpr>(E))
+    return isa<EnumConstantDecl>(Ref->getDecl());
+  // sizeof and alignof do not evaluate their operands.
+  if (isa<UnaryExprOrTypeTraitExpr>(E))
+    return true;
+  if (isa<CallExpr>(E) || isa<MemberExpr>(E))
+    return false;
+  for (const Stmt *Child : E->children())
+    if (const auto *Operand = dyn_cast_or_null<Expr>(Child))
+      if (!hasXboxIntegerConstantOperands(Operand))
+        return false;
+  return true;
+}
+
 bool IntExprEvaluator::VisitBuiltinCallExpr(const CallExpr *E,
                                             unsigned BuiltinOp) {
+  if (Info.Ctx.getTargetInfo().getTriple().isXbox360() &&
+      BuiltinOp == PPC::BI__IsIntConst) {
+    const Expr *Arg = E->getArg(0);
+    return Success(hasXboxIntegerConstantOperands(Arg) &&
+                       Arg->isIntegerConstantExpr(Info.Ctx),
+                   E);
+  }
+
   switch (BuiltinOp) {
   default:
     return false;
