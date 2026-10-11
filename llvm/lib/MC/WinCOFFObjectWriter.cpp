@@ -992,7 +992,11 @@ void WinCOFFWriter::recordRelocation(MCAssembler &Asm,
     case COFF::IMAGE_REL_PPC_SECREL:
     case COFF::IMAGE_REL_PPC_REFHI:
     case COFF::IMAGE_REL_PPC_REFLO:
+      break;
     case COFF::IMAGE_REL_PPC_REL24:
+      // PPC COFF branch addends are relative to the input section's start.
+      // The linker supplies the section-base delta, not the call-site delta.
+      FixedValue -= Reloc.Data.VirtualAddress;
       break;
     default:
       llvm_unreachable("unsupported relocation");
