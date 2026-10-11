@@ -16451,7 +16451,7 @@ NamedDecl *Sema::ImplicitlyDefineFunction(SourceLocation Loc,
          "Implicit function declarations aren't allowed in this language mode");
 
   if (Context.getTargetInfo().getTriple().isXbox360() &&
-      II.getBuiltinID() >= PPC::BI__lvx_volatile &&
+      II.getBuiltinID() >= PPC::BI__IsIntConst &&
       II.getBuiltinID() < PPC::LastTSBuiltin) {
     Diag(Loc, diag::err_ppc_xbox_vector_builtin_requires_declaration) << &II;
     return nullptr;

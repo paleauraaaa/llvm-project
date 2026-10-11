@@ -17716,6 +17716,14 @@ Value *CodeGenFunction::EmitPPCXboxVectorBuiltinExpr(
 Value *CodeGenFunction::EmitPPCBuiltinExpr(unsigned BuiltinID,
                                          const CallExpr *E,
                                          ReturnValueSlot ReturnValue) {
+  if (BuiltinID == PPC::BI__IsIntConst) {
+    Expr::EvalResult Result;
+    bool Evaluated = E->EvaluateAsInt(Result, getContext());
+    assert(Evaluated && "__IsIntConst must be evaluated by the frontend");
+    (void)Evaluated;
+    return llvm::ConstantInt::get(ConvertType(E->getType()),
+                                  Result.Val.getInt());
+  }
   if (BuiltinID >= PPC::BI__lvx_volatile && BuiltinID < PPC::LastTSBuiltin)
     return EmitPPCXboxVectorBuiltinExpr(BuiltinID, E, ReturnValue);
   // Do not emit the builtin arguments in the arguments of a function call,
