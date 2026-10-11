@@ -5914,10 +5914,11 @@ SDValue PPCTargetLowering::FinishCall(
             Callee.getOpcode() == ISD::TargetExternalSymbol ||
             Callee.getOpcode() == ISD::TargetGlobalAddress ||
             isa<ConstantSDNode>(Callee) ||
-            (CFlags.IsIndirect && Subtarget.isUsingPCRelativeCalls())) &&
+            (CFlags.IsIndirect && (Subtarget.isUsingPCRelativeCalls() ||
+                                   Subtarget.isTargetXbox360()))) &&
            "Expecting a global address, external symbol, absolute value, "
-           "register or an indirect tail call when PC Relative calls are "
-           "used.");
+           "register or an indirect tail call on Xbox or with PC Relative "
+           "calls.");
     // PC Relative calls also use TC_RETURN as the way to mark tail calls.
     assert(CallOpc == PPCISD::TC_RETURN &&
            "Unexpected call opcode for a tail call.");
@@ -5974,6 +5975,21 @@ bool PPCTargetLowering::isEligibleForTCO(
     const SmallVectorImpl<ISD::OutputArg> &Outs,
     const SmallVectorImpl<ISD::InputArg> &Ins, const Function *CallerFunc,
     bool isCalleeExternalSymbol) const {
+  // Microsoft thunks forward unknown arguments in the incoming registers and
+  // stack image. Fixed pointer parameters may be reloaded or adjusted.
+  if (Subtarget.isTargetXbox360() && CB && CB->isMustTailCall() &&
+      CallerFunc->hasFnAttribute("thunk") && isVarArg &&
+      CallerFunc->isVarArg() && CallerCC == CallingConv::C &&
+      CalleeCC == CallerCC &&
+      CB->getFunctionType() == CallerFunc->getFunctionType() &&
+      CB->arg_size() == CallerFunc->arg_size() &&
+      CallerFunc->arg_size() <= 8 &&
+      all_of(CallerFunc->args(), [](const Argument &Arg) {
+        return Arg.getType()->isPointerTy() && !Arg.hasByValAttr() &&
+               !Arg.hasNestAttr() && !Arg.hasInAllocaAttr();
+      }))
+    return true;
+
   if (Subtarget.useLongCalls() && !(CB && CB->isMustTailCall()))
     return false;
 
@@ -6010,7 +6026,9 @@ PPCTargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
     bool IsCalleeExternalSymbol = isa<ExternalSymbolSDNode>(Callee);
 
     isTailCall =
-        !MF.getInfo<PPCFunctionInfo>()->getSRetReturnReg() &&
+        (!MF.getInfo<PPCFunctionInfo>()->getSRetReturnReg() ||
+         (Subtarget.isTargetXbox360() && CB && CB->isMustTailCall() &&
+          MF.getFunction().hasFnAttribute("thunk"))) &&
         isEligibleForTCO(GV, CallConv, CallerCC, CB, isVarArg, Outs, Ins,
                         &(MF.getFunction()), IsCalleeExternalSymbol);
     if (isTailCall) {
@@ -6024,7 +6042,8 @@ PPCTargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
       // of a function pointer) or it may be a register copy (to move the
       // address of the callee from a function parameter into a virtual
       // register). It may also be an ExternalSymbolSDNode (ex memcopy).
-      assert((Subtarget.isUsingPCRelativeCalls() ||
+      assert((Subtarget.isTargetXbox360() ||
+              Subtarget.isUsingPCRelativeCalls() ||
               isa<GlobalAddressSDNode>(Callee)) &&
              "Callee should be an llvm::Function object.");
 
@@ -7269,7 +7288,11 @@ SDValue PPCTargetLowering::LowerCall_Xbox360(
 
     MachineFunction &MF = DAG.getMachineFunction();
 
+    bool IsMustTailForward = CB && CB->isMustTailCall() &&
+                             MF.getFunction().hasFnAttribute("thunk");
     if (CFlags.IsTailCall && !getTargetMachine().Options.GuaranteedTailCallOpt)
+        IsSibCall = true;
+    if (IsMustTailForward)
         IsSibCall = true;
 
     // Mark this function as potentially containing a function that contains a
@@ -7783,6 +7806,14 @@ SDValue PPCTargetLowering::LowerCall_Xbox360(
         "mismatch in size of parameter area");
     (void)NumBytesActuallyUsed;
 
+    if (IsMustTailForward) {
+        for (const auto &Forward :
+             MF.getInfo<PPCFunctionInfo>()->getForwardedMustTailRegParms()) {
+            SDValue Val = DAG.getCopyFromReg(Chain, dl, Forward.VReg, Forward.VT);
+            RegsToPass.emplace_back(Forward.PReg, Val);
+        }
+    }
+
     if (!MemOpChains.empty())
         Chain = DAG.getNode(ISD::TokenFactor, dl, MVT::Other, MemOpChains);
 
@@ -8185,6 +8216,21 @@ SDValue PPCTargetLowering::LowerFormalArguments_Xbox360(
     MinReservedArea =
         EnsureStackAlignment(Subtarget.getFrameLowering(), MinReservedArea);
     FuncInfo->setMinReservedArea(MinReservedArea);
+
+    if (MFI.hasMustTailInVarArgFunc() && MF.getFunction().hasFnAttribute("thunk")) {
+        auto &Forwards = FuncInfo->getForwardedMustTailRegParms();
+        auto Forward = [&](MCPhysReg Reg, const TargetRegisterClass *RC,
+                           MVT VT) {
+            Register VReg = MF.addLiveIn(Reg, RC);
+            Forwards.emplace_back(VReg, Reg, VT);
+        };
+        for (unsigned I = GPR_idx; I < Num_GPR_Regs; ++I)
+            Forward(GPR[I], &PPC::G8RCRegClass, MVT::i64);
+        for (unsigned I = FPR_idx; I < Num_FPR_Regs; ++I)
+            Forward(FPR[I], &PPC::F8RCRegClass, MVT::f64);
+        for (unsigned I = VR_idx; I < Num_VR_Regs; ++I)
+            Forward(VR[I], &PPC::VRRCRegClass, MVT::v4f32);
+    }
 
     if (isVarArg && MFI.hasVAStart()) {
         int Depth = ArgOffset;
@@ -13284,21 +13330,8 @@ SDValue PPCTargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
     return LowerFP_ROUND(Op, DAG);
   case ISD::ROTL:               return LowerROTL(Op, DAG);
 
-  // For counter-based loop handling.
-  case ISD::INTRINSIC_W_CHAIN: {
-    unsigned IntrinsicID = Op.getConstantOperandVal(1);
-    if (IntrinsicID != Intrinsic::ppc_altivec_get_vr128)
-      return SDValue();
-    if (!Subtarget.hasVMX128())
-      report_fatal_error("VMX128 register access requires the vmx128 feature");
-    unsigned RegNo = Op.getConstantOperandVal(2);
-    if (RegNo >= 128)
-      report_fatal_error("invalid VMX128 vector register number");
-    Register Reg = PPC::VR128RCRegClass.getRegister(RegNo);
-    SDLoc DL(Op);
-    SDValue Copy = DAG.getCopyFromReg(Op.getOperand(0), DL, Reg, MVT::v4i32);
-    return DAG.getMergeValues({Copy, Copy.getValue(1)}, DL);
-  }
+  case ISD::INTRINSIC_W_CHAIN:
+    return SDValue();
 
   case ISD::BITCAST:            return LowerBITCAST(Op, DAG);
 

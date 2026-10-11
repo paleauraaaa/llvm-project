@@ -14,6 +14,7 @@
 #define LLVM_LIB_TARGET_POWERPC_PPCMACHINEFUNCTIONINFO_H
 
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/CodeGen/CallingConvLower.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/TargetCallingConv.h"
 #include "llvm/CodeGen/TargetLowering.h"
@@ -49,6 +50,7 @@ private:
 
   /// Original hidden result pointer returned in R3 by the Xbox 360 ABI.
   Register SRetReturnReg;
+  SmallVector<ForwardedRegister, 32> ForwardedMustTailRegParms;
 
   /// Frame index where the old base pointer is stored.
   int BasePointerSaveIndex = 0;
@@ -179,6 +181,9 @@ public:
   void setReturnAddrSaveIndex(int idx) { ReturnAddrSaveIndex = idx; }
 
   Register getSRetReturnReg() const { return SRetReturnReg; }
+  SmallVectorImpl<ForwardedRegister> &getForwardedMustTailRegParms() {
+    return ForwardedMustTailRegParms;
+  }
   void setSRetReturnReg(Register Reg) { SRetReturnReg = Reg; }
 
   int getBasePointerSaveIndex() const { return BasePointerSaveIndex; }

@@ -61,6 +61,8 @@ class PPCRegisterInfo : public PPCGenRegisterInfo {
 public:
   PPCRegisterInfo(const PPCTargetMachine &TM);
 
+  MCRegister getVMX128Register(unsigned RegNo) const;
+
   /// getMappedIdxOpcForImmOpc - Return the mapped index form load/store opcode
   /// for a given imm form load/store opcode \p ImmFormOpcode.
   /// FIXME: move this to PPCInstrInfo class.

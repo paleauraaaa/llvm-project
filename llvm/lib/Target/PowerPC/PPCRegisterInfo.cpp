@@ -30,6 +30,9 @@
 #include "llvm/CodeGen/VirtRegMap.h"
 #include "llvm/IR/CallingConv.h"
 #include "llvm/IR/Function.h"
+#include "llvm/IR/InstIterator.h"
+#include "llvm/IR/IntrinsicInst.h"
+#include "llvm/IR/IntrinsicsPowerPC.h"
 #include "llvm/IR/Type.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
@@ -355,6 +358,14 @@ void PPCRegisterInfo::adjustStackMapLiveOutMask(uint32_t *Mask) const {
     Mask[PseudoReg / 32] &= ~(1u << (PseudoReg % 32));
 }
 
+MCRegister PPCRegisterInfo::getVMX128Register(unsigned RegNo) const {
+  // Register-class order is allocation order, not architectural numbering.
+  for (MCRegister Reg : PPC::VR128RCRegClass)
+    if (getEncodingValue(Reg) == RegNo)
+      return Reg;
+  report_fatal_error("invalid VMX128 vector register number");
+}
+
 BitVector PPCRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   BitVector Reserved(getNumRegs());
   const PPCSubtarget &Subtarget = MF.getSubtarget<PPCSubtarget>();
@@ -434,6 +445,19 @@ BitVector PPCRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
     for (MCRegister Reg : PPC::VR128RCRegClass)
       if (Reg >= PPC::V32)
         markSuperRegs(Reserved, Reg);
+  }
+
+  if (Subtarget.hasVMX128()) {
+    // Architectural reads must not observe registers reused by allocation,
+    // including when the read occurs outside the entry block.
+    for (const Instruction &I : instructions(MF.getFunction())) {
+      const auto *II = dyn_cast<IntrinsicInst>(&I);
+      if (!II || II->getIntrinsicID() != Intrinsic::ppc_altivec_get_vr128)
+        continue;
+      const auto *RegNo = dyn_cast<ConstantInt>(II->getArgOperand(0));
+      if (RegNo && RegNo->getZExtValue() < 128)
+        markSuperRegs(Reserved, getVMX128Register(RegNo->getZExtValue()));
+    }
   }
 
   if (Subtarget.isAIXABI() && Subtarget.hasAltivec() &&
