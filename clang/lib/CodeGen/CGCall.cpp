@@ -560,6 +560,10 @@ CodeGenTypes::arrangeUnprototypedMustTailThunk(const CXXMethodDecl *MD) {
   assert(MD->isVirtual() && "only methods have thunks");
   CanQual<FunctionProtoType> FTP = GetFormalType(MD);
   CanQualType ArgTys[] = {DeriveThisType(MD->getParent(), MD)};
+  if (Context.getTargetInfo().getTriple().isOSXbox360())
+    return arrangeLLVMFunctionInfo(FTP->getReturnType(),
+                                   FnInfoOpts::IsInstanceMethod, ArgTys,
+                                   FTP->getExtInfo(), {}, RequiredArgs(1));
   return arrangeLLVMFunctionInfo(Context.VoidTy, FnInfoOpts::None, ArgTys,
                                  FTP->getExtInfo(), {}, RequiredArgs(1));
 }
