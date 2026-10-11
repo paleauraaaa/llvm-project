@@ -1233,7 +1233,11 @@ UNALIASED_CUSTOM_BUILTIN(mma_pmxvbf16ger2nn, "vW512*VVi15i15i3", true,
                          "mma,paired-vector-memops")
 
 TARGET_BUILTIN(__IsIntConst, "", "ncTuE", "")
-TARGET_BUILTIN(__fself, "", "ncT", "")
+
+#define XBOX_PPC_BUILTIN(NAME, SIG, KIND, INTRINSIC, ASM, ICE) \
+  TARGET_BUILTIN(NAME, "", "nT", "")
+#include "clang/Basic/BuiltinsPPCXboxScalar.def"
+#undef XBOX_PPC_BUILTIN
 
 #define XBOX_VECTOR_BUILTIN(NAME, SIG, KIND, INTRINSIC, ICE) \
   TARGET_BUILTIN(NAME, "", "nT", "vmx128")

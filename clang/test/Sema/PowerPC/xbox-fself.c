@@ -22,7 +22,7 @@ float outside(void) {
   return __fself(0, 1, 2); // expected-error {{requires an explicit declaration}} expected-error {{use of undeclared identifier}}
 }
 //--- types.c
-double __fself(float, float, float); // expected-error {{invalid declaration of Xbox vector intrinsic}}
+double __fself(float, float, float); // expected-error {{invalid declaration of Xbox intrinsic}}
 //--- other.c
 // expected-no-diagnostics
 float __fself(float compare, float ge, float lt) {

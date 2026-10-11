@@ -1428,7 +1428,7 @@ def LDX  : XForm_1_memOp<31,  21, (outs g8rc:$RST), (ins (memrr $RA, $RB):$addr)
                         "ldx $RST, $addr", IIC_LdStLD,
                         [(set i64:$RST, (load XForm:$addr))]>, isPPC64;
 
-let Predicates = [IsISA2_06] in {
+let Predicates = [HasLDBRX] in {
 def LDBRX : XForm_1_memOp<31,  532, (outs g8rc:$RST), (ins (memrr $RA, $RB):$addr),
                           "ldbrx $RST, $addr", IIC_LdStLoad,
                           [(set i64:$RST, (PPClbrx ForceXForm:$addr, i64))]>, isPPC64;
@@ -1678,7 +1678,7 @@ def STDX  : XForm_8_memOp<31, 149, (outs), (ins g8rc:$RST, (memrr $RA, $RB):$add
                           [(store i64:$RST, XForm:$addr)]>, isPPC64,
                           PPC970_DGroup_Cracked;
 
-let Predicates = [IsISA2_06] in {
+let Predicates = [HasLDBRX] in {
 def STDBRX: XForm_8_memOp<31, 660, (outs), (ins g8rc:$RST, (memrr $RA, $RB):$addr),
                           "stdbrx $RST, $addr", IIC_LdStStore,
                           [(PPCstbrx i64:$RST, ForceXForm:$addr, i64)]>, isPPC64,
@@ -1986,6 +1986,19 @@ def : Pat<(int_ppc_load8r ForceXForm:$ptr),
           (LDBRX ForceXForm:$ptr)>;
 def : Pat<(int_ppc_store8r g8rc:$a, ForceXForm:$ptr),
           (STDBRX g8rc:$a, ForceXForm:$ptr)>;
+let Predicates = [In64BitMode, HasLDBRX, HasVMX128], isCodeGenOnly = 1,
+    hasSideEffects = 1 in {
+def LDBRX_volatile :
+    XForm_1_memOp<31, 532, (outs g8rc:$RST), (ins (memrr $RA, $RB):$addr),
+                  "ldbrx $RST, $addr", IIC_LdStLoad,
+                  [(set i64:$RST, (int_ppc_load8r_volatile ForceXForm:$addr))]>,
+    isPPC64;
+def STDBRX_volatile :
+    XForm_8_memOp<31, 660, (outs), (ins g8rc:$RST, (memrr $RA, $RB):$addr),
+                  "stdbrx $RST, $addr", IIC_LdStStore,
+                  [(int_ppc_store8r_volatile g8rc:$RST, ForceXForm:$addr)]>,
+    isPPC64, PPC970_DGroup_Cracked;
+}
 }
 
 def : Pat<(i64 (int_ppc_cmpb g8rc:$a, g8rc:$b)),

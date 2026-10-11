@@ -1929,6 +1929,15 @@ let TargetPrefix = "ppc" in {
       : ClangBuiltin<"__builtin_ppc_load4r">,
         DefaultAttrsIntrinsic<[llvm_i32_ty], [llvm_ptr_ty],
                               [IntrReadMem, IntrArgMemOnly]>;
+  def int_ppc_load2r_volatile
+      : Intrinsic<[llvm_i32_ty], [llvm_ptr_ty],
+                  [IntrArgMemOnly, IntrHasSideEffects], "", [SDNPMemOperand]>;
+  def int_ppc_load4r_volatile
+      : Intrinsic<[llvm_i32_ty], [llvm_ptr_ty],
+                  [IntrArgMemOnly, IntrHasSideEffects], "", [SDNPMemOperand]>;
+  def int_ppc_load8r_volatile
+      : Intrinsic<[llvm_i64_ty], [llvm_ptr_ty],
+                  [IntrArgMemOnly, IntrHasSideEffects], "", [SDNPMemOperand]>;
   def int_ppc_load8r
       : ClangBuiltin<"__builtin_ppc_load8r">,
         DefaultAttrsIntrinsic<[llvm_i64_ty], [llvm_ptr_ty],
@@ -1940,6 +1949,15 @@ let TargetPrefix = "ppc" in {
   def int_ppc_store4r
       : ClangBuiltin<"__builtin_ppc_store4r">,
         Intrinsic<[], [llvm_i32_ty, llvm_ptr_ty], [IntrWriteMem]>;
+  def int_ppc_store2r_volatile
+      : Intrinsic<[], [llvm_i32_ty, llvm_ptr_ty],
+                  [IntrArgMemOnly, IntrHasSideEffects], "", [SDNPMemOperand]>;
+  def int_ppc_store4r_volatile
+      : Intrinsic<[], [llvm_i32_ty, llvm_ptr_ty],
+                  [IntrArgMemOnly, IntrHasSideEffects], "", [SDNPMemOperand]>;
+  def int_ppc_store8r_volatile
+      : Intrinsic<[], [llvm_i64_ty, llvm_ptr_ty],
+                  [IntrArgMemOnly, IntrHasSideEffects], "", [SDNPMemOperand]>;
   def int_ppc_store8r
       : ClangBuiltin<"__builtin_ppc_store8r">,
         Intrinsic<[], [llvm_i64_ty, llvm_ptr_ty], [IntrWriteMem]>;

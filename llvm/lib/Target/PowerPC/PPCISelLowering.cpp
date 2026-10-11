@@ -18836,6 +18836,31 @@ bool PPCTargetLowering::getTgtMemIntrinsic(IntrinsicInfo &Info,
                                            MachineFunction &MF,
                                            unsigned Intrinsic) const {
   switch (Intrinsic) {
+  case Intrinsic::ppc_load2r_volatile:
+  case Intrinsic::ppc_load4r_volatile:
+  case Intrinsic::ppc_load8r_volatile:
+  case Intrinsic::ppc_store2r_volatile:
+  case Intrinsic::ppc_store4r_volatile:
+  case Intrinsic::ppc_store8r_volatile: {
+    bool IsLoad = Intrinsic == Intrinsic::ppc_load2r_volatile ||
+                  Intrinsic == Intrinsic::ppc_load4r_volatile ||
+                  Intrinsic == Intrinsic::ppc_load8r_volatile;
+    Info.opc = IsLoad ? ISD::INTRINSIC_W_CHAIN : ISD::INTRINSIC_VOID;
+    Info.memVT = Intrinsic == Intrinsic::ppc_load2r_volatile ||
+                         Intrinsic == Intrinsic::ppc_store2r_volatile
+                     ? MVT::i16
+                 : Intrinsic == Intrinsic::ppc_load4r_volatile ||
+                         Intrinsic == Intrinsic::ppc_store4r_volatile
+                     ? MVT::i32
+                     : MVT::i64;
+    Info.ptrVal = I.getArgOperand(IsLoad ? 0 : 1);
+    Info.offset = 0;
+    Info.align = Align(1);
+    Info.flags =
+        MachineMemOperand::MOVolatile |
+        (IsLoad ? MachineMemOperand::MOLoad : MachineMemOperand::MOStore);
+    return true;
+  }
   case Intrinsic::ppc_altivec_lvebx_volatile:
   case Intrinsic::ppc_altivec_lvehx_volatile:
   case Intrinsic::ppc_altivec_lvewx128_volatile:

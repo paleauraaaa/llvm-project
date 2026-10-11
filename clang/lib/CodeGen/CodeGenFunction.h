@@ -4783,6 +4783,8 @@ public:
   llvm::Value *EmitX86BuiltinExpr(unsigned BuiltinID, const CallExpr *E);
   llvm::Value *EmitPPCBuiltinExpr(unsigned BuiltinID, const CallExpr *E,
                                 ReturnValueSlot ReturnValue);
+  llvm::Value *EmitPPCXboxScalarBuiltinExpr(unsigned BuiltinID,
+                                            const CallExpr *E);
   llvm::Value *EmitPPCXboxVectorBuiltinExpr(unsigned BuiltinID,
                                           const CallExpr *E,
                                           ReturnValueSlot ReturnValue);
