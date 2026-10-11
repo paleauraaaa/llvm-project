@@ -934,6 +934,11 @@ ExprResult Sema::DefaultArgumentPromotion(Expr *E) {
 }
 
 Sema::VarArgKind Sema::isValidVarArgType(const QualType &Ty) {
+  if (Context.getTargetInfo().getTriple().isOSXbox360())
+    if (const auto *RD = Ty->getAsRecordDecl())
+      if (RD->hasAttr<IntrinTypeAttr>())
+        return VAK_Invalid;
+
   if (Ty->isIncompleteType()) {
     // C++11 [expr.call]p7:
     //   After these conversions, if the argument does not have arithmetic,
@@ -1024,7 +1029,11 @@ void Sema::checkVariadicArgument(const Expr *E, VariadicCallType CT) {
     break;
 
   case VAK_Invalid:
-    if (Ty.isDestructedType() == QualType::DK_nontrivial_c_struct)
+    if (const auto *RD = Ty->getAsRecordDecl();
+        Context.getTargetInfo().getTriple().isOSXbox360() && RD &&
+        RD->hasAttr<IntrinTypeAttr>())
+      Diag(E->getBeginLoc(), diag::err_xbox_vector_vararg);
+    else if (Ty.isDestructedType() == QualType::DK_nontrivial_c_struct)
       Diag(E->getBeginLoc(),
            diag::err_cannot_pass_non_trivial_c_struct_to_vararg)
           << Ty << CT;
