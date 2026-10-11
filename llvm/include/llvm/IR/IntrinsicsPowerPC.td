@@ -479,6 +479,14 @@ let TargetPrefix = "ppc" in {  // All intrinsics start with "llvm.ppc.".
   def int_ppc_altivec_lvewx :
       DefaultAttrsIntrinsic<[llvm_v4i32_ty], [llvm_ptr_ty],
                             [IntrReadMem, IntrArgMemOnly]>;
+  // Volatile reads must not be readonly: that permits call CSE and lets
+  // FastISel skip unused results, despite IntrHasSideEffects.
+  def int_ppc_altivec_lvebx_volatile :
+      Intrinsic<[llvm_v16i8_ty], [llvm_ptr_ty],
+                [IntrArgMemOnly, IntrHasSideEffects]>;
+  def int_ppc_altivec_lvehx_volatile :
+      Intrinsic<[llvm_v8i16_ty], [llvm_ptr_ty],
+                [IntrArgMemOnly, IntrHasSideEffects]>;
 
   // Stores.  These don't map directly to GCC builtins because they represent the
   // source address with a single pointer.
@@ -497,6 +505,31 @@ let TargetPrefix = "ppc" in {  // All intrinsics start with "llvm.ppc.".
   def int_ppc_altivec_stvewx :
               DefaultAttrsIntrinsic<[], [llvm_v4i32_ty, llvm_ptr_ty],
                                     [IntrWriteMem, IntrArgMemOnly]>;
+  def int_ppc_altivec_stvebx_volatile :
+      DefaultAttrsIntrinsic<[], [llvm_v16i8_ty, llvm_ptr_ty],
+                            [IntrWriteMem, IntrArgMemOnly, IntrHasSideEffects]>;
+  def int_ppc_altivec_stvehx_volatile :
+      DefaultAttrsIntrinsic<[], [llvm_v8i16_ty, llvm_ptr_ty],
+                            [IntrWriteMem, IntrArgMemOnly, IntrHasSideEffects]>;
+
+  foreach Name = ["vcmpequb", "vcmpgtsb", "vcmpgtub"] in
+    def int_ppc_altivec_#Name#_rec :
+        DefaultAttrsIntrinsic<[llvm_v16i8_ty],
+                              [llvm_v16i8_ty, llvm_v16i8_ty, llvm_ptr_ty],
+                              [IntrWriteMem, IntrArgMemOnly,
+                               NoCapture<ArgIndex<2>>, IntrHasSideEffects]>;
+  foreach Name = ["vcmpequh", "vcmpgtsh", "vcmpgtuh"] in
+    def int_ppc_altivec_#Name#_rec :
+        DefaultAttrsIntrinsic<[llvm_v8i16_ty],
+                              [llvm_v8i16_ty, llvm_v8i16_ty, llvm_ptr_ty],
+                              [IntrWriteMem, IntrArgMemOnly,
+                               NoCapture<ArgIndex<2>>, IntrHasSideEffects]>;
+  foreach Name = ["vcmpgtsw", "vcmpgtuw"] in
+    def int_ppc_altivec_#Name#_rec :
+        DefaultAttrsIntrinsic<[llvm_v4i32_ty],
+                              [llvm_v4i32_ty, llvm_v4i32_ty, llvm_ptr_ty],
+                              [IntrWriteMem, IntrArgMemOnly,
+                               NoCapture<ArgIndex<2>>, IntrHasSideEffects]>;
 
   // Comparisons setting a vector.
   def int_ppc_altivec_vcmpbfp : ClangBuiltin<"__builtin_altivec_vcmpbfp">,
@@ -2067,7 +2100,7 @@ let TargetPrefix = "ppc" in {
   def int_ppc_altivec_lvlx128_volatile :
       ClangBuiltin<"__builtin_altivec_lvlx128_volatile">,
       Intrinsic<[llvm_v4i32_ty], [llvm_ptr_ty, llvm_i32_ty],
-                [IntrReadMem, IntrArgMemOnly, IntrHasSideEffects]>;
+                [IntrArgMemOnly, IntrHasSideEffects]>;
   def int_ppc_altivec_lvlxl128 : ClangBuiltin<"__builtin_altivec_lvlxl128">,
       DefaultAttrsIntrinsic<[llvm_v4i32_ty], [llvm_ptr_ty, llvm_i32_ty],
                             [IntrReadMem, IntrArgMemOnly]>;
@@ -2077,7 +2110,7 @@ let TargetPrefix = "ppc" in {
   def int_ppc_altivec_lvrx128_volatile :
       ClangBuiltin<"__builtin_altivec_lvrx128_volatile">,
       Intrinsic<[llvm_v4i32_ty], [llvm_ptr_ty, llvm_i32_ty],
-                [IntrReadMem, IntrArgMemOnly, IntrHasSideEffects]>;
+                [IntrArgMemOnly, IntrHasSideEffects]>;
   def int_ppc_altivec_lvrxl128 : ClangBuiltin<"__builtin_altivec_lvrxl128">,
       DefaultAttrsIntrinsic<[llvm_v4i32_ty], [llvm_ptr_ty, llvm_i32_ty],
                             [IntrReadMem, IntrArgMemOnly]>;
@@ -2153,6 +2186,15 @@ let TargetPrefix = "ppc" in {
   def int_ppc_altivec_vsubfp128 : ClangBuiltin<"__builtin_altivec_vsubfp128">,
       DefaultAttrsIntrinsic<[llvm_v4f32_ty], [llvm_v4f32_ty, llvm_v4f32_ty],
                             [IntrNoMem]>;
+
+  foreach Name = ["lvewx128", "lvx128"] in
+    def int_ppc_altivec_#Name#_volatile :
+        Intrinsic<[llvm_v4i32_ty], [llvm_ptr_ty, llvm_i32_ty],
+                  [IntrArgMemOnly, IntrHasSideEffects]>;
+  foreach Name = ["stvewx128", "stvx128"] in
+    def int_ppc_altivec_#Name#_volatile :
+        DefaultAttrsIntrinsic<[], [llvm_v4i32_ty, llvm_ptr_ty, llvm_i32_ty],
+                              [IntrWriteMem, IntrArgMemOnly, IntrHasSideEffects]>;
 
   // Compare instructions. The record forms also update CR6.
   def int_ppc_altivec_vcmpbfp128 : ClangBuiltin<"__builtin_altivec_vcmpbfp128">,

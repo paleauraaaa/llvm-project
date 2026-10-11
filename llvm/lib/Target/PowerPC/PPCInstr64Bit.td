@@ -2045,6 +2045,7 @@ multiclass VMX128Store64<Intrinsic Intr, Instruction Inst> {
 }
 let Predicates = [HasVMX128] in {
 defm : VMX128Load64<int_ppc_altivec_lvewx128, LVEWX128>;
+defm : VMX128Load64<int_ppc_altivec_lvewx128_volatile, LVEWX128_volatile>;
 defm : VMX128Load64<int_ppc_altivec_lvlx128, LVLX128>;
 defm : VMX128Load64<int_ppc_altivec_lvlx128_volatile, LVLX128_volatile>;
 defm : VMX128Load64<int_ppc_altivec_lvlxl128, LVLXL128>;
@@ -2054,8 +2055,10 @@ defm : VMX128Load64<int_ppc_altivec_lvrxl128, LVRXL128>;
 defm : VMX128Load64<int_ppc_altivec_lvsl128, LVSL128, v16i8>;
 defm : VMX128Load64<int_ppc_altivec_lvsr128, LVSR128, v16i8>;
 defm : VMX128Load64<int_ppc_altivec_lvx128, LVX128>;
+defm : VMX128Load64<int_ppc_altivec_lvx128_volatile, LVX128_volatile>;
 defm : VMX128Load64<int_ppc_altivec_lvxl128, LVXL128>;
 defm : VMX128Store64<int_ppc_altivec_stvewx128, STVEWX128>;
+defm : VMX128Store64<int_ppc_altivec_stvewx128_volatile, STVEWX128_volatile>;
 defm : VMX128Store64<int_ppc_altivec_stvlx128, STVLX128>;
 defm : VMX128Store64<int_ppc_altivec_stvlx128_volatile, STVLX128_volatile>;
 defm : VMX128Store64<int_ppc_altivec_stvlxl128, STVLXL128>;
@@ -2063,5 +2066,6 @@ defm : VMX128Store64<int_ppc_altivec_stvrx128, STVRX128>;
 defm : VMX128Store64<int_ppc_altivec_stvrx128_volatile, STVRX128_volatile>;
 defm : VMX128Store64<int_ppc_altivec_stvrxl128, STVRXL128>;
 defm : VMX128Store64<int_ppc_altivec_stvx128, STVX128>;
+defm : VMX128Store64<int_ppc_altivec_stvx128_volatile, STVX128_volatile>;
 defm : VMX128Store64<int_ppc_altivec_stvxl128, STVXL128>;
 }

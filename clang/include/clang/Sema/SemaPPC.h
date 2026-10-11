@@ -27,6 +27,7 @@ public:
 
   bool CheckPPCBuiltinFunctionCall(const TargetInfo &TI, unsigned BuiltinID,
                                    CallExpr *TheCall);
+  bool CheckXboxVectorBuiltinDeclaration(FunctionDecl *FD, unsigned BuiltinID);
   // 16 byte ByVal alignment not due to a vector member is not honoured by XL
   // on AIX. Emit a warning here that users are generating binary incompatible
   // code to be safe.

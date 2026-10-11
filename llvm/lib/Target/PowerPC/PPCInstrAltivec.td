@@ -337,6 +337,7 @@ class VXCR_Int_Ty<bits<11> xo, string opc, Intrinsic IntID, ValueType Ty>
 // Instruction Definitions.
 
 def HasAltivec : Predicate<"Subtarget->hasAltivec()">;
+def HasVMX128 : Predicate<"Subtarget->hasVMX128()">;
 def NoVMX128 : Predicate<"!Subtarget->hasVMX128()">,
                AssemblerPredicate<(all_of (not FeatureVMX128))>;
 let Predicates = [HasAltivec] in {
@@ -426,6 +427,20 @@ def LVX  : XForm_1_memOp<31, 103, (outs vrrc:$RST), (ins (memrr $RA, $RB):$addr)
 def LVXL : XForm_1_memOp<31, 359, (outs vrrc:$RST), (ins (memrr $RA, $RB):$addr),
                    "lvxl $RST, $addr", IIC_LdStLoad,
                    [(set v4i32:$RST, (int_ppc_altivec_lvxl ForceXForm:$addr))]>;
+// Match the conservative memory effects of volatile intrinsic calls.
+let isCodeGenOnly = 1, hasSideEffects = 1, mayStore = 1,
+    Predicates = [HasVMX128] in {
+def LVEBX_volatile :
+    XForm_1_memOp<31, 7, (outs vrrc:$RST), (ins (memrr $RA, $RB):$addr),
+                  "lvebx $RST, $addr", IIC_LdStLoad,
+                  [(set v16i8:$RST,
+                        (int_ppc_altivec_lvebx_volatile ForceXForm:$addr))]>;
+def LVEHX_volatile :
+    XForm_1_memOp<31, 39, (outs vrrc:$RST), (ins (memrr $RA, $RB):$addr),
+                  "lvehx $RST, $addr", IIC_LdStLoad,
+                  [(set v8i16:$RST,
+                        (int_ppc_altivec_lvehx_volatile ForceXForm:$addr))]>;
+}
 }
 
 def LVSL : XForm_1_memOp<31,   6, (outs vrrc:$RST), (ins (memrr $RA, $RB):$addr),
@@ -453,6 +468,18 @@ def STVX  : XForm_8_memOp<31, 231, (outs), (ins vrrc:$RST, (memrr $RA, $RB):$add
 def STVXL : XForm_8_memOp<31, 487, (outs), (ins vrrc:$RST, (memrr $RA, $RB):$addr),
                    "stvxl $RST, $addr", IIC_LdStStore,
                    [(int_ppc_altivec_stvxl v4i32:$RST, ForceXForm:$addr)]>;
+let isCodeGenOnly = 1, hasSideEffects = 1, Predicates = [HasVMX128] in {
+def STVEBX_volatile :
+    XForm_8_memOp<31, 135, (outs), (ins vrrc:$RST, (memrr $RA, $RB):$addr),
+                  "stvebx $RST, $addr", IIC_LdStStore,
+                  [(int_ppc_altivec_stvebx_volatile v16i8:$RST,
+                                                   ForceXForm:$addr)]>;
+def STVEHX_volatile :
+    XForm_8_memOp<31, 167, (outs), (ins vrrc:$RST, (memrr $RA, $RB):$addr),
+                  "stvehx $RST, $addr", IIC_LdStStore,
+                  [(int_ppc_altivec_stvehx_volatile v8i16:$RST,
+                                                   ForceXForm:$addr)]>;
+}
 }
 
 let PPC970_Unit = 5 in {  // VALU Operations.
@@ -860,7 +887,6 @@ let Predicates = [HasAltivec, NoVMX128] in {
 
 // ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
-def HasVMX128 : Predicate<"Subtarget->hasVMX128()">;
 class VMX128_Mem<bits<7> xo, dag OOL, dag IOL, string asmstr,
                  InstrItinClass itin>
     : I<4, OOL, IOL, asmstr, itin>, XFormMemOp {
@@ -1059,9 +1085,11 @@ def LVLX128  : VMX128_Load<0b1000000, "lvlx128">;
 def LVRX128  : VMX128_Load<0b1000100, "lvrx128">;
 def LVLXL128 : VMX128_Load<0b1100000, "lvlxl128">;
 def LVRXL128 : VMX128_Load<0b1100100, "lvrxl128">;
-let isCodeGenOnly = 1, hasSideEffects = 1 in {
+let isCodeGenOnly = 1, hasSideEffects = 1, mayStore = 1 in {
 def LVLX128_volatile : VMX128_Load<0b1000000, "lvlx128">;
 def LVRX128_volatile : VMX128_Load<0b1000100, "lvrx128">;
+def LVEWX128_volatile : VMX128_Load<0b0001000, "lvewx128">;
+def LVX128_volatile : VMX128_Load<0b0001100, "lvx128">;
 }
 }
 
@@ -1076,6 +1104,8 @@ def STVRXL128 : VMX128_Store<0b1110100, "stvrxl128">;
 let isCodeGenOnly = 1, hasSideEffects = 1 in {
 def STVLX128_volatile : VMX128_Store<0b1010000, "stvlx128">;
 def STVRX128_volatile : VMX128_Store<0b1010100, "stvrx128">;
+def STVEWX128_volatile : VMX128_Store<0b0011000, "stvewx128">;
+def STVX128_volatile : VMX128_Store<0b0011100, "stvx128">;
 }
 }
 
@@ -1228,6 +1258,7 @@ multiclass VMX128Store32<Intrinsic Intr, Instruction Inst> {
 
 let Predicates = [HasVMX128] in {
 defm : VMX128Load32<int_ppc_altivec_lvewx128, LVEWX128>;
+defm : VMX128Load32<int_ppc_altivec_lvewx128_volatile, LVEWX128_volatile>;
 defm : VMX128Load32<int_ppc_altivec_lvlx128, LVLX128>;
 defm : VMX128Load32<int_ppc_altivec_lvlx128_volatile, LVLX128_volatile>;
 defm : VMX128Load32<int_ppc_altivec_lvlxl128, LVLXL128>;
@@ -1237,8 +1268,10 @@ defm : VMX128Load32<int_ppc_altivec_lvrxl128, LVRXL128>;
 defm : VMX128Load32<int_ppc_altivec_lvsl128, LVSL128, v16i8>;
 defm : VMX128Load32<int_ppc_altivec_lvsr128, LVSR128, v16i8>;
 defm : VMX128Load32<int_ppc_altivec_lvx128, LVX128>;
+defm : VMX128Load32<int_ppc_altivec_lvx128_volatile, LVX128_volatile>;
 defm : VMX128Load32<int_ppc_altivec_lvxl128, LVXL128>;
 defm : VMX128Store32<int_ppc_altivec_stvewx128, STVEWX128>;
+defm : VMX128Store32<int_ppc_altivec_stvewx128_volatile, STVEWX128_volatile>;
 defm : VMX128Store32<int_ppc_altivec_stvlx128, STVLX128>;
 defm : VMX128Store32<int_ppc_altivec_stvlx128_volatile, STVLX128_volatile>;
 defm : VMX128Store32<int_ppc_altivec_stvlxl128, STVLXL128>;
@@ -1246,6 +1279,7 @@ defm : VMX128Store32<int_ppc_altivec_stvrx128, STVRX128>;
 defm : VMX128Store32<int_ppc_altivec_stvrx128_volatile, STVRX128_volatile>;
 defm : VMX128Store32<int_ppc_altivec_stvrxl128, STVRXL128>;
 defm : VMX128Store32<int_ppc_altivec_stvx128, STVX128>;
+defm : VMX128Store32<int_ppc_altivec_stvx128_volatile, STVX128_volatile>;
 defm : VMX128Store32<int_ppc_altivec_stvxl128, STVXL128>;
 
 defm : VMX128Binary<int_ppc_altivec_vaddfp128, VADDFP128, v4f32>;

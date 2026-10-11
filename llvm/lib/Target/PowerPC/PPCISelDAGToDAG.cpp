@@ -5310,6 +5310,8 @@ bool PPCDAGToDAGISel::trySelectVMX128Address(SDNode *N) {
   default:
     return false;
   case Intrinsic::ppc_altivec_lvewx128: Opcode = PPC::LVEWX128; break;
+  case Intrinsic::ppc_altivec_lvewx128_volatile:
+    Opcode = PPC::LVEWX128_volatile; break;
   case Intrinsic::ppc_altivec_lvlx128: Opcode = PPC::LVLX128; break;
   case Intrinsic::ppc_altivec_lvlx128_volatile:
     Opcode = PPC::LVLX128_volatile; break;
@@ -5321,9 +5323,13 @@ bool PPCDAGToDAGISel::trySelectVMX128Address(SDNode *N) {
   case Intrinsic::ppc_altivec_lvsl128: Opcode = PPC::LVSL128; break;
   case Intrinsic::ppc_altivec_lvsr128: Opcode = PPC::LVSR128; break;
   case Intrinsic::ppc_altivec_lvx128: Opcode = PPC::LVX128; break;
+  case Intrinsic::ppc_altivec_lvx128_volatile:
+    Opcode = PPC::LVX128_volatile; break;
   case Intrinsic::ppc_altivec_lvxl128: Opcode = PPC::LVXL128; break;
   case Intrinsic::ppc_altivec_stvewx128:
     Opcode = PPC::STVEWX128; IsStore = true; break;
+  case Intrinsic::ppc_altivec_stvewx128_volatile:
+    Opcode = PPC::STVEWX128_volatile; IsStore = true; break;
   case Intrinsic::ppc_altivec_stvlx128:
     Opcode = PPC::STVLX128; IsStore = true; break;
   case Intrinsic::ppc_altivec_stvlx128_volatile:
@@ -5338,6 +5344,8 @@ bool PPCDAGToDAGISel::trySelectVMX128Address(SDNode *N) {
     Opcode = PPC::STVRXL128; IsStore = true; break;
   case Intrinsic::ppc_altivec_stvx128:
     Opcode = PPC::STVX128; IsStore = true; break;
+  case Intrinsic::ppc_altivec_stvx128_volatile:
+    Opcode = PPC::STVX128_volatile; IsStore = true; break;
   case Intrinsic::ppc_altivec_stvxl128:
     Opcode = PPC::STVXL128; IsStore = true; break;
   }

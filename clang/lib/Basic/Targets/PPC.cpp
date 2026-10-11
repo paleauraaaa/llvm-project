@@ -948,8 +948,9 @@ void PPCTargetInfo::adjust(DiagnosticsEngine &Diags, LangOptions &Opts) {
 }
 
 ArrayRef<Builtin::Info> PPCTargetInfo::getTargetBuiltins() const {
-  return llvm::ArrayRef(BuiltinInfo,
-                        clang::PPC::LastTSBuiltin - Builtin::FirstTSBuiltin);
+  unsigned End = getTriple().isXbox360() ? clang::PPC::LastTSBuiltin
+                                       : clang::PPC::BI__lvx_volatile;
+  return llvm::ArrayRef(BuiltinInfo, End - Builtin::FirstTSBuiltin);
 }
 
 bool PPCTargetInfo::validateCpuSupports(StringRef FeatureStr) const {
