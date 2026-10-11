@@ -13330,8 +13330,43 @@ SDValue PPCTargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
     return LowerFP_ROUND(Op, DAG);
   case ISD::ROTL:               return LowerROTL(Op, DAG);
 
-  case ISD::INTRINSIC_W_CHAIN:
-    return SDValue();
+  case ISD::INTRINSIC_W_CHAIN: {
+    unsigned Opcode;
+    switch (Op.getConstantOperandVal(1)) {
+    default:
+      return SDValue();
+    case Intrinsic::ppc_altivec_vcmpbfp128_rec:
+      Opcode = PPC::VCMPBFP128_rec;
+      break;
+    case Intrinsic::ppc_altivec_vcmpeqfp128_rec:
+      Opcode = PPC::VCMPEQFP128_rec;
+      break;
+    case Intrinsic::ppc_altivec_vcmpgefp128_rec:
+      Opcode = PPC::VCMPGEFP128_rec;
+      break;
+    case Intrinsic::ppc_altivec_vcmpgtfp128_rec:
+      Opcode = PPC::VCMPGTFP128_rec;
+      break;
+    case Intrinsic::ppc_altivec_vcmpequw128_rec:
+      Opcode = PPC::VCMPEQUW128_rec;
+      break;
+    }
+    if (!Subtarget.hasVMX128())
+      report_fatal_error("VMX128 comparison requires the vmx128 feature");
+    SDLoc DL(Op);
+    SDVTList VTs = DAG.getVTList(MVT::v4i32, MVT::Other, MVT::Glue);
+    SDValue Compare(DAG.getMachineNode(
+                        Opcode, DL, VTs,
+                        {Op.getOperand(2), Op.getOperand(3), Op.getOperand(0)}),
+                    0);
+    SDValue CR(DAG.getMachineNode(PPC::MFOCRF, DL, MVT::i32,
+                                  DAG.getRegister(PPC::CR6, MVT::i32),
+                                  Compare.getValue(2)), 0);
+    // MSVC stores CR6 in its original CR bit positions, without shifting.
+    SDValue Store = DAG.getStore(Compare.getValue(1), DL, CR, Op.getOperand(4),
+                                 MachinePointerInfo(), Align(4));
+    return DAG.getMergeValues({Compare, Store}, DL);
+  }
 
   case ISD::BITCAST:            return LowerBITCAST(Op, DAG);
 

@@ -2033,15 +2033,35 @@ def : Pat<(i64 (int_ppc_mfspr timm:$SPR)),
 def : Pat<(int_ppc_mtspr timm:$SPR, g8rc:$RT),
           (MTSPR8 $SPR, $RT)>;
 
-// VMX128 volatile unaligned vector accesses with a 64-bit base. The signed
-// 32-bit offset is sign-extended to form the index register.
+// VMX128 addresses have a signed 32-bit offset even with a 64-bit base.
+multiclass VMX128Load64<Intrinsic Intr, Instruction Inst,
+                        ValueType Ty = v4i32> {
+  def : Pat<(Ty (Intr i64:$ptr, i32:$off)),
+            (Inst $ptr, (EXTSW_32_64 $off))>;
+}
+multiclass VMX128Store64<Intrinsic Intr, Instruction Inst> {
+  def : Pat<(Intr v4i32:$v, i64:$ptr, i32:$off),
+            (Inst $v, $ptr, (EXTSW_32_64 $off))>;
+}
 let Predicates = [HasVMX128] in {
-def : Pat<(v4i32 (int_ppc_altivec_lvlx128_volatile i64:$ptr, i32:$off)),
-          (LVLX128 $ptr, (EXTSW_32_64 $off))>;
-def : Pat<(v4i32 (int_ppc_altivec_lvrx128_volatile i64:$ptr, i32:$off)),
-          (LVRX128 $ptr, (EXTSW_32_64 $off))>;
-def : Pat<(int_ppc_altivec_stvlx128_volatile v4i32:$v, i64:$ptr, i32:$off),
-          (STVLX128 $v, $ptr, (EXTSW_32_64 $off))>;
-def : Pat<(int_ppc_altivec_stvrx128_volatile v4i32:$v, i64:$ptr, i32:$off),
-          (STVRX128 $v, $ptr, (EXTSW_32_64 $off))>;
-}
+defm : VMX128Load64<int_ppc_altivec_lvewx128, LVEWX128>;
+defm : VMX128Load64<int_ppc_altivec_lvlx128, LVLX128>;
+defm : VMX128Load64<int_ppc_altivec_lvlx128_volatile, LVLX128_volatile>;
+defm : VMX128Load64<int_ppc_altivec_lvlxl128, LVLXL128>;
+defm : VMX128Load64<int_ppc_altivec_lvrx128, LVRX128>;
+defm : VMX128Load64<int_ppc_altivec_lvrx128_volatile, LVRX128_volatile>;
+defm : VMX128Load64<int_ppc_altivec_lvrxl128, LVRXL128>;
+defm : VMX128Load64<int_ppc_altivec_lvsl128, LVSL128, v16i8>;
+defm : VMX128Load64<int_ppc_altivec_lvsr128, LVSR128, v16i8>;
+defm : VMX128Load64<int_ppc_altivec_lvx128, LVX128>;
+defm : VMX128Load64<int_ppc_altivec_lvxl128, LVXL128>;
+defm : VMX128Store64<int_ppc_altivec_stvewx128, STVEWX128>;
+defm : VMX128Store64<int_ppc_altivec_stvlx128, STVLX128>;
+defm : VMX128Store64<int_ppc_altivec_stvlx128_volatile, STVLX128_volatile>;
+defm : VMX128Store64<int_ppc_altivec_stvlxl128, STVLXL128>;
+defm : VMX128Store64<int_ppc_altivec_stvrx128, STVRX128>;
+defm : VMX128Store64<int_ppc_altivec_stvrx128_volatile, STVRX128_volatile>;
+defm : VMX128Store64<int_ppc_altivec_stvrxl128, STVRXL128>;
+defm : VMX128Store64<int_ppc_altivec_stvx128, STVX128>;
+defm : VMX128Store64<int_ppc_altivec_stvxl128, STVXL128>;
+}

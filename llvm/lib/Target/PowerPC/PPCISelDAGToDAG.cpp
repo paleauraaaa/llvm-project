@@ -389,6 +389,8 @@ namespace {
       return PPCLowering->SelectAddressRegImm34(N, Disp, Base, *CurDAG);
     }
 
+    bool trySelectVMX128Address(SDNode *N);
+
     // Select an address into a single register.
     bool SelectAddr(SDValue N, SDValue &Base) {
       Base = N;
@@ -5286,12 +5288,84 @@ bool PPCDAGToDAGISel::tryAsSingleRLDIMI(SDNode *N) {
 
 // Select - Convert the specified operand from a target-independent to a
 // target-specific node if it hasn't already been changed.
+bool PPCDAGToDAGISel::trySelectVMX128Address(SDNode *N) {
+  if (!Subtarget->isTargetXbox360() || !Subtarget->hasVMX128())
+    return false;
+  bool HasChain;
+  switch (N->getOpcode()) {
+  default:
+    return false;
+  case ISD::INTRINSIC_WO_CHAIN:
+    HasChain = false;
+    break;
+  case ISD::INTRINSIC_W_CHAIN:
+  case ISD::INTRINSIC_VOID:
+    HasChain = true;
+    break;
+  }
+  unsigned ArgStart = HasChain ? 2 : 1;
+  unsigned Opcode;
+  bool IsStore = false;
+  switch (N->getConstantOperandVal(ArgStart - 1)) {
+  default:
+    return false;
+  case Intrinsic::ppc_altivec_lvewx128: Opcode = PPC::LVEWX128; break;
+  case Intrinsic::ppc_altivec_lvlx128: Opcode = PPC::LVLX128; break;
+  case Intrinsic::ppc_altivec_lvlx128_volatile:
+    Opcode = PPC::LVLX128_volatile; break;
+  case Intrinsic::ppc_altivec_lvlxl128: Opcode = PPC::LVLXL128; break;
+  case Intrinsic::ppc_altivec_lvrx128: Opcode = PPC::LVRX128; break;
+  case Intrinsic::ppc_altivec_lvrx128_volatile:
+    Opcode = PPC::LVRX128_volatile; break;
+  case Intrinsic::ppc_altivec_lvrxl128: Opcode = PPC::LVRXL128; break;
+  case Intrinsic::ppc_altivec_lvsl128: Opcode = PPC::LVSL128; break;
+  case Intrinsic::ppc_altivec_lvsr128: Opcode = PPC::LVSR128; break;
+  case Intrinsic::ppc_altivec_lvx128: Opcode = PPC::LVX128; break;
+  case Intrinsic::ppc_altivec_lvxl128: Opcode = PPC::LVXL128; break;
+  case Intrinsic::ppc_altivec_stvewx128:
+    Opcode = PPC::STVEWX128; IsStore = true; break;
+  case Intrinsic::ppc_altivec_stvlx128:
+    Opcode = PPC::STVLX128; IsStore = true; break;
+  case Intrinsic::ppc_altivec_stvlx128_volatile:
+    Opcode = PPC::STVLX128_volatile; IsStore = true; break;
+  case Intrinsic::ppc_altivec_stvlxl128:
+    Opcode = PPC::STVLXL128; IsStore = true; break;
+  case Intrinsic::ppc_altivec_stvrx128:
+    Opcode = PPC::STVRX128; IsStore = true; break;
+  case Intrinsic::ppc_altivec_stvrx128_volatile:
+    Opcode = PPC::STVRX128_volatile; IsStore = true; break;
+  case Intrinsic::ppc_altivec_stvrxl128:
+    Opcode = PPC::STVRXL128; IsStore = true; break;
+  case Intrinsic::ppc_altivec_stvx128:
+    Opcode = PPC::STVX128; IsStore = true; break;
+  case Intrinsic::ppc_altivec_stvxl128:
+    Opcode = PPC::STVXL128; IsStore = true; break;
+  }
+  SDLoc DL(N);
+  unsigned PtrIndex = ArgStart + IsStore;
+  SDValue Address(CurDAG->getMachineNode(PPC::ADD4, DL, MVT::i32,
+                                        N->getOperand(PtrIndex),
+                                        N->getOperand(PtrIndex + 1)), 0);
+  SDValue Base = Address, Offset = Address;
+  widenXboxAddress(true, Base, &Offset, Address, true);
+  SmallVector<SDValue, 4> Ops;
+  if (IsStore)
+    Ops.push_back(N->getOperand(ArgStart));
+  Ops.append({Base, Offset});
+  if (HasChain)
+    Ops.push_back(N->getOperand(0));
+  ReplaceNode(N, CurDAG->getMachineNode(Opcode, DL, N->getVTList(), Ops));
+  return true;
+}
+
 void PPCDAGToDAGISel::Select(SDNode *N) {
   SDLoc dl(N);
   if (N->isMachineOpcode()) {
     N->setNodeId(-1);
     return;   // Already selected.
   }
+  if (trySelectVMX128Address(N))
+    return;
 
   // In case any misguided DAG-level optimizations form an ADD with a
   // TargetConstant operand, crash here instead of miscompiling (by selecting
