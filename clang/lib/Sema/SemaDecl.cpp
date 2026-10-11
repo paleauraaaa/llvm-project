@@ -12398,7 +12398,11 @@ void Sema::CheckMain(FunctionDecl *FD, const DeclSpec &DS) {
     T = Context.getCanonicalType(FD->getType());
   }
 
-  if (getLangOpts().GNUMode && !getLangOpts().CPlusPlus) {
+  if (getLangOpts().MicrosoftExt &&
+      Context.getTargetInfo().getTriple().isXbox360() &&
+      FT->getReturnType()->isVoidType()) {
+    // MSVC accepts void main without an implicit integer return.
+  } else if (getLangOpts().GNUMode && !getLangOpts().CPlusPlus) {
     // In C with GNU extensions we allow main() to have non-integer return
     // type, but we should warn about the extension, and we disable the
     // implicit-return-zero rule.
