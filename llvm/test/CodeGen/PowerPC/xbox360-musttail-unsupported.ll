@@ -1,6 +1,7 @@
 ; RUN: split-file %s %t
 ; RUN: not --crash llc -mtriple=powerpc64-ibm-xbox360 -mcpu=xenon -relocation-model=static %t/ordinary.ll -o /dev/null 2>&1 | FileCheck %s
 ; RUN: not --crash llc -mtriple=powerpc64-ibm-xbox360 -mcpu=xenon -relocation-model=static %t/stack-fixed.ll -o /dev/null 2>&1 | FileCheck %s
+; RUN: not --crash llc -mtriple=powerpc64-ibm-xbox360 -mcpu=xenon -relocation-model=static %t/byval.ll -o /dev/null 2>&1 | FileCheck %s
 ; CHECK: failed to perform tail call elimination on a call site marked musttail
 
 ;--- ordinary.ll
@@ -20,3 +21,10 @@ define i64 @stack_fixed(ptr %a, ptr %b, ptr %c, ptr %d, ptr %e,
   ret i64 %result
 }
 attributes #0 = { "thunk" }
+
+;--- byval.ll
+declare void @byval_target(ptr byval([16 x i8]) align 16)
+define void @byval(ptr byval([16 x i8]) align 16 %value) {
+  musttail call void @byval_target(ptr byval([16 x i8]) align 16 %value)
+  ret void
+}
