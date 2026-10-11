@@ -5321,7 +5321,8 @@ static void CalculateTailCallArgDest(
     SmallVectorImpl<TailCallArgumentInfo> &TailCallArguments) {
   int Offset = ArgOffset + SPDiff;
   uint32_t OpSize = (Arg.getValueSizeInBits() + 7) / 8;
-  int FI = MF.getFrameInfo().CreateFixedObject(OpSize, Offset, true);
+  int FI = MF.getFrameInfo().CreateFixedObject(
+      OpSize, Offset, !MF.getSubtarget<PPCSubtarget>().isTargetXbox360());
   EVT VT = IsPPC64 ? MVT::i64 : MVT::i32;
   SDValue FIN = DAG.getFrameIndex(FI, VT);
   TailCallArgumentInfo Info;
@@ -5975,6 +5976,17 @@ bool PPCTargetLowering::isEligibleForTCO(
     const SmallVectorImpl<ISD::OutputArg> &Outs,
     const SmallVectorImpl<ISD::InputArg> &Ins, const Function *CallerFunc,
     bool isCalleeExternalSymbol) const {
+  if (Subtarget.isTargetXbox360() && CB && CB->isMustTailCall() &&
+      !isVarArg && !CallerFunc->isVarArg() && CallerCC == CallingConv::C &&
+      CalleeCC == CallerCC &&
+      CB->getFunctionType() == CallerFunc->getFunctionType() &&
+      CB->arg_size() == CallerFunc->arg_size() &&
+      all_of(CallerFunc->args(), [](const Argument &Arg) {
+        return !Arg.hasByValAttr() && !Arg.hasNestAttr() &&
+               !Arg.hasInAllocaAttr() && !Arg.hasPreallocatedAttr();
+      }))
+    return true;
+
   // Microsoft thunks forward unknown arguments in the incoming registers and
   // stack image. Fixed pointer parameters may be reloaded or adjusted.
   if (Subtarget.isTargetXbox360() && CB && CB->isMustTailCall() &&
@@ -6027,8 +6039,7 @@ PPCTargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
 
     isTailCall =
         (!MF.getInfo<PPCFunctionInfo>()->getSRetReturnReg() ||
-         (Subtarget.isTargetXbox360() && CB && CB->isMustTailCall() &&
-          MF.getFunction().hasFnAttribute("thunk"))) &&
+         (Subtarget.isTargetXbox360() && CB && CB->isMustTailCall())) &&
         isEligibleForTCO(GV, CallConv, CallerCC, CB, isVarArg, Outs, Ins,
                         &(MF.getFunction()), IsCalleeExternalSymbol);
     if (isTailCall) {
@@ -7292,7 +7303,7 @@ SDValue PPCTargetLowering::LowerCall_Xbox360(
                              MF.getFunction().hasFnAttribute("thunk");
     if (CFlags.IsTailCall && !getTargetMachine().Options.GuaranteedTailCallOpt)
         IsSibCall = true;
-    if (IsMustTailForward)
+    if (CB && CB->isMustTailCall())
         IsSibCall = true;
 
     // Mark this function as potentially containing a function that contains a
@@ -7713,14 +7724,16 @@ SDValue PPCTargetLowering::LowerCall_Xbox360(
 
                 // Single-precision floating-point values are mapped to the
                 // second (rightmost) word of the stack doubleword.
+                unsigned StackArgOffset = ArgOffset;
                 if (Arg.getValueType() == MVT::f32 && !Flags.isInConsecutiveRegs()) {
                     SDValue ConstFour = DAG.getConstant(4, dl, PtrOff.getValueType());
                     PtrOff = DAG.getNode(ISD::ADD, dl, RegVT, PtrOff, ConstFour);
+                    StackArgOffset += 4;
                 }
 
                 assert(HasParameterArea &&
                     "Parameter area must exist to pass an argument in memory.");
-                LowerMemOpCallTo(DAG, MF, Chain, Arg, PtrOff, SPDiff, ArgOffset,
+                LowerMemOpCallTo(DAG, MF, Chain, Arg, PtrOff, SPDiff, StackArgOffset,
                        true, CFlags.IsTailCall, false, MemOpChains,
                        TailCallArguments, dl);
 
@@ -7817,6 +7830,13 @@ SDValue PPCTargetLowering::LowerCall_Xbox360(
     if (!MemOpChains.empty())
         Chain = DAG.getNode(ISD::TokenFactor, dl, MVT::Other, MemOpChains);
 
+    if (CFlags.IsTailCall && IsSibCall && !TailCallArguments.empty()) {
+        SmallVector<SDValue, 8> Stores;
+        StoreTailCallArgumentsToStackSlot(DAG, Chain, TailCallArguments, Stores,
+                                         dl);
+        Chain = DAG.getNode(ISD::TokenFactor, dl, MVT::Other, Stores);
+    }
+
     // Build a sequence of copy-to-reg nodes chained together with token chain
     // and flag operands which copy the outgoing args into the appropriate regs.
     SDValue InGlue;
@@ -7875,6 +7895,11 @@ SDValue PPCTargetLowering::LowerFormalArguments_Xbox360(
     // Potential tail calls could cause overwriting of argument stack slots.
     bool isImmutable = !(getTargetMachine().Options.GuaranteedTailCallOpt &&
                          (CallConv == CallingConv::Fast));
+    for (const BasicBlock &BB : MF.getFunction())
+        for (const Instruction &I : BB)
+            if (const auto *Call = dyn_cast<CallInst>(&I))
+                if (Call->isMustTailCall())
+                    isImmutable = false;
     EVT RegVT = MVT::i64;
     unsigned RegByteSize = 8;
     unsigned LinkageSize = Subtarget.getFrameLowering()->getLinkageSize();
@@ -13350,11 +13375,35 @@ SDValue PPCTargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
     case Intrinsic::ppc_altivec_vcmpequw128_rec:
       Opcode = PPC::VCMPEQUW128_rec;
       break;
+    case Intrinsic::ppc_altivec_vcmpequb_rec:
+      Opcode = PPC::VCMPEQUB_rec;
+      break;
+    case Intrinsic::ppc_altivec_vcmpequh_rec:
+      Opcode = PPC::VCMPEQUH_rec;
+      break;
+    case Intrinsic::ppc_altivec_vcmpgtsb_rec:
+      Opcode = PPC::VCMPGTSB_rec;
+      break;
+    case Intrinsic::ppc_altivec_vcmpgtsh_rec:
+      Opcode = PPC::VCMPGTSH_rec;
+      break;
+    case Intrinsic::ppc_altivec_vcmpgtsw_rec:
+      Opcode = PPC::VCMPGTSW_rec;
+      break;
+    case Intrinsic::ppc_altivec_vcmpgtub_rec:
+      Opcode = PPC::VCMPGTUB_rec;
+      break;
+    case Intrinsic::ppc_altivec_vcmpgtuh_rec:
+      Opcode = PPC::VCMPGTUH_rec;
+      break;
+    case Intrinsic::ppc_altivec_vcmpgtuw_rec:
+      Opcode = PPC::VCMPGTUW_rec;
+      break;
     }
     if (!Subtarget.hasVMX128())
       report_fatal_error("VMX128 comparison requires the vmx128 feature");
     SDLoc DL(Op);
-    SDVTList VTs = DAG.getVTList(MVT::v4i32, MVT::Other, MVT::Glue);
+    SDVTList VTs = DAG.getVTList(Op.getValueType(), MVT::Other, MVT::Glue);
     SDValue Compare(DAG.getMachineNode(
                         Opcode, DL, VTs,
                         {Op.getOperand(2), Op.getOperand(3), Op.getOperand(0)}),
@@ -18787,6 +18836,24 @@ bool PPCTargetLowering::getTgtMemIntrinsic(IntrinsicInfo &Info,
                                            MachineFunction &MF,
                                            unsigned Intrinsic) const {
   switch (Intrinsic) {
+  case Intrinsic::ppc_altivec_lvebx_volatile:
+  case Intrinsic::ppc_altivec_lvehx_volatile:
+  case Intrinsic::ppc_altivec_lvewx128_volatile:
+  case Intrinsic::ppc_altivec_lvx128_volatile:
+    Info.opc = ISD::INTRINSIC_W_CHAIN;
+    Info.memVT = Intrinsic == Intrinsic::ppc_altivec_lvebx_volatile
+                     ? MVT::i8
+                 : Intrinsic == Intrinsic::ppc_altivec_lvehx_volatile
+                     ? MVT::i16
+                 : Intrinsic == Intrinsic::ppc_altivec_lvewx128_volatile
+                     ? MVT::i32
+                     : MVT::v4i32;
+    Info.ptrVal = I.arg_size() == 1 ? I.getArgOperand(0) : nullptr;
+    Info.offset = -Info.memVT.getStoreSize() + 1;
+    Info.size = 2 * Info.memVT.getStoreSize() - 1;
+    Info.align = Align(1);
+    Info.flags = MachineMemOperand::MOLoad | MachineMemOperand::MOVolatile;
+    return true;
   case Intrinsic::ppc_atomicrmw_xchg_i128:
   case Intrinsic::ppc_atomicrmw_add_i128:
   case Intrinsic::ppc_atomicrmw_sub_i128:

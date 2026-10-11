@@ -6634,7 +6634,7 @@ static Value *EmitTargetArchBuiltinExpr(CodeGenFunction *CGF,
   case llvm::Triple::ppcle:
   case llvm::Triple::ppc64:
   case llvm::Triple::ppc64le:
-    return CGF->EmitPPCBuiltinExpr(BuiltinID, E);
+    return CGF->EmitPPCBuiltinExpr(BuiltinID, E, ReturnValue);
   case llvm::Triple::r600:
   case llvm::Triple::amdgcn:
     return CGF->EmitAMDGPUBuiltinExpr(BuiltinID, E);
@@ -17579,8 +17579,145 @@ Value *CodeGenFunction::EmitX86BuiltinExpr(unsigned BuiltinID,
   }
 }
 
+Value *CodeGenFunction::EmitPPCXboxVectorBuiltinExpr(
+    unsigned BuiltinID, const CallExpr *E, ReturnValueSlot ReturnValue) {
+  enum class Operation {
+    Intrinsic, Memory, Memory128, SetRegister,
+    Add8, Add16, Add32, Sub8, Sub16, Sub32,
+    MergeHigh8, MergeHigh16, MergeLow8, MergeLow16,
+    Splat8, Splat16, SplatImmediate8, SplatImmediate16
+  };
+  Operation Op;
+  Intrinsic::ID ID;
+  unsigned ICEArguments;
+  switch (BuiltinID) {
+  default:
+    llvm_unreachable("not an Xbox vector builtin");
+#define XBOX_VECTOR_BUILTIN(NAME, SIG, KIND, INTRINSIC, ICE) \
+  case PPC::BI##NAME:                                     \
+    Op = Operation::KIND;                                \
+    ID = Intrinsic::INTRINSIC;                            \
+    ICEArguments = ICE;                                  \
+    break;
+#include "clang/Basic/BuiltinsPPCXbox.def"
+#undef XBOX_VECTOR_BUILTIN
+  }
+
+  auto *VectorTy = llvm::FixedVectorType::get(Int32Ty, 4);
+  SmallVector<Value *, 5> Args;
+  for (unsigned I = 0; I != E->getNumArgs(); ++I) {
+    const Expr *Arg = E->getArg(I);
+    if (hasAggregateEvaluationKind(Arg->getType())) {
+      Address Addr = EmitAggExprToLValue(Arg).getAddress();
+      Args.push_back(Builder.CreateLoad(Addr.withElementType(VectorTy)));
+    } else {
+      Args.push_back(EmitScalarOrConstFoldImmArg(ICEArguments, I, E));
+    }
+  }
+
+  if (Op == Operation::SetRegister)
+    std::swap(Args[0], Args[1]);
+  if (Op == Operation::Memory) {
+    unsigned PointerIndex = E->getType()->isVoidType() ? 1 : 0;
+    Args[PointerIndex] =
+        Builder.CreateGEP(Int8Ty, Args[PointerIndex], Args.back());
+    Args.pop_back();
+  }
+
+  Value *Result;
+  if (ID != Intrinsic::not_intrinsic) {
+    Function *F = CGM.getIntrinsic(ID);
+    for (unsigned I = 0; I != Args.size(); ++I) {
+      llvm::Type *Ty = F->getFunctionType()->getParamType(I);
+      if (Args[I]->getType() == Ty)
+        continue;
+      if (Ty->isIntegerTy())
+        Args[I] = Builder.CreateIntCast(
+            Args[I], Ty,
+            E->getArg(I)->getType()->isSignedIntegerOrEnumerationType());
+      else
+        Args[I] = Builder.CreateBitCast(Args[I], Ty);
+    }
+    Result = Builder.CreateCall(F, Args);
+  } else {
+    unsigned ElementBits;
+    switch (Op) {
+    case Operation::Add32:
+    case Operation::Sub32:
+      ElementBits = 32;
+      break;
+    case Operation::Add16:
+    case Operation::Sub16:
+    case Operation::MergeHigh16:
+    case Operation::MergeLow16:
+    case Operation::Splat16:
+    case Operation::SplatImmediate16:
+      ElementBits = 16;
+      break;
+    default:
+      ElementBits = 8;
+      break;
+    }
+    unsigned NumElements = 128 / ElementBits;
+    auto *ElementTy = llvm::IntegerType::get(getLLVMContext(), ElementBits);
+    auto *Ty = llvm::FixedVectorType::get(ElementTy, NumElements);
+    if (Op != Operation::SplatImmediate8 &&
+        Op != Operation::SplatImmediate16)
+      Args[0] = Builder.CreateBitCast(Args[0], Ty);
+    switch (Op) {
+    case Operation::Add8:
+    case Operation::Add16:
+    case Operation::Add32:
+      Result = Builder.CreateAdd(Args[0], Builder.CreateBitCast(Args[1], Ty));
+      break;
+    case Operation::Sub8:
+    case Operation::Sub16:
+    case Operation::Sub32:
+      Result = Builder.CreateSub(Args[0], Builder.CreateBitCast(Args[1], Ty));
+      break;
+    case Operation::Splat8:
+    case Operation::Splat16: {
+      unsigned Index = cast<ConstantInt>(Args[1])->getZExtValue();
+      SmallVector<int, 16> Mask(NumElements, Index);
+      Result = Builder.CreateShuffleVector(Args[0], Mask);
+      break;
+    }
+    case Operation::SplatImmediate8:
+    case Operation::SplatImmediate16:
+      Result = Builder.CreateVectorSplat(
+          NumElements, Builder.CreateTrunc(Args[0], ElementTy));
+      break;
+    case Operation::MergeHigh8:
+    case Operation::MergeHigh16:
+    case Operation::MergeLow8:
+    case Operation::MergeLow16: {
+      bool Low = Op == Operation::MergeLow8 || Op == Operation::MergeLow16;
+      unsigned Start = Low ? NumElements / 2 : 0;
+      SmallVector<int, 16> Mask;
+      for (unsigned I = 0; I != NumElements / 2; ++I) {
+        Mask.push_back(Start + I);
+        Mask.push_back(NumElements + Start + I);
+      }
+      Result = Builder.CreateShuffleVector(
+          Args[0], Builder.CreateBitCast(Args[1], Ty), Mask);
+      break;
+    }
+    default:
+      llvm_unreachable("invalid generic Xbox vector operation");
+    }
+  }
+  if (!Result->getType()->isVoidTy())
+    Builder.CreateStore(
+        Result, ReturnValue.getAddress().withElementType(Result->getType()),
+        ReturnValue.isVolatile());
+  return Result;
+}
+
 Value *CodeGenFunction::EmitPPCBuiltinExpr(unsigned BuiltinID,
-                                           const CallExpr *E) {
+                                         const CallExpr *E,
+                                         ReturnValueSlot ReturnValue) {
+  if (BuiltinID >= PPC::BI__lvx_volatile && BuiltinID < PPC::LastTSBuiltin)
+    return EmitPPCXboxVectorBuiltinExpr(BuiltinID, E, ReturnValue);
   // Do not emit the builtin arguments in the arguments of a function call,
   // because the evaluation order of function arguments is not specified in C++.
   // This is important when testing to ensure the arguments are emitted in the

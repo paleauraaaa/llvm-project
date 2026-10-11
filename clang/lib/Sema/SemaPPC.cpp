@@ -107,6 +107,36 @@ bool SemaPPC::CheckPPCBuiltinFunctionCall(const TargetInfo &TI,
   switch (BuiltinID) {
   default:
     return false;
+  case PPC::BI__vcfsx:
+  case PPC::BI__vcfux:
+  case PPC::BI__vctsxs:
+  case PPC::BI__vctuxs:
+  case PPC::BI__vupkd3d:
+    return SemaRef.BuiltinConstantArgRange(TheCall, 1, 0, 31);
+  case PPC::BI__vpermwi:
+    return SemaRef.BuiltinConstantArgRange(TheCall, 1, 0, 255);
+  case PPC::BI__vsldoi:
+    return SemaRef.BuiltinConstantArgRange(TheCall, 2, 0, 15);
+  case PPC::BI__vspltb:
+    return SemaRef.BuiltinConstantArgRange(TheCall, 1, 0, 15);
+  case PPC::BI__vsplth:
+    return SemaRef.BuiltinConstantArgRange(TheCall, 1, 0, 7);
+  case PPC::BI__vspltw:
+    return SemaRef.BuiltinConstantArgRange(TheCall, 1, 0, 3);
+  case PPC::BI__vspltisb:
+  case PPC::BI__vspltish:
+  case PPC::BI__vspltisw:
+    return SemaRef.BuiltinConstantArgRange(TheCall, 0, -16, 15);
+  case PPC::BI__VMXGetReg:
+  case PPC::BI__VMXSetReg:
+    return SemaRef.BuiltinConstantArgRange(TheCall, 0, 0, 127);
+  case PPC::BI__vrlimi:
+    return SemaRef.BuiltinConstantArgRange(TheCall, 2, 0, 15) ||
+           SemaRef.BuiltinConstantArgRange(TheCall, 3, 0, 3);
+  case PPC::BI__vpkd3d:
+    return SemaRef.BuiltinConstantArgRange(TheCall, 2, 0, 7) ||
+           SemaRef.BuiltinConstantArgRange(TheCall, 3, 0, 3) ||
+           SemaRef.BuiltinConstantArgRange(TheCall, 4, 0, 3);
   case PPC::BI__builtin_altivec_crypto_vshasigmaw:
   case PPC::BI__builtin_altivec_crypto_vshasigmad:
     return SemaRef.BuiltinConstantArgRange(TheCall, 1, 0, 1) ||
@@ -256,6 +286,82 @@ bool SemaPPC::CheckPPCBuiltinFunctionCall(const TargetInfo &TI,
 #include "clang/Basic/BuiltinsPPC.def"
   }
   llvm_unreachable("must return from switch");
+}
+
+bool SemaPPC::CheckXboxVectorBuiltinDeclaration(FunctionDecl *FD,
+                                               unsigned BuiltinID) {
+  if (FD->isInvalidDecl())
+    return false;
+  StringRef Signature;
+  switch (BuiltinID) {
+  default:
+    return false;
+#define XBOX_VECTOR_BUILTIN(NAME, SIG, KIND, INTRINSIC, ICE) \
+  case PPC::BI##NAME:                                     \
+    Signature = SIG;                                     \
+    break;
+#include "clang/Basic/BuiltinsPPCXbox.def"
+#undef XBOX_VECTOR_BUILTIN
+  }
+
+  ASTContext &Context = getASTContext();
+  QualType VectorType;
+  auto Matches = [&](QualType Ty, char Kind) {
+    Ty = Ty.getCanonicalType().getUnqualifiedType();
+    switch (Kind) {
+    case 'V': {
+      const RecordDecl *RD = Ty->getAsRecordDecl();
+      if (RD)
+        RD = RD->getDefinition();
+      if (!RD || RD->getName() != "__vector4" ||
+          !RD->hasAttr<IntrinTypeAttr>())
+        return false;
+      if (VectorType.isNull())
+        VectorType = Ty;
+      return Context.hasSameType(VectorType, Ty);
+    }
+    case 'v':
+      return Ty->isVoidType();
+    case 'i':
+      return Context.hasSameType(Ty, Context.IntTy);
+    case 'u':
+      return Context.hasSameType(Ty, Context.UnsignedIntTy);
+    case 'h':
+      return Context.hasSameType(Ty, Context.UnsignedShortTy);
+    case 'e':
+      return Context.hasSameType(Ty, Context.IntTy) || Ty->isEnumeralType();
+    case 'c':
+    case 'C':
+    case 'p':
+    case 'P':
+    case 'r': {
+      const auto *PT = Ty->getAs<PointerType>();
+      if (!PT)
+        return false;
+      QualType Pointee = PT->getPointeeType();
+      QualType Expected = Kind == 'r' ? Context.UnsignedIntTy : Context.VoidTy;
+      if (Kind == 'c' || Kind == 'C')
+        Expected = Expected.withConst();
+      if (Kind == 'C' || Kind == 'P')
+        Expected = Expected.withVolatile();
+      return Context.hasSameType(Pointee, Expected);
+    }
+    default:
+      llvm_unreachable("invalid Xbox vector signature");
+    }
+  };
+
+  const auto *FPT = FD->getType()->getAs<FunctionProtoType>();
+  bool Valid = FPT && !FPT->isVariadic() &&
+               FPT->getNumParams() == Signature.size() - 1 &&
+               Matches(FPT->getReturnType(), Signature.front());
+  if (Valid)
+    for (unsigned I = 0; I != FPT->getNumParams(); ++I)
+      Valid &= Matches(FPT->getParamType(I), Signature[I + 1]);
+  if (!Valid)
+    return Diag(FD->getLocation(), diag::err_ppc_xbox_vector_builtin_signature)
+           << FD;
+  return false;
 }
 
 // Check if the given type is a non-pointer PPC MMA type. This function is used

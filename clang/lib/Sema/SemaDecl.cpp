@@ -32,6 +32,7 @@
 #include "clang/Basic/DiagnosticComment.h"
 #include "clang/Basic/PartialDiagnostic.h"
 #include "clang/Basic/SourceManager.h"
+#include "clang/Basic/TargetBuiltins.h"
 #include "clang/Basic/TargetInfo.h"
 #include "clang/Lex/HeaderSearch.h" // TODO: Sema shouldn't depend on Lex
 #include "clang/Lex/Lexer.h" // TODO: Extract static functions to fix layering.
@@ -10780,7 +10781,11 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
             // Validate the type matches unless this builtin is specified as
             // matching regardless of its declared type.
             if (Context.BuiltinInfo.allowTypeMismatch(BuiltinID)) {
-              NewFD->addAttr(BuiltinAttr::CreateImplicit(Context, BuiltinID));
+              if (Context.getTargetInfo().getTriple().isXbox360() &&
+                  PPC().CheckXboxVectorBuiltinDeclaration(NewFD, BuiltinID))
+                NewFD->setInvalidDecl();
+              else
+                NewFD->addAttr(BuiltinAttr::CreateImplicit(Context, BuiltinID));
             } else {
               ASTContext::GetBuiltinTypeError Error;
               LookupNecessaryTypesForBuiltin(S, BuiltinID);
@@ -16440,6 +16445,13 @@ NamedDecl *Sema::ImplicitlyDefineFunction(SourceLocation Loc,
   // It is not valid to implicitly define a function in C23.
   assert(LangOpts.implicitFunctionsAllowed() &&
          "Implicit function declarations aren't allowed in this language mode");
+
+  if (Context.getTargetInfo().getTriple().isXbox360() &&
+      II.getBuiltinID() >= PPC::BI__lvx_volatile &&
+      II.getBuiltinID() < PPC::LastTSBuiltin) {
+    Diag(Loc, diag::err_ppc_xbox_vector_builtin_requires_declaration) << &II;
+    return nullptr;
+  }
 
   // Find the scope in which the identifier is injected and the corresponding
   // DeclContext.

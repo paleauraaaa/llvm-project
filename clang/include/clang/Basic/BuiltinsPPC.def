@@ -1232,6 +1232,11 @@ UNALIASED_CUSTOM_BUILTIN(mma_pmxvbf16ger2np, "vW512*VVi15i15i3", true,
 UNALIASED_CUSTOM_BUILTIN(mma_pmxvbf16ger2nn, "vW512*VVi15i15i3", true,
                          "mma,paired-vector-memops")
 
+#define XBOX_VECTOR_BUILTIN(NAME, SIG, KIND, INTRINSIC, ICE) \
+  TARGET_BUILTIN(NAME, "", "nT", "vmx128")
+#include "clang/Basic/BuiltinsPPCXbox.def"
+#undef XBOX_VECTOR_BUILTIN
+
 // FIXME: Obviously incomplete.
 
 #undef BUILTIN
