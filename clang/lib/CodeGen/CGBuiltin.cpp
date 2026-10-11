@@ -17726,6 +17726,13 @@ Value *CodeGenFunction::EmitPPCBuiltinExpr(unsigned BuiltinID,
   }
   if (BuiltinID >= PPC::BI__lvx_volatile && BuiltinID < PPC::LastTSBuiltin)
     return EmitPPCXboxVectorBuiltinExpr(BuiltinID, E, ReturnValue);
+  if (BuiltinID == PPC::BI__fself) {
+    Value *Comparand = EmitScalarExpr(E->getArg(0));
+    Value *GE = EmitScalarExpr(E->getArg(1));
+    Value *LT = EmitScalarExpr(E->getArg(2));
+    return Builder.CreateCall(CGM.getIntrinsic(Intrinsic::ppc_fsels),
+                              {Comparand, GE, LT});
+  }
   // Do not emit the builtin arguments in the arguments of a function call,
   // because the evaluation order of function arguments is not specified in C++.
   // This is important when testing to ensure the arguments are emitted in the

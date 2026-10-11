@@ -299,6 +299,9 @@ bool SemaPPC::CheckXboxVectorBuiltinDeclaration(FunctionDecl *FD,
   case PPC::BI__IsIntConst:
     Signature = "ii";
     break;
+  case PPC::BI__fself:
+    Signature = "ffff";
+    break;
 #define XBOX_VECTOR_BUILTIN(NAME, SIG, KIND, INTRINSIC, ICE) \
   case PPC::BI##NAME:                                     \
     Signature = SIG;                                     \
@@ -327,6 +330,8 @@ bool SemaPPC::CheckXboxVectorBuiltinDeclaration(FunctionDecl *FD,
       return Ty->isVoidType();
     case 'i':
       return Context.hasSameType(Ty, Context.IntTy);
+    case 'f':
+      return Context.hasSameType(Ty, Context.FloatTy);
     case 'u':
       return Context.hasSameType(Ty, Context.UnsignedIntTy);
     case 'h':
