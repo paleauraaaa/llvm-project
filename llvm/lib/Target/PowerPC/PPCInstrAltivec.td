@@ -1059,6 +1059,10 @@ def LVLX128  : VMX128_Load<0b1000000, "lvlx128">;
 def LVRX128  : VMX128_Load<0b1000100, "lvrx128">;
 def LVLXL128 : VMX128_Load<0b1100000, "lvlxl128">;
 def LVRXL128 : VMX128_Load<0b1100100, "lvrxl128">;
+let isCodeGenOnly = 1, hasSideEffects = 1 in {
+def LVLX128_volatile : VMX128_Load<0b1000000, "lvlx128">;
+def LVRX128_volatile : VMX128_Load<0b1000100, "lvrx128">;
+}
 }
 
 let PPC970_Unit = 2, mayStore = 1, mayLoad = 0 in {
@@ -1069,6 +1073,10 @@ def STVLX128  : VMX128_Store<0b1010000, "stvlx128">;
 def STVRX128  : VMX128_Store<0b1010100, "stvrx128">;
 def STVLXL128 : VMX128_Store<0b1110000, "stvlxl128">;
 def STVRXL128 : VMX128_Store<0b1110100, "stvrxl128">;
+let isCodeGenOnly = 1, hasSideEffects = 1 in {
+def STVLX128_volatile : VMX128_Store<0b1010000, "stvlx128">;
+def STVRX128_volatile : VMX128_Store<0b1010100, "stvrx128">;
+}
 }
 
 let PPC970_Unit = 5 in {
@@ -1108,13 +1116,17 @@ class VMX128_Pack<bits<4> xo, string name>
     : VMX128_VX3<5, xo, 0, (outs vr128rc:$VD),
                  (ins vr128rc:$VA, vr128rc:$VB),
                  !strconcat(name, " $VD, $VA, $VB"), IIC_VecGeneral>;
+let hasSideEffects = 1 in {
 def VPKSHSS128 : VMX128_Pack<0b1000, "vpkshss128">;
 def VPKSHUS128 : VMX128_Pack<0b1001, "vpkshus128">;
 def VPKSWSS128 : VMX128_Pack<0b1010, "vpkswss128">;
 def VPKSWUS128 : VMX128_Pack<0b1011, "vpkswus128">;
+}
 def VPKUHUM128 : VMX128_Pack<0b1100, "vpkuhum128">;
+let hasSideEffects = 1 in
 def VPKUHUS128 : VMX128_Pack<0b1101, "vpkuhus128">;
 def VPKUWUM128 : VMX128_Pack<0b1110, "vpkuwum128">;
+let hasSideEffects = 1 in
 def VPKUWUS128 : VMX128_Pack<0b1111, "vpkuwus128">;
 
 def VCMPEQFP128 : VMX128_Cmp<0b0000, "vcmpeqfp128 $VD, $VA, $VB">;
@@ -1170,18 +1182,144 @@ def VSLDOI128  : VMX128_Sldoi<"vsldoi128 $VD, $VA, $VB, $SHB">;
 def VPERMWI128 : VMX128_Permwi<"vpermwi128 $VD, $VB, $PERM">;
 def VPKD3D128  : VMX128_Pkd3d<"vpkd3d128 $VD, $VB, $X, $Y, $Z">;
 def VRLIMI128  : VMX128_Rlimi<"vrlimi128 $VD, $VB, $IMM, $Z">;
+
+let isCodeGenOnly = 1 in {
+// Conversion scales are unsigned, unlike the immediate in vspltisw128.
+def VCFPSXWS128_scale : VMX128_UImm<0b0100011,
+    "vcfpsxws128 $VD, $VB, $IMM", IIC_VecFP>;
+def VCSXWFP128_scale : VMX128_UImm<0b0101011,
+    "vcsxwfp128 $VD, $VB, $IMM", IIC_VecFP>;
+def VPKD3D128_tied : VMX128_Pkd3d<"vpkd3d128 $VD, $VB, $X, $Y, $Z">,
+                     RegConstraint<"$VDin = $VD">, NoEncode<"$VDin"> {
+  let InOperandList = (ins vr128rc:$VDin, vr128rc:$VB,
+                          u3imm:$X, u2imm:$Y, u2imm:$Z);
+}
+def VRLIMI128_tied : VMX128_Rlimi<"vrlimi128 $VD, $VB, $IMM, $Z">,
+                     RegConstraint<"$VDin = $VD">, NoEncode<"$VDin"> {
+  let InOperandList = (ins vr128rc:$VDin, vr128rc:$VB, u5imm:$IMM, u2imm:$Z);
+}
+def VSPLTISW128_imm : VMX128_VX2<0b1110111, (ins s5imm:$IMM),
+                                 "vspltisw128 $VD, 0, $IMM", IIC_VecPerm> {
+  let VB = 0;
+}
+}
 }
 }
 
+multiclass VMX128Binary<Intrinsic Intr, Instruction Inst,
+                        ValueType OutTy, ValueType InTy = OutTy> {
+  def : Pat<(OutTy (Intr InTy:$a, InTy:$b)), (Inst $a, $b)>;
+}
+multiclass VMX128Unary<Intrinsic Intr, Instruction Inst,
+                       ValueType OutTy, ValueType InTy = OutTy> {
+  def : Pat<(OutTy (Intr InTy:$a)), (Inst $a)>;
+}
+multiclass VMX128Immediate<Intrinsic Intr, Instruction Inst,
+                           ValueType OutTy, ValueType InTy = OutTy> {
+  def : Pat<(OutTy (Intr InTy:$a, timm:$imm)), (Inst $a, $imm)>;
+}
+multiclass VMX128Load32<Intrinsic Intr, Instruction Inst,
+                        ValueType Ty = v4i32> {
+  def : Pat<(Ty (Intr i32:$ptr, i32:$off)), (Inst $ptr, $off)>;
+}
+multiclass VMX128Store32<Intrinsic Intr, Instruction Inst> {
+  def : Pat<(Intr v4i32:$v, i32:$ptr, i32:$off), (Inst $v, $ptr, $off)>;
+}
+
 let Predicates = [HasVMX128] in {
-def : Pat<(v4i32 (int_ppc_altivec_lvlx128_volatile i32:$ptr, i32:$off)),
-          (LVLX128 $ptr, $off)>;
-def : Pat<(v4i32 (int_ppc_altivec_lvrx128_volatile i32:$ptr, i32:$off)),
-          (LVRX128 $ptr, $off)>;
-def : Pat<(int_ppc_altivec_stvlx128_volatile v4i32:$v, i32:$ptr, i32:$off),
-          (STVLX128 $v, $ptr, $off)>;
-def : Pat<(int_ppc_altivec_stvrx128_volatile v4i32:$v, i32:$ptr, i32:$off),
-          (STVRX128 $v, $ptr, $off)>;
+defm : VMX128Load32<int_ppc_altivec_lvewx128, LVEWX128>;
+defm : VMX128Load32<int_ppc_altivec_lvlx128, LVLX128>;
+defm : VMX128Load32<int_ppc_altivec_lvlx128_volatile, LVLX128_volatile>;
+defm : VMX128Load32<int_ppc_altivec_lvlxl128, LVLXL128>;
+defm : VMX128Load32<int_ppc_altivec_lvrx128, LVRX128>;
+defm : VMX128Load32<int_ppc_altivec_lvrx128_volatile, LVRX128_volatile>;
+defm : VMX128Load32<int_ppc_altivec_lvrxl128, LVRXL128>;
+defm : VMX128Load32<int_ppc_altivec_lvsl128, LVSL128, v16i8>;
+defm : VMX128Load32<int_ppc_altivec_lvsr128, LVSR128, v16i8>;
+defm : VMX128Load32<int_ppc_altivec_lvx128, LVX128>;
+defm : VMX128Load32<int_ppc_altivec_lvxl128, LVXL128>;
+defm : VMX128Store32<int_ppc_altivec_stvewx128, STVEWX128>;
+defm : VMX128Store32<int_ppc_altivec_stvlx128, STVLX128>;
+defm : VMX128Store32<int_ppc_altivec_stvlx128_volatile, STVLX128_volatile>;
+defm : VMX128Store32<int_ppc_altivec_stvlxl128, STVLXL128>;
+defm : VMX128Store32<int_ppc_altivec_stvrx128, STVRX128>;
+defm : VMX128Store32<int_ppc_altivec_stvrx128_volatile, STVRX128_volatile>;
+defm : VMX128Store32<int_ppc_altivec_stvrxl128, STVRXL128>;
+defm : VMX128Store32<int_ppc_altivec_stvx128, STVX128>;
+defm : VMX128Store32<int_ppc_altivec_stvxl128, STVXL128>;
+
+defm : VMX128Binary<int_ppc_altivec_vaddfp128, VADDFP128, v4f32>;
+defm : VMX128Binary<int_ppc_altivec_vsubfp128, VSUBFP128, v4f32>;
+defm : VMX128Binary<int_ppc_altivec_vmulfp128, VMULFP128, v4f32>;
+defm : VMX128Binary<int_ppc_altivec_vmaxfp128, VMAXFP128, v4f32>;
+defm : VMX128Binary<int_ppc_altivec_vminfp128, VMINFP128, v4f32>;
+defm : VMX128Binary<int_ppc_altivec_vmsum3fp128, VMSUM3FP128, v4f32>;
+defm : VMX128Binary<int_ppc_altivec_vmsum4fp128, VMSUM4FP128, v4f32>;
+defm : VMX128Binary<int_ppc_altivec_vand128, VAND128, v4i32>;
+defm : VMX128Binary<int_ppc_altivec_vandc128, VANDC128, v4i32>;
+defm : VMX128Binary<int_ppc_altivec_vnor128, VNOR128, v4i32>;
+defm : VMX128Binary<int_ppc_altivec_vor128, VOR128, v4i32>;
+defm : VMX128Binary<int_ppc_altivec_vxor128, VXOR128, v4i32>;
+defm : VMX128Binary<int_ppc_altivec_vcmpbfp128, VCMPBFP128, v4i32, v4f32>;
+defm : VMX128Binary<int_ppc_altivec_vcmpeqfp128, VCMPEQFP128, v4i32, v4f32>;
+defm : VMX128Binary<int_ppc_altivec_vcmpgefp128, VCMPGEFP128, v4i32, v4f32>;
+defm : VMX128Binary<int_ppc_altivec_vcmpgtfp128, VCMPGTFP128, v4i32, v4f32>;
+defm : VMX128Binary<int_ppc_altivec_vcmpequw128, VCMPEQUW128, v4i32>;
+
+defm : VMX128Immediate<int_ppc_altivec_vcfpsxws128, VCFPSXWS128_scale, v4i32, v4f32>;
+defm : VMX128Immediate<int_ppc_altivec_vcfpuxws128, VCFPUXWS128, v4i32, v4f32>;
+defm : VMX128Immediate<int_ppc_altivec_vcsxwfp128, VCSXWFP128_scale, v4f32, v4i32>;
+defm : VMX128Immediate<int_ppc_altivec_vcuxwfp128, VCUXWFP128, v4f32, v4i32>;
+defm : VMX128Unary<int_ppc_altivec_vexptefp128, VEXPTEFP128, v4f32>;
+defm : VMX128Unary<int_ppc_altivec_vlogefp128, VLOGEFP128, v4f32>;
+defm : VMX128Unary<int_ppc_altivec_vrefp128, VREFP128, v4f32>;
+defm : VMX128Unary<int_ppc_altivec_vrsqrtefp128, VRSQRTEFP128, v4f32>;
+defm : VMX128Unary<int_ppc_altivec_vrfim128, VRFIM128, v4f32>;
+defm : VMX128Unary<int_ppc_altivec_vrfin128, VRFIN128, v4f32>;
+defm : VMX128Unary<int_ppc_altivec_vrfip128, VRFIP128, v4f32>;
+defm : VMX128Unary<int_ppc_altivec_vrfiz128, VRFIZ128, v4f32>;
+
+def : Pat<(v4f32 (int_ppc_altivec_vmaddfp128 v4f32:$a, v4f32:$b, v4f32:$c)),
+          (VMADDFP128 $c, $a, $b)>;
+def : Pat<(v4f32 (int_ppc_altivec_vmaddcfp128 v4f32:$a, v4f32:$b, v4f32:$c)),
+          (VMADDCFP128 $b, $a, $c)>;
+def : Pat<(v4f32 (int_ppc_altivec_vnmsubfp128 v4f32:$a, v4f32:$b, v4f32:$c)),
+          (VNMSUBFP128 $c, $a, $b)>;
+def : Pat<(v4i32 (int_ppc_altivec_vsel128 v4i32:$a, v4i32:$b, v4i32:$c)),
+          (VSEL128 $c, $a, $b)>;
+def : Pat<(v4i32 (int_ppc_altivec_vperm128 v4i32:$a, v4i32:$b, v16i8:$c)),
+          (VPERM128 $a, $b, $c)>;
+def : Pat<(v4i32 (int_ppc_altivec_vsldoi128 v4i32:$a, v4i32:$b, timm:$imm)),
+          (VSLDOI128 $a, $b, $imm)>;
+def : Pat<(v4i32 (int_ppc_altivec_vpkd3d128 v4i32:$dst, v4i32:$src,
+                                         timm:$dt, timm:$mask, timm:$shift)),
+          (VPKD3D128_tied $dst, $src, $dt, $mask, $shift)>;
+def : Pat<(v4i32 (int_ppc_altivec_vrlimi128 v4i32:$dst, v4i32:$src,
+                                         timm:$mask, timm:$shift)),
+          (VRLIMI128_tied $dst, $src, $mask, $shift)>;
+def : Pat<(v4i32 (int_ppc_altivec_vspltisw128 timm:$imm)),
+          (VSPLTISW128_imm $imm)>;
+defm : VMX128Immediate<int_ppc_altivec_vpermwi128, VPERMWI128, v4i32>;
+defm : VMX128Immediate<int_ppc_altivec_vspltw128, VSPLTW128, v4i32>;
+defm : VMX128Immediate<int_ppc_altivec_vupkd3d128, VUPKD3D128, v4i32>;
+defm : VMX128Binary<int_ppc_altivec_vmrghw128, VMRGHW128, v4i32>;
+defm : VMX128Binary<int_ppc_altivec_vmrglw128, VMRGLW128, v4i32>;
+defm : VMX128Binary<int_ppc_altivec_vpkshss128, VPKSHSS128, v16i8, v8i16>;
+defm : VMX128Binary<int_ppc_altivec_vpkshus128, VPKSHUS128, v16i8, v8i16>;
+defm : VMX128Binary<int_ppc_altivec_vpkswss128, VPKSWSS128, v8i16, v4i32>;
+defm : VMX128Binary<int_ppc_altivec_vpkswus128, VPKSWUS128, v8i16, v4i32>;
+defm : VMX128Binary<int_ppc_altivec_vpkuhum128, VPKUHUM128, v16i8, v8i16>;
+defm : VMX128Binary<int_ppc_altivec_vpkuhus128, VPKUHUS128, v16i8, v8i16>;
+defm : VMX128Binary<int_ppc_altivec_vpkuwum128, VPKUWUM128, v8i16, v4i32>;
+defm : VMX128Binary<int_ppc_altivec_vpkuwus128, VPKUWUS128, v8i16, v4i32>;
+defm : VMX128Unary<int_ppc_altivec_vupkhsb128, VUPKHSB128, v8i16, v16i8>;
+defm : VMX128Unary<int_ppc_altivec_vupklsb128, VUPKLSB128, v8i16, v16i8>;
+defm : VMX128Binary<int_ppc_altivec_vrlw128, VRLW128, v4i32>;
+defm : VMX128Binary<int_ppc_altivec_vslo128, VSLO128, v4i32>;
+defm : VMX128Binary<int_ppc_altivec_vslw128, VSLW128, v4i32>;
+defm : VMX128Binary<int_ppc_altivec_vsraw128, VSRAW128, v4i32>;
+defm : VMX128Binary<int_ppc_altivec_vsro128, VSRO128, v4i32>;
+defm : VMX128Binary<int_ppc_altivec_vsrw128, VSRW128, v4i32>;
 
 }
 
