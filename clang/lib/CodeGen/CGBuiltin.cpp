@@ -17579,6 +17579,203 @@ Value *CodeGenFunction::EmitX86BuiltinExpr(unsigned BuiltinID,
   }
 }
 
+Value *CodeGenFunction::EmitPPCXboxScalarBuiltinExpr(unsigned BuiltinID,
+                                                     const CallExpr *E) {
+  enum class Operation {
+    Intrinsic,
+    Emit,
+    LoadUpdate,
+    StoreUpdate,
+    Cache,
+    CacheHint,
+    LoadReverse,
+    StoreReverse,
+    LoadReverseVolatile,
+    StoreReverseVolatile,
+    ByteSwap,
+    Sqrt,
+    Asm,
+    StoreFPWord,
+    Round,
+    CountZeros,
+    Trap
+  };
+  Operation Op;
+  Intrinsic::ID ID;
+  StringRef Assembly;
+  unsigned ICEArguments;
+  switch (BuiltinID) {
+  default:
+    llvm_unreachable("not an Xbox scalar builtin");
+#define XBOX_PPC_BUILTIN(NAME, SIG, KIND, INTRINSIC, ASM, ICE)                 \
+  case PPC::BI##NAME:                                                          \
+    Op = Operation::KIND;                                                      \
+    ID = Intrinsic::INTRINSIC;                                                 \
+    Assembly = ASM;                                                            \
+    ICEArguments = ICE;                                                        \
+    break;
+#include "clang/Basic/BuiltinsPPCXboxScalar.def"
+#undef XBOX_PPC_BUILTIN
+  }
+
+  if (Op == Operation::Sqrt)
+    return emitUnaryMaybeConstrainedFPBuiltin(
+        *this, E, Intrinsic::sqrt, Intrinsic::experimental_constrained_sqrt);
+
+  SmallVector<Value *, 3> Args;
+  LValue Base;
+  bool IsUpdate = Op == Operation::LoadUpdate || Op == Operation::StoreUpdate;
+  for (unsigned I = 0; I != E->getNumArgs(); ++I) {
+    if (IsUpdate && I == E->getNumArgs() - 1) {
+      Base = EmitLValue(E->getArg(I)->IgnoreParenImpCasts());
+      Args.push_back(
+          EmitLoadOfLValue(Base, E->getArg(I)->getExprLoc()).getScalarVal());
+    } else {
+      Args.push_back(EmitScalarOrConstFoldImmArg(ICEArguments, I, E));
+    }
+  }
+
+  auto EmitAssembly = [&](llvm::Type *ResultTy, StringRef Text,
+                          StringRef Constraints, ArrayRef<Value *> Operands) {
+    SmallVector<llvm::Type *, 3> Types;
+    for (Value *Arg : Operands)
+      Types.push_back(Arg->getType());
+    auto *FTy = llvm::FunctionType::get(ResultTy, Types, false);
+    return Builder.CreateCall(
+        llvm::InlineAsm::get(FTy, Text, Constraints, /*hasSideEffects=*/true),
+        Operands);
+  };
+
+  if (IsUpdate) {
+    bool IsLoad = Op == Operation::LoadUpdate;
+    llvm::Type *ValueTy =
+        IsLoad ? ConvertType(E->getType()) : Args.front()->getType();
+    // A nonzero base register is both an input and an output. Early clobber
+    // prevents the load destination from overlapping either address operand.
+    llvm::Type *RegTy =
+        ValueTy->isIntegerTy() && ValueTy->getIntegerBitWidth() < 32 ? Int32Ty
+                                                                     : ValueTy;
+    Value *Pointer = Args.back();
+    Value *Offset = Builder.CreateSExt(Args[IsLoad ? 0 : 1], Int64Ty);
+    bool Immediate = false;
+    if (auto *ConstantOffset = dyn_cast<ConstantInt>(Offset))
+      Immediate = ConstantOffset->getValue().isSignedIntN(16) &&
+                  (RegTy != Int64Ty || ConstantOffset->getSExtValue() % 4 == 0);
+    std::string Instruction = Assembly.str();
+    if (Immediate)
+      Instruction.pop_back();
+    std::string Constraint = ValueTy->isFloatingPointTy() ? "f" : "r";
+    Value *Updated;
+    Value *Result;
+    if (IsLoad) {
+      auto *ResultTy = llvm::StructType::get(RegTy, Pointer->getType());
+      Value *Call = EmitAssembly(
+          ResultTy, Instruction + (Immediate ? " $0, $3($1)" : " $0, $1, $3"),
+          "=&" + Constraint + ",=b,1," + (Immediate ? "i" : "r") + ",~{memory}",
+          {Pointer, Offset});
+      Result = Builder.CreateExtractValue(Call, 0);
+      if (Result->getType() != ValueTy)
+        Result = Builder.CreateTrunc(Result, ValueTy);
+      Updated = Builder.CreateExtractValue(Call, 1);
+    } else {
+      Value *Stored = Args.front();
+      if (Stored->getType() != RegTy)
+        Stored = Builder.CreateZExt(Stored, RegTy);
+      Result = EmitAssembly(
+          Pointer->getType(),
+          Instruction + (Immediate ? " $2, $3($0)" : " $2, $0, $3"),
+          "=b,0," + Constraint + "," + (Immediate ? "i" : "r") + ",~{memory}",
+          {Pointer, Stored, Offset});
+      Updated = Result;
+    }
+    EmitStoreThroughLValue(RValue::get(Updated), Base);
+    return Result;
+  }
+
+  switch (Op) {
+  case Operation::Intrinsic:
+    return Builder.CreateCall(CGM.getIntrinsic(ID), Args);
+  case Operation::Sqrt:
+    llvm_unreachable("square root handled before argument emission");
+  case Operation::Round: {
+    // These instructions depend on the current FPSCR rounding mode. The
+    // readnone native intrinsics would allow CSE across changes to that mode.
+    return EmitAssembly(DoubleTy, "fctid $0, $1\n\tfcfid $0, $0",
+                        "=f,f,~{memory}", Args);
+  }
+  case Operation::ByteSwap:
+    return Builder.CreateCall(
+        CGM.getIntrinsic(Intrinsic::bswap, Args[0]->getType()), Args);
+  case Operation::CountZeros: {
+    Value *Count = Builder.CreateCall(
+        CGM.getIntrinsic(Intrinsic::ctlz, Args[0]->getType()),
+        {Args[0], Builder.getFalse()});
+    return Builder.CreateIntCast(Count, Int32Ty, /*isSigned=*/false);
+  }
+  case Operation::Cache:
+  case Operation::CacheHint: {
+    Value *Pointer = Builder.CreateGEP(Int8Ty, Args[1], Args[0]);
+    if (Op == Operation::CacheHint)
+      return Builder.CreateCall(CGM.getIntrinsic(ID),
+                                {Pointer, Builder.getInt32(0)});
+    return Builder.CreateCall(CGM.getIntrinsic(ID), {Pointer});
+  }
+  case Operation::LoadReverse:
+  case Operation::LoadReverseVolatile: {
+    llvm::Type *Ty = ConvertType(E->getType());
+    Value *Pointer = Builder.CreateGEP(Int8Ty, Args[1], Args[0]);
+    bool Volatile = Op == Operation::LoadReverseVolatile;
+    Intrinsic::ID LoadID =
+        Ty == Int16Ty   ? (Volatile ? Intrinsic::ppc_load2r_volatile
+                                    : Intrinsic::ppc_load2r)
+        : Ty == Int32Ty ? (Volatile ? Intrinsic::ppc_load4r_volatile
+                                    : Intrinsic::ppc_load4r)
+                        : (Volatile ? Intrinsic::ppc_load8r_volatile
+                                    : Intrinsic::ppc_load8r);
+    Value *Load = Builder.CreateCall(CGM.getIntrinsic(LoadID), {Pointer});
+    return Builder.CreateIntCast(Load, Ty, /*isSigned=*/false);
+  }
+  case Operation::StoreReverse:
+  case Operation::StoreReverseVolatile: {
+    llvm::Type *Ty = Args[0]->getType();
+    Value *Pointer = Builder.CreateGEP(Int8Ty, Args[2], Args[1]);
+    bool Volatile = Op == Operation::StoreReverseVolatile;
+    Intrinsic::ID StoreID =
+        Ty == Int16Ty   ? (Volatile ? Intrinsic::ppc_store2r_volatile
+                                    : Intrinsic::ppc_store2r)
+        : Ty == Int32Ty ? (Volatile ? Intrinsic::ppc_store4r_volatile
+                                    : Intrinsic::ppc_store4r)
+                        : (Volatile ? Intrinsic::ppc_store8r_volatile
+                                    : Intrinsic::ppc_store8r);
+    Value *Stored = Args[0];
+    if (Ty == Int16Ty)
+      Stored = Builder.CreateZExt(Stored, Int32Ty);
+    return Builder.CreateCall(CGM.getIntrinsic(StoreID), {Stored, Pointer});
+  }
+  case Operation::StoreFPWord: {
+    Value *Pointer = Builder.CreateGEP(Int8Ty, Args[2], Args[1]);
+    return Builder.CreateCall(CGM.getIntrinsic(ID), {Pointer, Args[0]});
+  }
+  case Operation::Trap:
+    return Builder.CreateCall(CGM.getIntrinsic(ID),
+                              {Args[1], Args[2], Args[0]});
+  case Operation::Emit:
+    return EmitAssembly(VoidTy, ".long $0", "i,~{memory}", Args);
+  case Operation::Asm: {
+    llvm::Type *Ty =
+        E->getType()->isVoidType() ? VoidTy : ConvertType(E->getType());
+    StringRef Constraints = Ty->isVoidTy()            ? "~{memory}"
+                            : Ty->isFloatingPointTy() ? "=f,f,~{memory}"
+                                                      : "=r";
+    return EmitAssembly(Ty, Assembly, Constraints, Args);
+  }
+  case Operation::LoadUpdate:
+  case Operation::StoreUpdate:
+    llvm_unreachable("update operations handled above");
+  }
+  llvm_unreachable("invalid Xbox scalar operation");
+}
+
 Value *CodeGenFunction::EmitPPCXboxVectorBuiltinExpr(
     unsigned BuiltinID, const CallExpr *E, ReturnValueSlot ReturnValue) {
   enum class Operation {
@@ -17726,13 +17923,8 @@ Value *CodeGenFunction::EmitPPCBuiltinExpr(unsigned BuiltinID,
   }
   if (BuiltinID >= PPC::BI__lvx_volatile && BuiltinID < PPC::LastTSBuiltin)
     return EmitPPCXboxVectorBuiltinExpr(BuiltinID, E, ReturnValue);
-  if (BuiltinID == PPC::BI__fself) {
-    Value *Comparand = EmitScalarExpr(E->getArg(0));
-    Value *GE = EmitScalarExpr(E->getArg(1));
-    Value *LT = EmitScalarExpr(E->getArg(2));
-    return Builder.CreateCall(CGM.getIntrinsic(Intrinsic::ppc_fsels),
-                              {Comparand, GE, LT});
-  }
+  if (BuiltinID >= PPC::BI__emit && BuiltinID <= PPC::BI__tdi)
+    return EmitPPCXboxScalarBuiltinExpr(BuiltinID, E);
   // Do not emit the builtin arguments in the arguments of a function call,
   // because the evaluation order of function arguments is not specified in C++.
   // This is important when testing to ensure the arguments are emitted in the

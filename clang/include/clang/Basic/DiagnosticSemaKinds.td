@@ -10694,6 +10694,14 @@ def err_ppc_xbox_vector_builtin_signature : Error<
   "the SDK and __vector4 must be a complete intrinsic type">;
 def err_ppc_xbox_vector_builtin_requires_declaration : Error<
   "the Xbox vector intrinsic %0 requires an explicit declaration">;
+def err_ppc_xbox_update_base : Error<
+  "the base operand of an Xbox update intrinsic must be a modifiable pointer lvalue">;
+def err_ppc_xbox_load_update_base : Error<
+  "the base operand of an Xbox load-update intrinsic must be a pointer variable">;
+def err_ppc_xbox_scalar_builtin_signature : Error<
+  "invalid declaration of Xbox intrinsic %0; the signature must match the SDK">;
+def err_ppc_xbox_scalar_builtin_requires_declaration : Error<
+  "the Xbox intrinsic %0 requires an explicit declaration">;
 def err_ppc_invalid_use_mma_type : Error<
   "invalid use of PPC MMA type">;
 def err_ppc_invalid_test_data_class_type : Error<

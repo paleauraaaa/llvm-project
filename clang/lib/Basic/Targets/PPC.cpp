@@ -294,8 +294,6 @@ void PPCTargetInfo::getTargetDefines(const LangOptions &Opts,
   if (getTriple().isOSXbox360()) {
     Builder.defineMacro("_M_PPC");
     Builder.defineMacro("_M_PPCBE");
-    Builder.defineMacro("__fctidz", "__builtin_ppc_fctidz");
-    Builder.defineMacro("__fcfid", "__builtin_ppc_fcfid");
     Builder.defineMacro("__XENON__");
   }
 

@@ -106,7 +106,56 @@ bool SemaPPC::CheckPPCBuiltinFunctionCall(const TargetInfo &TI,
 
   switch (BuiltinID) {
   default:
+    break;
+#define XBOX_PPC_BUILTIN(NAME, SIG, KIND, INTRINSIC, ASM, ICE)                 \
+  case PPC::BI##NAME: {                                                        \
+    for (unsigned I = 0; I != TheCall->getNumArgs(); ++I)                      \
+      if ((ICE & (1U << I)) && SemaRef.BuiltinConstantArg(TheCall, I, Result)) \
+        return true;                                                           \
+    break;                                                                     \
+  }
+#include "clang/Basic/BuiltinsPPCXboxScalar.def"
+#undef XBOX_PPC_BUILTIN
+  }
+
+  switch (BuiltinID) {
+  default:
     return false;
+  case PPC::BI__mftb:
+    return SemaRef.checkArgCountAtMost(TheCall, 0);
+  case PPC::BI__tw:
+  case PPC::BI__td:
+    return SemaRef.BuiltinConstantArgRange(TheCall, 0, 0, 31);
+  case PPC::BI__twi:
+  case PPC::BI__tdi:
+    return SemaRef.BuiltinConstantArgRange(TheCall, 0, 0, 31) ||
+           SemaRef.BuiltinConstantArgRange(TheCall, 2, -32768, 32767);
+  case PPC::BI__loadbyteupdate:
+  case PPC::BI__loadshortupdate:
+  case PPC::BI__loadwordupdate:
+  case PPC::BI__loadfloatupdate:
+  case PPC::BI__loaddoubleupdate:
+  case PPC::BI__loaddoublewordupdate:
+  case PPC::BI__storebyteupdate:
+  case PPC::BI__storeshortupdate:
+  case PPC::BI__storewordupdate:
+  case PPC::BI__storefloatupdate:
+  case PPC::BI__storedoubleupdate:
+  case PPC::BI__storedoublewordupdate: {
+    const Expr *Base =
+        TheCall->getArg(TheCall->getNumArgs() - 1)->IgnoreParenImpCasts();
+    if (!Base->getType()->isPointerType() ||
+        Base->isModifiableLvalue(Context) != Expr::MLV_Valid)
+      return Diag(Base->getExprLoc(), diag::err_ppc_xbox_update_base)
+             << Base->getSourceRange();
+    if (!TheCall->getType()->isVoidType()) {
+      const auto *Reference = dyn_cast<DeclRefExpr>(Base);
+      if (!Reference || !isa<VarDecl>(Reference->getDecl()))
+        return Diag(Base->getExprLoc(), diag::err_ppc_xbox_load_update_base)
+               << Base->getSourceRange();
+    }
+    return false;
+  }
   case PPC::BI__vcfsx:
   case PPC::BI__vcfux:
   case PPC::BI__vctsxs:
@@ -299,12 +348,15 @@ bool SemaPPC::CheckXboxVectorBuiltinDeclaration(FunctionDecl *FD,
   case PPC::BI__IsIntConst:
     Signature = "ii";
     break;
-  case PPC::BI__fself:
-    Signature = "ffff";
+#define XBOX_PPC_BUILTIN(NAME, SIG, KIND, INTRINSIC, ASM, ICE)                 \
+  case PPC::BI##NAME:                                                          \
+    Signature = SIG;                                                           \
     break;
-#define XBOX_VECTOR_BUILTIN(NAME, SIG, KIND, INTRINSIC, ICE) \
-  case PPC::BI##NAME:                                     \
-    Signature = SIG;                                     \
+#include "clang/Basic/BuiltinsPPCXboxScalar.def"
+#undef XBOX_PPC_BUILTIN
+#define XBOX_VECTOR_BUILTIN(NAME, SIG, KIND, INTRINSIC, ICE)                   \
+  case PPC::BI##NAME:                                                          \
+    Signature = SIG;                                                           \
     break;
 #include "clang/Basic/BuiltinsPPCXbox.def"
 #undef XBOX_VECTOR_BUILTIN
@@ -332,6 +384,18 @@ bool SemaPPC::CheckXboxVectorBuiltinDeclaration(FunctionDecl *FD,
       return Context.hasSameType(Ty, Context.IntTy);
     case 'f':
       return Context.hasSameType(Ty, Context.FloatTy);
+    case 'd':
+      return Context.hasSameType(Ty, Context.DoubleTy);
+    case 'b':
+      return Context.hasSameType(Ty, Context.UnsignedCharTy);
+    case 'l':
+      return Context.hasSameType(Ty, Context.LongTy);
+    case 'L':
+      return Context.hasSameType(Ty, Context.UnsignedLongTy);
+    case 'q':
+      return Context.hasSameType(Ty, Context.LongLongTy);
+    case 'Q':
+      return Context.hasSameType(Ty, Context.UnsignedLongLongTy);
     case 'u':
       return Context.hasSameType(Ty, Context.UnsignedIntTy);
     case 'h':
@@ -363,11 +427,18 @@ bool SemaPPC::CheckXboxVectorBuiltinDeclaration(FunctionDecl *FD,
   bool Valid = FPT && !FPT->isVariadic() &&
                FPT->getNumParams() == Signature.size() - 1 &&
                Matches(FPT->getReturnType(), Signature.front());
-  if (Valid)
+  if (!FPT && BuiltinID == PPC::BI__mftb) {
+    const auto *FNT = FD->getType()->getAs<FunctionNoProtoType>();
+    Valid = FNT && Matches(FNT->getReturnType(), Signature.front());
+  }
+  if (Valid && FPT)
     for (unsigned I = 0; I != FPT->getNumParams(); ++I)
       Valid &= Matches(FPT->getParamType(I), Signature[I + 1]);
   if (!Valid)
-    return Diag(FD->getLocation(), diag::err_ppc_xbox_vector_builtin_signature)
+    return Diag(FD->getLocation(),
+                BuiltinID >= PPC::BI__emit && BuiltinID <= PPC::BI__tdi
+                    ? diag::err_ppc_xbox_scalar_builtin_signature
+                    : diag::err_ppc_xbox_vector_builtin_signature)
            << FD;
   return false;
 }

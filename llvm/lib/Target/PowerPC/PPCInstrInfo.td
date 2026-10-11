@@ -720,6 +720,7 @@ def NaNsFPMath
 def HasBPERMD : Predicate<"Subtarget->hasBPERMD()">;
 def HasExtDiv : Predicate<"Subtarget->hasExtDiv()">;
 def IsISA2_06 : Predicate<"Subtarget->isISA2_06()">;
+def HasLDBRX : Predicate<"Subtarget->hasLDBRX()">;
 def IsISA2_07 : Predicate<"Subtarget->isISA2_07()">;
 def IsISA3_0 : Predicate<"Subtarget->isISA3_0()">;
 def HasFPU : Predicate<"Subtarget->hasFPU()">;
@@ -5127,10 +5128,34 @@ def : Pat<(int_ppc_load2r ForceXForm:$ptr),
           (LHBRX ForceXForm:$ptr)>;
 def : Pat<(int_ppc_load4r ForceXForm:$ptr),
           (LWBRX ForceXForm:$ptr)>;
+let isCodeGenOnly = 1, hasSideEffects = 1, Predicates = [HasVMX128] in {
+def LHBRX_volatile :
+    XForm_1_memOp<31, 790, (outs gprc:$RST), (ins (memrr $RA, $RB):$addr),
+                  "lhbrx $RST, $addr", IIC_LdStLoad,
+                  [(set i32:$RST, (int_ppc_load2r_volatile ForceXForm:$addr))]>,
+    ZExt32To64;
+def LWBRX_volatile :
+    XForm_1_memOp<31, 534, (outs gprc:$RST), (ins (memrr $RA, $RB):$addr),
+                  "lwbrx $RST, $addr", IIC_LdStLoad,
+                  [(set i32:$RST, (int_ppc_load4r_volatile ForceXForm:$addr))]>,
+    ZExt32To64;
+}
 def : Pat<(int_ppc_store2r gprc:$a, ForceXForm:$ptr),
           (STHBRX gprc:$a, ForceXForm:$ptr)>;
 def : Pat<(int_ppc_store4r gprc:$a, ForceXForm:$ptr),
           (STWBRX gprc:$a, ForceXForm:$ptr)>;
+let isCodeGenOnly = 1, hasSideEffects = 1, Predicates = [HasVMX128] in {
+def STHBRX_volatile :
+    XForm_8_memOp<31, 918, (outs), (ins gprc:$RST, (memrr $RA, $RB):$addr),
+                  "sthbrx $RST, $addr", IIC_LdStStore,
+                  [(int_ppc_store2r_volatile gprc:$RST, ForceXForm:$addr)]>,
+    PPC970_DGroup_Cracked;
+def STWBRX_volatile :
+    XForm_8_memOp<31, 662, (outs), (ins gprc:$RST, (memrr $RA, $RB):$addr),
+                  "stwbrx $RST, $addr", IIC_LdStStore,
+                  [(int_ppc_store4r_volatile gprc:$RST, ForceXForm:$addr)]>,
+    PPC970_DGroup_Cracked;
+}
 
 
 // Fast 32-bit reverse bits algorithm:
@@ -5322,8 +5347,12 @@ def : Pat<(int_ppc_stbcx ForceXForm:$dst, gprc:$A),
 def : Pat<(PPCStoreCond ForceXForm:$dst, gprc:$A, 1),
           (RLWINM (STBCX gprc:$A, ForceXForm:$dst), 31, 31, 31)>;
 
+let Predicates = [HasVSX] in
 def : Pat<(int_ppc_fcfid f64:$A),
         (XSCVSXDDP $A)>;
+def NoVSXForFCFID : Predicate<"!Subtarget->hasVSX()">;
+let Predicates = [HasFPU, In64BitMode, NoVSXForFCFID] in
+def : Pat<(int_ppc_fcfid f64:$A), (FCFID $A)>;
 def : Pat<(int_ppc_fcfud f64:$A),
         (XSCVUXDDP $A)>;
 def : Pat<(int_ppc_fctid f64:$A),
