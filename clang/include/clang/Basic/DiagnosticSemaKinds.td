@@ -9238,6 +9238,8 @@ def err_cannot_pass_objc_interface_to_vararg_format : Error<
 def err_cannot_pass_non_trivial_c_struct_to_vararg : Error<
   "cannot pass non-trivial C object of type %0 by value to variadic "
   "%select{function|block|method|constructor}1">;
+def err_xbox_vector_vararg : Error<
+  "__vector4 arguments to variadic calls are not supported on Xbox 360">;
 
 
 def err_cannot_pass_objc_interface_to_vararg : Error<
