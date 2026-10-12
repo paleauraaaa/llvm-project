@@ -518,6 +518,19 @@ RegisterId codeview::decodeFramePtrReg(EncodedFramePtrReg EncodedReg,
     case EncodedFramePtrReg::BasePtr:  return RegisterId::EBX;
     }
     llvm_unreachable("bad encoding");
+  case CPUType::PPC601:
+  case CPUType::PPC603:
+  case CPUType::PPC604:
+  case CPUType::PPC620:
+  case CPUType::PPCFP:
+  case CPUType::PPCBE:
+    switch (EncodedReg) {
+    case EncodedFramePtrReg::None:     return RegisterId::NONE;
+    case EncodedFramePtrReg::StackPtr: return RegisterId::PPC_GPR1;
+    case EncodedFramePtrReg::FramePtr: return RegisterId::PPC_GPR31;
+    case EncodedFramePtrReg::BasePtr:  return RegisterId::PPC_GPR30;
+    }
+    llvm_unreachable("bad encoding");
   case CPUType::X64:
     switch (EncodedReg) {
     case EncodedFramePtrReg::None:     return RegisterId::NONE;
@@ -549,6 +562,23 @@ EncodedFramePtrReg codeview::encodeFramePtrReg(RegisterId Reg, CPUType CPU) {
     case RegisterId::EBP:
       return EncodedFramePtrReg::FramePtr;
     case RegisterId::EBX:
+      return EncodedFramePtrReg::BasePtr;
+    default:
+      break;
+    }
+    break;
+  case CPUType::PPC601:
+  case CPUType::PPC603:
+  case CPUType::PPC604:
+  case CPUType::PPC620:
+  case CPUType::PPCFP:
+  case CPUType::PPCBE:
+    switch (Reg) {
+    case RegisterId::PPC_GPR1:
+      return EncodedFramePtrReg::StackPtr;
+    case RegisterId::PPC_GPR31:
+      return EncodedFramePtrReg::FramePtr;
+    case RegisterId::PPC_GPR30:
       return EncodedFramePtrReg::BasePtr;
     default:
       break;

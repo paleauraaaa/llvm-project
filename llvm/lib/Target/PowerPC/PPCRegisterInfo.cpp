@@ -101,6 +101,7 @@ PPCRegisterInfo::PPCRegisterInfo(const PPCTargetMachine &TM)
                        TM.isPPC64() ? 0 : 1,
                        TM.isPPC64() ? 0 : 1),
     TM(TM) {
+  initLLVMToCVRegMapping(this);
   ImmToIdxMap[PPC::LD]   = PPC::LDX;    ImmToIdxMap[PPC::STD]  = PPC::STDX;
   ImmToIdxMap[PPC::LBZ]  = PPC::LBZX;   ImmToIdxMap[PPC::STB]  = PPC::STBX;
   ImmToIdxMap[PPC::LHZ]  = PPC::LHZX;   ImmToIdxMap[PPC::LHA]  = PPC::LHAX;
