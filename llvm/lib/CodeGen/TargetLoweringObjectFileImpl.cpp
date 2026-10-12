@@ -1688,6 +1688,10 @@ MCSection *TargetLoweringObjectFileCOFF::getExplicitSectionGlobal(
                                       /*AddSegmentInfo=*/false))
     Kind = SectionKind::getMetadata();
   int Selection = 0;
+  if (TM.getTargetTriple().isOSXbox360() &&
+      (Name.starts_with(".CRT$XC") || Name.starts_with(".CRT$XT")) &&
+      (Kind.isReadOnly() || Kind.isReadOnlyWithRel()))
+    Kind = SectionKind::getData();
   unsigned Characteristics = getCOFFSectionFlags(Kind, TM);
   StringRef COMDATSymName = "";
   if (GO->hasComdat()) {
@@ -1930,18 +1934,24 @@ void TargetLoweringObjectFileCOFF::emitLinkerDirectives(
   }
 }
 
+static unsigned getCOFFStaticStructorCharacteristics(const Triple &T) {
+  unsigned Characteristics =
+      COFF::IMAGE_SCN_CNT_INITIALIZED_DATA | COFF::IMAGE_SCN_MEM_READ;
+  // Xbox 360 requires CRT constructor and destructor table contributions to be writable.
+  if (T.isOSXbox360())
+    Characteristics |= COFF::IMAGE_SCN_MEM_WRITE;
+  return Characteristics;
+}
+
 void TargetLoweringObjectFileCOFF::Initialize(MCContext &Ctx,
                                               const TargetMachine &TM) {
   TargetLoweringObjectFile::Initialize(Ctx, TM);
   this->TM = &TM;
   const Triple &T = TM.getTargetTriple();
   if (T.isWindowsMSVCEnvironment() || T.isWindowsItaniumEnvironment()) {
-    StaticCtorSection =
-        Ctx.getCOFFSection(".CRT$XCU", COFF::IMAGE_SCN_CNT_INITIALIZED_DATA |
-                                           COFF::IMAGE_SCN_MEM_READ);
-    StaticDtorSection =
-        Ctx.getCOFFSection(".CRT$XTX", COFF::IMAGE_SCN_CNT_INITIALIZED_DATA |
-                                           COFF::IMAGE_SCN_MEM_READ);
+    unsigned Characteristics = getCOFFStaticStructorCharacteristics(T);
+    StaticCtorSection = Ctx.getCOFFSection(".CRT$XCU", Characteristics);
+    StaticDtorSection = Ctx.getCOFFSection(".CRT$XTX", Characteristics);
   } else {
     StaticCtorSection = Ctx.getCOFFSection(
         ".ctors", COFF::IMAGE_SCN_CNT_INITIALIZED_DATA |
@@ -1985,8 +1995,8 @@ static MCSectionCOFF *getCOFFStaticStructorSection(MCContext &Ctx,
     OS << ".CRT$X" << (IsCtor ? "C" : "T") << LastLetter;
     if (AddPrioritySuffix)
       OS << format("%05u", Priority);
-    MCSectionCOFF *Sec = Ctx.getCOFFSection(
-        Name, COFF::IMAGE_SCN_CNT_INITIALIZED_DATA | COFF::IMAGE_SCN_MEM_READ);
+    MCSectionCOFF *Sec =
+        Ctx.getCOFFSection(Name, getCOFFStaticStructorCharacteristics(T));
     return Ctx.getAssociativeCOFFSection(Sec, KeySym, 0);
   }
 
