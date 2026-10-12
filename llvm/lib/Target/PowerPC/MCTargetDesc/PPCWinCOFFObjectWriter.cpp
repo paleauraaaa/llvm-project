@@ -65,10 +65,12 @@ unsigned PPCWinCOFFObjectWriter::getRelocType(MCContext &Ctx, const MCValue &Tar
   case PPC::fixup_ppc_half16ds:
     return llvm::COFF::IMAGE_REL_PPC_ADDR14;
   case FK_Data_2:
+  case PPC::fixup_ppc_codeview_data_2:
     if (Modifier == MCSymbolRefExpr::VK_SECREL)
       return llvm::COFF::IMAGE_REL_PPC_SECREL16;
     return llvm::COFF::IMAGE_REL_PPC_ADDR16;
   case FK_Data_4:
+  case PPC::fixup_ppc_codeview_data_4:
     switch (Modifier) {
     case MCSymbolRefExpr::VK_COFF_IMGREL32:
       return COFF::IMAGE_REL_PPC_ADDR32NB;
@@ -78,6 +80,7 @@ unsigned PPCWinCOFFObjectWriter::getRelocType(MCContext &Ctx, const MCValue &Tar
       return COFF::IMAGE_REL_PPC_ADDR32;
     }
   case FK_Data_8:
+  case PPC::fixup_ppc_codeview_data_8:
     return llvm::COFF::IMAGE_REL_PPC_ADDR64;
   case FK_SecRel_2:
     return llvm::COFF::IMAGE_REL_PPC_SECTION;

@@ -18,6 +18,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "PPCWinCOFFStreamer.h"
+#include "PPCFixupKinds.h"
 #include "PPCMCCodeEmitter.h"
 #include "llvm/BinaryFormat/COFF.h"
 #include "llvm/MC/MCAsmBackend.h"
@@ -25,9 +26,11 @@
 #include "llvm/MC/MCCodeEmitter.h"
 #include "llvm/MC/MCDirectives.h"
 #include "llvm/MC/MCObjectWriter.h"
+#include "llvm/MC/MCSectionCOFF.h"
 #include "llvm/MC/MCSectionXCOFF.h"
 #include "llvm/MC/MCSymbolXCOFF.h"
 #include "llvm/MC/TargetRegistry.h"
+#include "llvm/Support/Endian.h"
 
 using namespace llvm;
 
@@ -37,6 +40,64 @@ PPCWinCOFFStreamer::PPCWinCOFFStreamer(MCContext &Context,
                                    std::unique_ptr<MCCodeEmitter> Emitter)
     : MCWinCOFFStreamer(Context, std::move(MAB), std::move(Emitter),
         std::move(OW)) {}
+
+void PPCWinCOFFStreamer::emitIntValue(uint64_t Value, unsigned Size) {
+  const MCSection *Section = getCurrentSectionOnly();
+  if (Section && Section->getName().starts_with(".debug$")) {
+    uint64_t LittleEndianValue =
+        support::endian::byte_swap(Value, endianness::big) >>
+        (8 * (sizeof(Value) - Size));
+    MCWinCOFFStreamer::emitIntValue(
+        LittleEndianValue, Size);
+    return;
+  }
+  MCWinCOFFStreamer::emitIntValue(Value, Size);
+}
+
+void PPCWinCOFFStreamer::emitIntValue(const APInt &Value) {
+  const MCSection *Section = getCurrentSectionOnly();
+  if (Section && Section->getName().starts_with(".debug$")) {
+    MCWinCOFFStreamer::emitIntValue(Value.byteSwap());
+    return;
+  }
+  MCWinCOFFStreamer::emitIntValue(Value);
+}
+
+void PPCWinCOFFStreamer::emitValueImpl(const MCExpr *Value, unsigned Size,
+                                     SMLoc Loc) {
+  const MCSection *Section = getCurrentSectionOnly();
+  if (!Section || !Section->getName().starts_with(".debug$")) {
+    MCWinCOFFStreamer::emitValueImpl(Value, Size, Loc);
+    return;
+  }
+
+  MCDataFragment *DF = getOrCreateDataFragment();
+  size_t NumFixups = DF->getFixups().size();
+  MCWinCOFFStreamer::emitValueImpl(Value, Size, Loc);
+  if (DF->getFixups().size() == NumFixups)
+    return;
+
+  // Absolute symbols and differences between code labels do not identify the
+  // CodeView section containing the fixup. Preserve its byte order explicitly.
+  assert(DF->getFixups().size() == NumFixups + 1);
+  MCFixup &Fixup = DF->getFixups().back();
+  MCFixupKind Kind;
+  switch (Fixup.getKind()) {
+  case FK_Data_2:
+    Kind = static_cast<MCFixupKind>(PPC::fixup_ppc_codeview_data_2);
+    break;
+  case FK_Data_4:
+    Kind = static_cast<MCFixupKind>(PPC::fixup_ppc_codeview_data_4);
+    break;
+  case FK_Data_8:
+    Kind = static_cast<MCFixupKind>(PPC::fixup_ppc_codeview_data_8);
+    break;
+  default:
+    return;
+  }
+  Fixup = MCFixup::create(Fixup.getOffset(), Fixup.getValue(), Kind,
+                         Fixup.getLoc());
+}
 
 void PPCWinCOFFStreamer::emitPrefixedInstruction(const MCInst &Inst,
                                                const MCSubtargetInfo &STI) {

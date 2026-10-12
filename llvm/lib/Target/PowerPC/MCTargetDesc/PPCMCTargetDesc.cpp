@@ -59,7 +59,7 @@ using namespace llvm;
 #define GET_REGINFO_MC_DESC
 #include "PPCGenRegisterInfo.inc"
 
-void llvm::initLLVMToCVRegMapping(MCRegisterInfo *MRI) {
+void llvm::initLLVMToCVRegMapping(MCRegisterInfo *MRI, bool IsXbox360) {
   for (unsigned I = 0; I != 32; ++I) {
     const auto GPR = static_cast<codeview::RegisterId>(
         static_cast<unsigned>(codeview::RegisterId::PPC_GPR0) + I);
@@ -91,6 +91,13 @@ void llvm::initLLVMToCVRegMapping(MCRegisterInfo *MRI) {
                          static_cast<int>(codeview::RegisterId::PPC_XER));
   MRI->mapLLVMRegToCVReg(PPC::CARRY,
                          static_cast<int>(codeview::RegisterId::PPC_XER));
+
+  if (IsXbox360)
+    for (unsigned I = 0; I != 128; ++I) {
+      const auto VR = static_cast<codeview::RegisterId>(
+          static_cast<unsigned>(codeview::RegisterId::PPC_VR0) + 5 * I);
+      MRI->mapLLVMRegToCVReg(PPC::V0 + I, static_cast<int>(VR));
+    }
 }
 
 /// stripRegisterPrefix - This method strips the character prefix from a
@@ -196,7 +203,7 @@ static MCRegisterInfo *createPPCMCRegisterInfo(const Triple &TT) {
 
   MCRegisterInfo *X = new MCRegisterInfo();
   InitPPCMCRegisterInfo(X, RA, Flavour, Flavour);
-  initLLVMToCVRegMapping(X);
+  initLLVMToCVRegMapping(X, TT.isOSXbox360());
   return X;
 }
 

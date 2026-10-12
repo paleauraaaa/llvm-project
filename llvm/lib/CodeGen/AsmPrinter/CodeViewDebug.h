@@ -88,6 +88,8 @@ public:
   static_assert(sizeof(uint64_t) == sizeof(LocalVarDef));
 
 private:
+  bool isXbox360Target() const;
+
   MCStreamer &OS;
   BumpPtrAllocator Allocator;
   codeview::GlobalTypeTableBuilder TypeTable;

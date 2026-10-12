@@ -56,6 +56,11 @@ enum Fixups {
   /// instrs like 'lxv'. Produces the same relocation as fixup_ppc_half16ds.
   fixup_ppc_half16dq,
 
+  // Little-endian data in CodeView sections of big-endian COFF objects.
+  fixup_ppc_codeview_data_2,
+  fixup_ppc_codeview_data_4,
+  fixup_ppc_codeview_data_8,
+
   // Marker
   LastTargetFixupKind,
   NumTargetFixupKinds = LastTargetFixupKind - FirstTargetFixupKind
