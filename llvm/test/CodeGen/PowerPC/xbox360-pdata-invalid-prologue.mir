@@ -1,0 +1,15 @@
+# RUN: not --crash llc -mtriple=powerpc64-ibm-xbox360 -mcpu=xenon -start-after=prologepilog %s -o - 2>&1 | FileCheck %s
+# CHECK: Xbox 360 prologue saves must be based on r1
+
+--- |
+  define void @invalid_save() { ret void }
+...
+---
+name: invalid_save
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $x14, $x31
+    frame-setup STD $x14, -16, $x31
+    BLR8 implicit $lr8, implicit $rm
+...

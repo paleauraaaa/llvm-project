@@ -30,6 +30,7 @@ entry:
 ; CHECK: mflr 12
 ; CHECK-NEXT: stw 12, -8(1)
 ; CHECK-NEXT: stwu 1, -144(1)
+; CHECK-NEXT: Lxbox_prologue_end{{[0-9]+}}:
 ; CHECK-NEXT: addi [[VADDR:[0-9]+]], 1, 80
 ; CHECK: stvx 1, 0, [[VADDR]]
 ; CHECK: bl callee
@@ -69,6 +70,7 @@ entry:
 ; CHECK: mflr 12
 ; CHECK-NEXT: stw 12, -8(1)
 ; CHECK-NEXT: stwu 1, -112(1)
+; CHECK-NEXT: Lxbox_prologue_end{{[0-9]+}}:
 ; CHECK-NEXT: stb 3, 103(1)
 ; CHECK-NEXT: std 4, 88(1)
 ; CHECK-NEXT: bl callee
@@ -168,7 +170,9 @@ entry:
 }
 
 ; CHECK-LABEL: test_probed_large_fixed_frame:
-; CHECK: stwu
+; CHECK: bl _RtlCheckStack12
+; CHECK-NEXT: stwux 1, 1, 12
+; CHECK-NEXT: Lxbox_prologue_end{{[0-9]+}}:
 ; CHECK-NOT: stdu
 ; CHECK: blr
 
@@ -225,10 +229,10 @@ entry:
 ; CHECK: #APP
 ; CHECK: #NO_APP
 ; CHECK: lwz [[CRSCRATCH]], 8(1)
-; CHECK-DAG: mtcrf 32, [[CRSCRATCH]]
-; CHECK-DAG: mtcrf 16, [[CRSCRATCH]]
-; CHECK-DAG: mtcrf 8, [[CRSCRATCH]]
-; CHECK-DAG: mtcrf 4, [[CRSCRATCH]]
+; CHECK-DAG: mt{{o?}}crf 32, [[CRSCRATCH]]
+; CHECK-DAG: mt{{o?}}crf 16, [[CRSCRATCH]]
+; CHECK-DAG: mt{{o?}}crf 8, [[CRSCRATCH]]
+; CHECK-DAG: mt{{o?}}crf 4, [[CRSCRATCH]]
 ; CHECK: blr
 
 declare void @callee()

@@ -94,6 +94,7 @@ PPCMCExpr::evaluateAsInt64(int64_t Value) const {
     case VK_PPC_HIGHESTA:
       return ((Value + 0x8000) >> 48) & 0xffff;
     case VK_PPC_None:
+    case VK_PPC_PDATA:
       break;
   }
   llvm_unreachable("Invalid kind!");
@@ -170,4 +171,52 @@ bool PPCMCExpr::evaluateAsRelocatableImpl(MCValue &Res, const MCAssembler *Asm,
 
 void PPCMCExpr::visitUsedExpr(MCStreamer &Streamer) const {
   Streamer.visitUsedExpr(*getSubExpr());
+}
+
+const PPCXboxPDataExpr *PPCXboxPDataExpr::create(MCContext &Ctx,
+                                                 const MCSymbol *Begin,
+                                                 const MCSymbol *PrologueEnd,
+                                                 const MCSymbol *End) {
+  return new (Ctx) PPCXboxPDataExpr(Ctx, Begin, PrologueEnd, End);
+}
+
+void PPCXboxPDataExpr::printImpl(raw_ostream &OS, const MCAsmInfo *MAI) const {
+  OS << "(0x40000000 | ((";
+  End->print(OS, MAI);
+  OS << " - ";
+  Begin->print(OS, MAI);
+  OS << ") / 4 << 8) | ((";
+  PrologueEnd->print(OS, MAI);
+  OS << " - ";
+  Begin->print(OS, MAI);
+  OS << ") / 4))";
+}
+
+bool PPCXboxPDataExpr::evaluateAsRelocatableImpl(MCValue &Res,
+                                                 const MCAssembler *Asm,
+                                                 const MCFixup *Fixup) const {
+  if (!Asm || !Asm->hasLayout())
+    return false;
+  uint64_t Start = Asm->getSymbolOffset(*Begin);
+  uint64_t Length = Asm->getSymbolOffset(*End) - Start;
+  uint64_t PrologueLength = Asm->getSymbolOffset(*PrologueEnd) - Start;
+  if (Length == 0 || Length % 4 || PrologueLength % 4 ||
+      PrologueLength > Length || Length / 4 > 0x3fffff ||
+      PrologueLength / 4 > 255) {
+    Ctx.reportError(SMLoc(), "Xbox 360 function or prologue length cannot be "
+                             "represented in .pdata");
+    Res = MCValue::get(int64_t(0));
+    return true;
+  }
+  Res = MCValue::get(0x40000000 | ((Length / 4) << 8) | (PrologueLength / 4));
+  return true;
+}
+
+void PPCXboxPDataExpr::visitUsedExpr(MCStreamer &Streamer) const {
+  for (const MCSymbol *Symbol : {Begin, PrologueEnd, End})
+    Streamer.visitUsedExpr(*MCSymbolRefExpr::create(Symbol, Ctx));
+}
+
+MCFragment *PPCXboxPDataExpr::findAssociatedFragment() const {
+  return Begin->getFragment();
 }
