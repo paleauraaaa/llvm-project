@@ -61,6 +61,11 @@ static const EnumEntry<uint16_t> RegisterNames_PPC[] = {
 #include "llvm/DebugInfo/CodeView/CodeViewRegisters.def"
 #undef CV_REGISTER
 #undef CV_REGISTERS_PPC
+#define CV_REGISTERS_PPC_XBOX
+#define CV_REGISTER(name, val) CV_ENUM_CLASS_ENT(RegisterId, name),
+#include "llvm/DebugInfo/CodeView/CodeViewRegisters.def"
+#undef CV_REGISTER
+#undef CV_REGISTERS_PPC_XBOX
 };
 
 static const EnumEntry<uint32_t> PublicSymFlagNames[] = {

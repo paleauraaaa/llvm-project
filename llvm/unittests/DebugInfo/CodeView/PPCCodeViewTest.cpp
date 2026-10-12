@@ -25,6 +25,10 @@ TEST(PPCCodeViewTest, RegisterIDs) {
   EXPECT_EQ(static_cast<uint16_t>(RegisterId::PPC_XER), 101);
   EXPECT_EQ(static_cast<uint16_t>(RegisterId::PPC_LR), 108);
   EXPECT_EQ(static_cast<uint16_t>(RegisterId::PPC_CTR), 109);
+  EXPECT_EQ(static_cast<uint16_t>(RegisterId::PPC_VR0), 1200);
+  EXPECT_EQ(static_cast<uint16_t>(RegisterId::PPC_VR1), 1205);
+  EXPECT_EQ(static_cast<uint16_t>(RegisterId::PPC_VR13), 1265);
+  EXPECT_EQ(static_cast<uint16_t>(RegisterId::PPC_VR127), 1835);
 }
 
 TEST(PPCCodeViewTest, RegisterNames) {
@@ -38,6 +42,14 @@ TEST(PPCCodeViewTest, RegisterNames) {
   Names = getRegisterNames(CPUType::PPC620);
   EXPECT_EQ(Names[0].Name, "PPC_GPR0");
   EXPECT_EQ(Names[0].Value, 1);
+
+  EXPECT_EQ(Names[100].Name, "PPC_VR0");
+  EXPECT_EQ(Names[100].Value, 1200);
+  EXPECT_EQ(Names.size(), 228U);
+  for (unsigned I = 0; I != 128; ++I)
+    EXPECT_EQ(Names[100 + I].Value, 1200 + 5 * I);
+  EXPECT_EQ(Names.back().Name, "PPC_VR127");
+  EXPECT_EQ(Names.back().Value, 1835);
 }
 
 TEST(PPCCodeViewTest, FramePointerRegisters) {

@@ -336,6 +336,16 @@ static std::string formatRegisterId(RegisterId Id, CPUType Cpu) {
     default:
       break;
     }
+    switch (Id) {
+#define CV_REGISTERS_PPC_XBOX
+#define CV_REGISTER(name, val) RETURN_CASE(RegisterId, name, #name)
+#include "llvm/DebugInfo/CodeView/CodeViewRegisters.def"
+#undef CV_REGISTER
+#undef CV_REGISTERS_PPC_XBOX
+
+    default:
+      break;
+    }
   } else {
     switch (Id) {
 #define CV_REGISTERS_X86

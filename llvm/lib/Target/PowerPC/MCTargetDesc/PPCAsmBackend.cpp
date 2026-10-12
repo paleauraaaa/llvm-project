@@ -14,7 +14,9 @@
 #include "llvm/MC/MCAsmBackend.h"
 #include "llvm/MC/MCAssembler.h"
 #include "llvm/MC/MCELFObjectWriter.h"
+#include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCFixupKindInfo.h"
+#include "llvm/MC/MCFragment.h"
 #include "llvm/MC/MCMachObjectWriter.h"
 #include "llvm/MC/MCObjectWriter.h"
 #include "llvm/MC/MCSubtargetInfo.h"
@@ -37,6 +39,9 @@ static uint64_t adjustFixupValue(unsigned Kind, uint64_t Value) {
   case FK_Data_8:
   case FK_SecRel_2:
   case FK_SecRel_4:
+  case PPC::fixup_ppc_codeview_data_2:
+  case PPC::fixup_ppc_codeview_data_4:
+  case PPC::fixup_ppc_codeview_data_8:
   case PPC::fixup_ppc_nofixup:
     return Value;
   case PPC::fixup_ppc_brcond14:
@@ -66,6 +71,7 @@ static unsigned getFixupKindNumBytes(unsigned Kind) {
   case FK_Data_1:
     return 1;
   case FK_Data_2:
+  case PPC::fixup_ppc_codeview_data_2:
   case FK_SecRel_2:
   case PPC::fixup_ppc_half16:
   case PPC::fixup_ppc_half16ds:
@@ -73,6 +79,7 @@ static unsigned getFixupKindNumBytes(unsigned Kind) {
     return 2;
   case FK_Data_4:
   case FK_SecRel_4:
+  case PPC::fixup_ppc_codeview_data_4:
   case PPC::fixup_ppc_brcond14:
   case PPC::fixup_ppc_brcond14abs:
   case PPC::fixup_ppc_br24:
@@ -82,6 +89,7 @@ static unsigned getFixupKindNumBytes(unsigned Kind) {
   case PPC::fixup_ppc_pcrel34:
   case PPC::fixup_ppc_imm34:
   case FK_Data_8:
+  case PPC::fixup_ppc_codeview_data_8:
     return 8;
   case PPC::fixup_ppc_nofixup:
     return 0;
@@ -89,6 +97,22 @@ static unsigned getFixupKindNumBytes(unsigned Kind) {
 }
 
 namespace {
+
+static bool isCodeViewSectionExpr(const MCExpr &Expr) {
+  if (MCFragment *Fragment = Expr.findAssociatedFragment())
+    if (MCSection *Section = Fragment->getParent())
+      if (Section->getName().starts_with(".debug$"))
+        return true;
+
+  if (Expr.getKind() == MCExpr::Binary) {
+    const auto &Binary = cast<MCBinaryExpr>(Expr);
+    return isCodeViewSectionExpr(*Binary.getLHS()) ||
+           isCodeViewSectionExpr(*Binary.getRHS());
+  }
+  if (Expr.getKind() == MCExpr::Unary)
+    return isCodeViewSectionExpr(*cast<MCUnaryExpr>(Expr).getSubExpr());
+  return false;
+}
 
 class PPCAsmBackend : public MCAsmBackend {
 protected:
@@ -104,6 +128,14 @@ public:
   }
 
   const MCFixupKindInfo &getFixupKindInfo(MCFixupKind Kind) const override {
+    if (Kind >= PPC::fixup_ppc_codeview_data_2 &&
+        Kind <= PPC::fixup_ppc_codeview_data_8) {
+      static const MCFixupKindInfo Infos[] = {
+          {"fixup_ppc_codeview_data_2", 0, 16, 0},
+          {"fixup_ppc_codeview_data_4", 0, 32, 0},
+          {"fixup_ppc_codeview_data_8", 0, 64, 0}};
+      return Infos[Kind - PPC::fixup_ppc_codeview_data_2];
+    }
     const static MCFixupKindInfo InfosBE[PPC::NumTargetFixupKinds] = {
       // name                    offset  bits  flags
       { "fixup_ppc_br24",        6,      24,   MCFixupKindInfo::FKF_IsPCRel },
@@ -163,13 +195,18 @@ public:
          Kind == PPC::fixup_ppc_half16dq))
       Offset += 2;
     unsigned NumBytes = getFixupKindNumBytes(Kind);
+    bool IsLittleEndianCodeView =
+        (Kind >= PPC::fixup_ppc_codeview_data_2 &&
+         Kind <= PPC::fixup_ppc_codeview_data_8) ||
+        (TT.isOSXbox360() && isCodeViewSectionExpr(*Fixup.getValue()));
 
     // For each byte of the fragment that the fixup touches, mask in the bits
     // from the fixup value. The Value has been "split up" into the appropriate
     // bitfields above.
     for (unsigned i = 0; i != NumBytes; ++i) {
-      unsigned Idx =
-          Endian == llvm::endianness::little ? i : (NumBytes - 1 - i);
+      unsigned Idx = Endian == llvm::endianness::little || IsLittleEndianCodeView
+                         ? i
+                         : (NumBytes - 1 - i);
       Data[Offset + i] |= uint8_t((Value >> (Idx * 8)) & 0xff);
     }
   }

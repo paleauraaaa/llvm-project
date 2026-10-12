@@ -52,7 +52,7 @@ unsigned getRegNumForOperand(const MCInstrDesc &Desc, unsigned Reg,
 
 } // namespace PPC
 
-void initLLVMToCVRegMapping(MCRegisterInfo *MRI);
+void initLLVMToCVRegMapping(MCRegisterInfo *MRI, bool IsXbox360);
 
 MCCodeEmitter *createPPCMCCodeEmitter(const MCInstrInfo &MCII,
                                       MCContext &Ctx);

@@ -13,6 +13,7 @@
 #ifndef LLVM_LIB_TARGET_PPC_MCWINCOFFSTREAMER_PPCWINCOFFSTREAMER_H
 #define LLVM_LIB_TARGET_PPC_MCWINCOFFSTREAMER_PPCWINCOFFSTREAMER_H
 
+#include "llvm/ADT/APInt.h"
 #include "llvm/MC/MCWinCOFFStreamer.h"
 
 namespace llvm {
@@ -23,6 +24,10 @@ public:
                    std::unique_ptr<MCObjectWriter> OW,
                    std::unique_ptr<MCCodeEmitter> Emitter);
 
+  void emitIntValue(uint64_t Value, unsigned Size) override;
+  void emitIntValue(const APInt &Value) override;
+  void emitValueImpl(const MCExpr *Value, unsigned Size,
+                     SMLoc Loc = SMLoc()) override;
   void emitInstruction(const MCInst &Inst, const MCSubtargetInfo &STI) override;
 
 private:

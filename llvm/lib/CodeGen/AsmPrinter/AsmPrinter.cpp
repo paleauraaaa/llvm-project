@@ -560,7 +560,8 @@ bool AsmPrinter::doInitialization(Module &M) {
 
   if (MAI->doesSupportDebugInformation()) {
     bool EmitCodeView = M.getCodeViewFlag();
-    if (EmitCodeView && TM.getTargetTriple().isOSWindows())
+    if (EmitCodeView && (TM.getTargetTriple().isOSWindows() ||
+                         TM.getTargetTriple().isOSXbox360()))
       Handlers.push_back(std::make_unique<CodeViewDebug>(this));
     if (!EmitCodeView || M.getDwarfVersion()) {
       if (hasDebugInfo()) {

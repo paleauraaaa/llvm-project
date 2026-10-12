@@ -111,8 +111,11 @@ private:
 };
 } // namespace
 
-static CPUType mapArchToCVCPUType(Triple::ArchType Type) {
-  switch (Type) {
+static CPUType mapArchToCVCPUType(const Triple &T) {
+  if (T.isOSXbox360())
+    return CPUType::PPC604;
+
+  switch (T.getArch()) {
   case Triple::ArchType::x86:
     return CPUType::Pentium3;
   case Triple::ArchType::x86_64:
@@ -134,7 +137,7 @@ static CPUType mapArchToCVCPUType(Triple::ArchType Type) {
   default:
     report_fatal_error("target architecture doesn't map to a CodeView CPUType");
   }
-}
+} 
 
 CodeViewDebug::CodeViewDebug(AsmPrinter *AP)
     : DebugHandlerBase(AP), OS(*Asm->OutStreamer), TypeTable(Allocator) {}
@@ -495,6 +498,11 @@ unsigned CodeViewDebug::getPointerSizeInBytes() {
 void CodeViewDebug::recordLocalVariable(LocalVariable &&Var,
                                         const LexicalScope *LS) {
   if (const DILocation *InlinedAt = LS->getInlinedAt()) {
+    if (isXbox360Target()) {
+      CurFn->Locals.emplace_back(std::move(Var));
+      return;
+    }
+
     // This variable was inlined. Associate it with the InlineSite.
     const DISubprogram *Inlinee = Var.DIVar->getScope()->getSubprogram();
     InlineSite &Site = getInlineSite(InlinedAt, Inlinee);
@@ -541,7 +549,8 @@ void CodeViewDebug::maybeRecordLocation(const DebugLoc &DL,
   PrevInstLoc = DL;
 
   unsigned FuncId = CurFn->FuncId;
-  if (const DILocation *SiteLoc = DL->getInlinedAt()) {
+  if (const DILocation *SiteLoc = DL->getInlinedAt();
+      SiteLoc && !isXbox360Target()) {
     const DILocation *Loc = DL.get();
 
     // If this location was actually inlined from somewhere else, give it the ID
@@ -571,6 +580,10 @@ void CodeViewDebug::emitCodeViewMagicVersion() {
   OS.emitValueToAlignment(Align(4));
   OS.AddComment("Debug section magic");
   OS.emitInt32(COFF::DEBUG_SECTION_MAGIC);
+}
+
+bool CodeViewDebug::isXbox360Target() const {
+  return Triple(MMI->getModule()->getTargetTriple()).isOSXbox360();
 }
 
 static SourceLanguage MapDWLangToCVLang(unsigned DWLang) {
@@ -625,7 +638,7 @@ void CodeViewDebug::beginModule(Module *M) {
     return;
   }
 
-  TheCPU = mapArchToCVCPUType(Triple(M->getTargetTriple()).getArch());
+  TheCPU = mapArchToCVCPUType(Triple(M->getTargetTriple()));
 
   // Get the current source language.
   const MDNode *Node = *M->debug_compile_units_begin();
@@ -697,10 +710,9 @@ void CodeViewDebug::endModule() {
   OS.AddComment("String table");
   OS.emitCVStringTableDirective();
 
-  // Emit S_BUILDINFO, which points to LF_BUILDINFO. Put this in its own symbol
-  // subsection in the generic .debug$S section at the end. There is no
-  // particular reason for this ordering other than to match MSVC.
-  emitBuildInfo();
+  // XDK's CodeView reader predates the ID records used by S_BUILDINFO.
+  if (!isXbox360Target())
+    emitBuildInfo();
 
   // Emit type information and hashes last, so that any types we translate while
   // emitting function info are included.
@@ -1068,8 +1080,9 @@ void CodeViewDebug::emitDebugInfoForThunk(const Function *GV,
   // Local variables/inlined routines are purposely omitted here.  The point of
   // marking this as a thunk is so Visual Studio will NOT stop in this routine.
 
-  // Emit S_PROC_ID_END
-  emitEndSymbolRecord(SymbolKind::S_PROC_ID_END);
+  // Terminate the thunk's symbol scope.
+  emitEndSymbolRecord(isXbox360Target() ? SymbolKind::S_END
+                                        : SymbolKind::S_PROC_ID_END);
 
   endCVSubsection(SymbolsEnd);
 }
@@ -1111,8 +1124,14 @@ void CodeViewDebug::emitDebugInfoForFunction(const Function *GV,
   OS.AddComment("Symbol subsection for " + Twine(FuncName));
   MCSymbol *SymbolsEnd = beginCVSubsection(DebugSubsectionKind::Symbols);
   {
-    SymbolKind ProcKind = GV->hasLocalLinkage() ? SymbolKind::S_LPROC32_ID
-                                                : SymbolKind::S_GPROC32_ID;
+    bool IsXbox360 = isXbox360Target();
+    SymbolKind ProcKind;
+    if (IsXbox360)
+      ProcKind = GV->hasLocalLinkage() ? SymbolKind::S_LPROC32
+                                       : SymbolKind::S_GPROC32;
+    else
+      ProcKind = GV->hasLocalLinkage() ? SymbolKind::S_LPROC32_ID
+                                       : SymbolKind::S_GPROC32_ID;
     MCSymbol *ProcRecordEnd = beginSymbolRecord(ProcKind);
 
     // These fields are filled in by tools like CVPACK which run after the fact.
@@ -1131,7 +1150,17 @@ void CodeViewDebug::emitDebugInfoForFunction(const Function *GV,
     OS.AddComment("Offset before epilogue");
     OS.emitInt32(0);
     OS.AddComment("Function type index");
-    OS.emitInt32(getFuncIdForSubprogram(GV->getSubprogram()).getIndex());
+    TypeIndex FunctionTypeIndex;
+    if (IsXbox360) {
+      if (const auto *Class =
+              dyn_cast_or_null<DICompositeType>(SP->getScope()))
+        FunctionTypeIndex = getMemberFunctionType(SP, Class);
+      else
+        FunctionTypeIndex = getTypeIndex(SP->getType());
+    } else {
+      FunctionTypeIndex = getFuncIdForSubprogram(SP);
+    }
+    OS.emitInt32(FunctionTypeIndex.getIndex());
     OS.AddComment("Function section relative address");
     OS.emitCOFFSecRel32(Fn, /*Offset=*/0);
     OS.AddComment("Function section index");
@@ -1224,7 +1253,8 @@ void CodeViewDebug::emitDebugInfoForFunction(const Function *GV,
     emitDebugInfoForJumpTables(FI);
 
     // We're done with this function.
-    emitEndSymbolRecord(SymbolKind::S_PROC_ID_END);
+    emitEndSymbolRecord(IsXbox360 ? SymbolKind::S_END
+                                  : SymbolKind::S_PROC_ID_END);
   }
   endCVSubsection(SymbolsEnd);
 
@@ -2215,6 +2245,10 @@ static ClassOptions getCommonClassOptions(const DICompositeType *Ty) {
 }
 
 void CodeViewDebug::addUDTSrcLine(const DIType *Ty, TypeIndex TI) {
+  // LF_UDT_SRC_LINE references LF_STRING_ID, which is not supported by XDK.
+  if (isXbox360Target())
+    return;
+
   switch (Ty->getTag()) {
   case dwarf::DW_TAG_class_type:
   case dwarf::DW_TAG_structure_type:
