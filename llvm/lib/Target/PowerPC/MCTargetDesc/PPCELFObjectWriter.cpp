@@ -65,6 +65,8 @@ static MCSymbolRefExpr::VariantKind getAccessVariant(const MCValue &Target,
     return MCSymbolRefExpr::VK_PPC_HIGHEST;
   case PPCMCExpr::VK_PPC_HIGHESTA:
     return MCSymbolRefExpr::VK_PPC_HIGHESTA;
+  case PPCMCExpr::VK_PPC_PDATA:
+    llvm_unreachable("Xbox .pdata expressions are not valid in ELF");
   }
   llvm_unreachable("unknown PPCMCExpr kind");
 }

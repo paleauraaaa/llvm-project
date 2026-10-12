@@ -1,0 +1,37 @@
+# RUN: split-file %s %t
+# RUN: llc -mtriple=powerpc64-ibm-xbox360 -mcpu=xenon -start-after=prologepilog -filetype=obj %t/valid.mir -o %t/valid.obj
+# RUN: llvm-readobj --sections --section-data %t/valid.obj | FileCheck %s --check-prefix=VALID
+# RUN: not llc -mtriple=powerpc64-ibm-xbox360 -mcpu=xenon -start-after=prologepilog -filetype=obj %t/invalid.mir -o %t/invalid.obj 2>&1 | FileCheck %s --check-prefix=INVALID
+
+# A stackmap shadow exercises the final emitted size of a single pseudo.
+# Its following return consumes four bytes of the requested shadow.
+# VALID: Name: .pdata
+# VALID: SectionData (
+# VALID-NEXT: 0000: 00000000 400100FF
+# INVALID: Xbox 360 function or prologue length cannot be represented in .pdata
+
+#--- valid.mir
+--- |
+  define void @valid() { ret void }
+...
+---
+name: valid
+tracksRegLiveness: true
+body: |
+  bb.0:
+    frame-setup STACKMAP 0, 1024
+    BLR8 implicit $lr8, implicit $rm
+...
+
+#--- invalid.mir
+--- |
+  define void @invalid() { ret void }
+...
+---
+name: invalid
+tracksRegLiveness: true
+body: |
+  bb.0:
+    frame-setup STACKMAP 0, 1028
+    BLR8 implicit $lr8, implicit $rm
+...

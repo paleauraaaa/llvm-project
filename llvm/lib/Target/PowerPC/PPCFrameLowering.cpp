@@ -17,6 +17,7 @@
 #include "PPCMachineFunctionInfo.h"
 #include "PPCSubtarget.h"
 #include "PPCTargetMachine.h"
+#include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/CodeGen/LivePhysRegs.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
@@ -737,6 +738,18 @@ void PPCFrameLowering::emitPrologue(MachineFunction &MF,
   bool isSVR4ABI = Subtarget.isSVR4ABI();
   bool isELFv2ABI = Subtarget.isELFv2ABI();
   bool isXbox360 = Subtarget.isTargetXbox360();
+  auto PrologueEnd = MBB.begin();
+  if (isXbox360)
+    while (PrologueEnd != MBB.end() &&
+           (PrologueEnd->getFlag(MachineInstr::FrameSetup) ||
+            PrologueEnd->isDebugInstr()))
+      ++PrologueEnd;
+  auto MarkXboxPrologue = make_scope_exit([&] {
+    if (isXbox360)
+      for (auto I = MBB.begin(); I != PrologueEnd; ++I)
+        if (!I->isDebugInstr())
+          I->setFlag(MachineInstr::FrameSetup);
+  });
   assert((isSVR4ABI || Subtarget.isAIXABI() || isXbox360) && "Unsupported PPC ABI.");
 
   // Work out frame sizes.
@@ -1032,7 +1045,10 @@ void PPCFrameLowering::emitPrologue(MachineFunction &MF,
   // If FrameSize <= TLI.getStackProbeSize(MF), as POWER ABI requires backchain
   // pointer is always stored at SP, we will get a free probe due to an essential
   // STU(X) instruction.
-  if (TLI.hasInlineStackProbe(MF) && FrameSize > TLI.getStackProbeSize(MF)) {
+  // Xbox reverse-execution metadata cannot describe a loop-shaped prologue.
+  // Its fixed frames use bounded page reads or the XDK stack-check helper.
+  if (!isXbox360 && TLI.hasInlineStackProbe(MF) &&
+      FrameSize > TLI.getStackProbeSize(MF)) {
     // To be consistent with other targets, a pseudo instruction is emitted and
     // will be later expanded in `inlineStackProbe`.
     BuildMI(MBB, isXbox360 ? StackUpdateLoc : MBBI, dl,
@@ -2243,8 +2259,7 @@ void PPCFrameLowering::processFunctionBeforeFrameFinalized(MachineFunction &MF,
   MachineFrameInfo &MFI = MF.getFrameInfo();
   const std::vector<CalleeSavedInfo> &CSI = MFI.getCalleeSavedInfo();
 
-  if (Subtarget.isTargetXbox360() &&
-      !Subtarget.getTargetLowering()->hasInlineStackProbe(MF)) {
+  if (Subtarget.isTargetXbox360()) {
     // The save areas still overlap here; include their combined extent and
     // room for scavenging/alignment before deciding whether to reserve LR.
     uint64_t GPRSaveSize = 0, FPRSaveSize = 0, VRSaveSize = 0;

@@ -26,7 +26,8 @@ public:
     VK_PPC_HIGHER,
     VK_PPC_HIGHERA,
     VK_PPC_HIGHEST,
-    VK_PPC_HIGHESTA
+    VK_PPC_HIGHESTA,
+    VK_PPC_PDATA
   };
 
 private:
@@ -35,6 +36,7 @@ private:
 
   int64_t evaluateAsInt64(int64_t Value) const;
 
+protected:
   explicit PPCMCExpr(VariantKind Kind, const MCExpr *Expr)
       : Kind(Kind), Expr(Expr) {}
 
@@ -85,6 +87,30 @@ public:
   static bool classof(const MCExpr *E) {
     return E->getKind() == MCExpr::Target;
   }
+};
+
+/// Packed Xbox runtime-function descriptor, validated after assembler layout.
+class PPCXboxPDataExpr final : public PPCMCExpr {
+  MCContext &Ctx;
+  const MCSymbol *Begin;
+  const MCSymbol *PrologueEnd;
+  const MCSymbol *End;
+
+  PPCXboxPDataExpr(MCContext &Ctx, const MCSymbol *Begin,
+                  const MCSymbol *PrologueEnd, const MCSymbol *End)
+      : PPCMCExpr(VK_PPC_PDATA, MCSymbolRefExpr::create(Begin, Ctx)), Ctx(Ctx),
+        Begin(Begin), PrologueEnd(PrologueEnd), End(End) {}
+
+public:
+  static const PPCXboxPDataExpr *create(MCContext &Ctx, const MCSymbol *Begin,
+                                        const MCSymbol *PrologueEnd,
+                                        const MCSymbol *End);
+  void printImpl(raw_ostream &OS, const MCAsmInfo *MAI) const override;
+  bool evaluateAsRelocatableImpl(MCValue &Res, const MCAssembler *Asm,
+                                 const MCFixup *Fixup) const override;
+  void visitUsedExpr(MCStreamer &Streamer) const override;
+  MCFragment *findAssociatedFragment() const override;
+  void fixELFSymbolsInTLSFixups(MCAssembler &) const override {}
 };
 } // end namespace llvm
 

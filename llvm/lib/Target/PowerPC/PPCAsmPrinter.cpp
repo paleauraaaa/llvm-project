@@ -32,6 +32,7 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Twine.h"
+#include "llvm/BinaryFormat/COFF.h"
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/CodeGen/AsmPrinter.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
@@ -53,6 +54,7 @@
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCInst.h"
 #include "llvm/MC/MCInstBuilder.h"
+#include "llvm/MC/MCSectionCOFF.h"
 #include "llvm/MC/MCSectionELF.h"
 #include "llvm/MC/MCSectionXCOFF.h"
 #include "llvm/MC/MCStreamer.h"
@@ -306,45 +308,136 @@ public:
 };
 
 class PPCXbox360AsmPrinter : public PPCAsmPrinter {
+  MCSymbol *UnwindBegin = nullptr;
+  MCSymbol *UnwindPrologueEnd = nullptr;
+  const MachineInstr *LastPrologueInst = nullptr;
+
 public:
   PPCXbox360AsmPrinter(TargetMachine &TM, std::unique_ptr<MCStreamer> Streamer)
       : PPCAsmPrinter(TM, std::move(Streamer)) {
     if (MAI->isLittleEndian())
-      report_fatal_error(
-          "cannot create Xbox 360 PPC Assembly Printer for a little-endian target");
+      report_fatal_error("cannot create Xbox 360 PPC Assembly Printer for a "
+                         "little-endian target");
   }
 
-  StringRef getPassName() const override { return "Xbox 360 PPC Assembly Printer"; }
+  StringRef getPassName() const override {
+    return "Xbox 360 PPC Assembly Printer";
+  }
 
-  // bool doInitialization(Module &M) override;
-
-  // void emitXXStructorList(const DataLayout &DL, const Constant *List,
-  //                         bool IsCtor) override;
-
-  // void SetupMachineFunction(MachineFunction &MF) override;
-
-  // void emitGlobalVariable(const GlobalVariable *GV) override;
-
-  // void emitFunctionDescriptor() override;
-
-  // void emitFunctionEntryLabel() override;
-
-  // void emitFunctionBodyEnd() override;
-
-  // void emitEndOfAsmFile(Module &) override;
-
-  // void emitLinkage(const GlobalValue *GV, MCSymbol *GVSym) const override;
-
-  // void emitInstruction(const MachineInstr *MI) override;
-
-  // bool doFinalization(Module &M) override;
-
-  // void emitTTypeReference(const GlobalValue *GV, unsigned Encoding) override;
-
-  // void emitModuleCommandLines(Module &M) override;
+  void emitFunctionBodyStart() override;
+  void emitInstruction(const MachineInstr *MI) override;
+  void emitFunctionBodyEnd() override;
 };
 
 } // end anonymous namespace
+
+void PPCXbox360AsmPrinter::emitFunctionBodyStart() {
+  UnwindBegin = nullptr;
+  UnwindPrologueEnd = nullptr;
+  LastPrologueInst = nullptr;
+  const Function &F = MF->getFunction();
+  if (F.hasFnAttribute(Attribute::Naked))
+    return;
+  if (F.hasPersonalityFn())
+    report_fatal_error(
+        "Xbox 360 handler-bearing unwind records are not supported");
+  if (MF->hasBBSections())
+    report_fatal_error("Xbox 360 unwind records require contiguous functions");
+
+  for (const MachineInstr &MI : MF->front())
+    if (MI.getFlag(MachineInstr::FrameSetup))
+      LastPrologueInst = &MI;
+  for (const MachineInstr &MI : MF->front()) {
+    if (!LastPrologueInst)
+      break;
+    if (!MI.isMetaInstruction()) {
+      if (MI.isInlineAsm())
+        report_fatal_error(
+            "Xbox 360 inline assembly prologues require explicit "
+            "unwind metadata");
+      if (MI.mayStore()) {
+        unsigned BaseOperand;
+        switch (MI.getOpcode()) {
+        case PPC::STW:
+        case PPC::STW8:
+        case PPC::STD:
+        case PPC::STFD:
+          BaseOperand = 2;
+          break;
+        case PPC::STVX:
+        case PPC::STVX128:
+          BaseOperand = 1;
+          break;
+        case PPC::STWU:
+        case PPC::STWU8:
+          BaseOperand = 3;
+          break;
+        case PPC::STWUX:
+        case PPC::STWUX8:
+          BaseOperand = 2;
+          break;
+        case PPC::XBOX_STACK_PROBE:
+          BaseOperand = 0;
+          break;
+        default:
+          report_fatal_error("Xbox 360 prologue contains an unsupported state "
+                             "save instruction");
+        }
+        if (BaseOperand && MI.getOperand(BaseOperand).getReg() != PPC::R1 &&
+            MI.getOperand(BaseOperand).getReg() != PPC::X1)
+          report_fatal_error("Xbox 360 prologue saves must be based on r1");
+      }
+      if (MI.modifiesRegister(PPC::R1, Subtarget->getRegisterInfo()) &&
+          MI.getOpcode() != PPC::STWU && MI.getOpcode() != PPC::STWU8 &&
+          MI.getOpcode() != PPC::STWUX && MI.getOpcode() != PPC::STWUX8)
+        report_fatal_error(
+            "Xbox 360 prologue stack updates must use stwu or stwux");
+    }
+    if (&MI == LastPrologueInst)
+      break;
+  }
+  for (const MachineBasicBlock &MBB : *MF)
+    if (&MBB != &MF->front())
+      for (const MachineInstr &MI : MBB)
+        if (MI.getFlag(MachineInstr::FrameSetup))
+          report_fatal_error(
+              "Xbox 360 unwind prologue must be in the entry block");
+
+  UnwindBegin = OutContext.createNamedTempSymbol("xbox_begin");
+  UnwindPrologueEnd = OutContext.createNamedTempSymbol("xbox_prologue_end");
+  OutStreamer->emitLabel(UnwindBegin);
+  if (!LastPrologueInst)
+    OutStreamer->emitLabel(UnwindPrologueEnd);
+}
+
+void PPCXbox360AsmPrinter::emitInstruction(const MachineInstr *MI) {
+  PPCAsmPrinter::emitInstruction(MI);
+  if (UnwindBegin && MI == LastPrologueInst)
+    OutStreamer->emitLabel(UnwindPrologueEnd);
+}
+
+void PPCXbox360AsmPrinter::emitFunctionBodyEnd() {
+  if (!UnwindBegin)
+    return;
+  if (!UnwindPrologueEnd->isDefined())
+    report_fatal_error("Xbox 360 unwind prologue end was not emitted");
+  MCSymbol *End = OutContext.createNamedTempSymbol("xbox_end");
+  OutStreamer->emitLabel(End);
+  MCSection *Text = OutStreamer->getCurrentSectionOnly();
+  auto *TextCOFF = cast<MCSectionCOFF>(Text);
+  MCSectionCOFF *PData =
+      OutContext.getCOFFSection(".pdata", COFF::IMAGE_SCN_CNT_INITIALIZED_DATA |
+                                              COFF::IMAGE_SCN_MEM_READ);
+  if (TextCOFF->getCharacteristics() & COFF::IMAGE_SCN_LNK_COMDAT)
+    PData = OutContext.getAssociativeCOFFSection(PData, CurrentFnSym, 0);
+  OutStreamer->switchSection(PData);
+  OutStreamer->emitValueToAlignment(Align(4));
+  OutStreamer->emitSymbolValue(UnwindBegin, 4);
+  OutStreamer->emitValue(
+      PPCXboxPDataExpr::create(OutContext, UnwindBegin, UnwindPrologueEnd, End),
+      4);
+  OutStreamer->switchSection(Text);
+}
 
 void PPCAsmPrinter::PrintSymbolOperand(const MachineOperand &MO,
                                        raw_ostream &O) {
