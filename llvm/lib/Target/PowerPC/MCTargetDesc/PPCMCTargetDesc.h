@@ -52,6 +52,8 @@ unsigned getRegNumForOperand(const MCInstrDesc &Desc, unsigned Reg,
 
 } // namespace PPC
 
+void initLLVMToCVRegMapping(MCRegisterInfo *MRI);
+
 MCCodeEmitter *createPPCMCCodeEmitter(const MCInstrInfo &MCII,
                                       MCContext &Ctx);
 

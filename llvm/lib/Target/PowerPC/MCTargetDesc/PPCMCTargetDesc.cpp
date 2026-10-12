@@ -21,6 +21,7 @@
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/BinaryFormat/ELF.h"
+#include "llvm/DebugInfo/CodeView/CodeView.h"
 #include "llvm/MC/MCAsmBackend.h"
 #include "llvm/MC/MCAssembler.h"
 #include "llvm/MC/MCCodeEmitter.h"
@@ -57,6 +58,40 @@ using namespace llvm;
 
 #define GET_REGINFO_MC_DESC
 #include "PPCGenRegisterInfo.inc"
+
+void llvm::initLLVMToCVRegMapping(MCRegisterInfo *MRI) {
+  for (unsigned I = 0; I != 32; ++I) {
+    const auto GPR = static_cast<codeview::RegisterId>(
+        static_cast<unsigned>(codeview::RegisterId::PPC_GPR0) + I);
+    MRI->mapLLVMRegToCVReg(PPC::R0 + I, static_cast<int>(GPR));
+    MRI->mapLLVMRegToCVReg(PPC::X0 + I, static_cast<int>(GPR));
+
+    const auto FPR = static_cast<codeview::RegisterId>(
+        static_cast<unsigned>(codeview::RegisterId::PPC_FPR0) + I);
+    MRI->mapLLVMRegToCVReg(PPC::F0 + I, static_cast<int>(FPR));
+  }
+
+  const MCPhysReg CRs[] = {PPC::CR0, PPC::CR1, PPC::CR2, PPC::CR3,
+                           PPC::CR4, PPC::CR5, PPC::CR6, PPC::CR7};
+  for (unsigned I = 0; I != 8; ++I) {
+    const auto CR = static_cast<codeview::RegisterId>(
+        static_cast<unsigned>(codeview::RegisterId::PPC_CR0) + I);
+    MRI->mapLLVMRegToCVReg(CRs[I], static_cast<int>(CR));
+  }
+
+  MRI->mapLLVMRegToCVReg(PPC::LR,
+                         static_cast<int>(codeview::RegisterId::PPC_LR));
+  MRI->mapLLVMRegToCVReg(PPC::LR8,
+                         static_cast<int>(codeview::RegisterId::PPC_LR));
+  MRI->mapLLVMRegToCVReg(PPC::CTR,
+                         static_cast<int>(codeview::RegisterId::PPC_CTR));
+  MRI->mapLLVMRegToCVReg(PPC::CTR8,
+                         static_cast<int>(codeview::RegisterId::PPC_CTR));
+  MRI->mapLLVMRegToCVReg(PPC::XER,
+                         static_cast<int>(codeview::RegisterId::PPC_XER));
+  MRI->mapLLVMRegToCVReg(PPC::CARRY,
+                         static_cast<int>(codeview::RegisterId::PPC_XER));
+}
 
 /// stripRegisterPrefix - This method strips the character prefix from a
 /// register name so that only the number is left.  Used by for linux asm.
@@ -161,6 +196,7 @@ static MCRegisterInfo *createPPCMCRegisterInfo(const Triple &TT) {
 
   MCRegisterInfo *X = new MCRegisterInfo();
   InitPPCMCRegisterInfo(X, RA, Flavour, Flavour);
+  initLLVMToCVRegMapping(X);
   return X;
 }
 

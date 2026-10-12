@@ -323,6 +323,19 @@ static std::string formatRegisterId(RegisterId Id, CPUType Cpu) {
     default:
       break;
     }
+  } else if (Cpu == CPUType::PPC601 || Cpu == CPUType::PPC603 ||
+             Cpu == CPUType::PPC604 || Cpu == CPUType::PPC620 ||
+             Cpu == CPUType::PPCFP || Cpu == CPUType::PPCBE) {
+    switch (Id) {
+#define CV_REGISTERS_PPC
+#define CV_REGISTER(name, val) RETURN_CASE(RegisterId, name, #name)
+#include "llvm/DebugInfo/CodeView/CodeViewRegisters.def"
+#undef CV_REGISTER
+#undef CV_REGISTERS_PPC
+
+    default:
+      break;
+    }
   } else {
     switch (Id) {
 #define CV_REGISTERS_X86
