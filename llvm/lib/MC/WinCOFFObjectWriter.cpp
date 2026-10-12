@@ -985,7 +985,6 @@ void WinCOFFWriter::recordRelocation(MCAssembler &Asm,
     case COFF::IMAGE_REL_PPC_ADDR32:
     case COFF::IMAGE_REL_PPC_ADDR32NB:
     case COFF::IMAGE_REL_PPC_ADDR64:
-    case COFF::IMAGE_REL_PPC_REL14:
     case COFF::IMAGE_REL_PPC_SECREL16:
     case COFF::IMAGE_REL_PPC_SECRELLO:
     case COFF::IMAGE_REL_PPC_SECTION:
@@ -994,6 +993,7 @@ void WinCOFFWriter::recordRelocation(MCAssembler &Asm,
     case COFF::IMAGE_REL_PPC_REFLO:
       break;
     case COFF::IMAGE_REL_PPC_REL24:
+    case COFF::IMAGE_REL_PPC_REL14:
       // PPC COFF branch addends are relative to the input section's start.
       // The linker supplies the section-base delta, not the call-site delta.
       FixedValue -= Reloc.Data.VirtualAddress;
