@@ -199,6 +199,9 @@ class ModulePass;
 
     /// MO_GOT_PCREL_FLAG = MO_PCREL_FLAG | MO_GOT_FLAG
     MO_GOT_PCREL_FLAG,
+
+    /// Signed 16-bit section-relative offset into the Xbox TLS template.
+    MO_SECREL,
   };
   } // end namespace PPCII
 

@@ -3403,12 +3403,32 @@ SDValue PPCTargetLowering::LowerBlockAddress(SDValue Op,
 SDValue PPCTargetLowering::LowerGlobalTLSAddress(SDValue Op,
                                               SelectionDAG &DAG) const {
   if (Subtarget.getTargetTriple().isXbox360())
-    llvm_unreachable("TLS unimplemented for Xbox 360.");
+    return LowerGlobalTLSAddressXbox360(Op, DAG);
 
   if (Subtarget.isAIXABI())
     return LowerGlobalTLSAddressAIX(Op, DAG);
 
   return LowerGlobalTLSAddressLinux(Op, DAG);
+}
+
+SDValue PPCTargetLowering::LowerGlobalTLSAddressXbox360(
+    SDValue Op, SelectionDAG &DAG) const {
+  auto *GA = cast<GlobalAddressSDNode>(Op);
+  if (DAG.getTarget().useEmulatedTLS())
+    return LowerToTLSEmulatedModel(GA, DAG);
+
+  SDLoc DL(Op);
+  EVT PtrVT = getPointerTy(DAG.getDataLayout());
+  SDValue ThreadPointer = DAG.getRegister(PPC::X13, MVT::i64);
+  SDValue Block = DAG.getLoad(PtrVT, DL, DAG.getEntryNode(), ThreadPointer,
+                             MachinePointerInfo(), Align(4));
+  SDValue Symbol = DAG.getTargetGlobalAddress(GA->getGlobal(), DL, PtrVT, 0,
+                                            PPCII::MO_SECREL);
+  SDValue Offset = SDValue(DAG.getMachineNode(PPC::LI, DL, PtrVT, Symbol), 0);
+  SDValue Address = DAG.getNode(ISD::ADD, DL, PtrVT, Block, Offset);
+  // Element offsets must not overflow the signed SECREL16 symbol relocation.
+  return DAG.getNode(ISD::ADD, DL, PtrVT, Address,
+                     DAG.getConstant(GA->getOffset(), DL, PtrVT));
 }
 
 /// updateForAIXShLibTLSModelOpt - Helper to initialize TLS model opt settings,

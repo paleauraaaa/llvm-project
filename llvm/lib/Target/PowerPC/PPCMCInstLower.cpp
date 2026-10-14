@@ -59,6 +59,9 @@ static MCOperand GetSymbolRef(const MachineOperand &MO, const MCSymbol *Symbol,
   unsigned access = MO.getTargetFlags();
 
   switch (access) {
+    case PPCII::MO_SECREL:
+      RefKind = MCSymbolRefExpr::VK_SECREL;
+      break;
     case PPCII::MO_TPREL_LO:
       RefKind = MCSymbolRefExpr::VK_PPC_TPREL_LO;
       break;

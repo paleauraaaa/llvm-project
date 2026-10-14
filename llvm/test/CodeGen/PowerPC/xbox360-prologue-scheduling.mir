@@ -1,0 +1,82 @@
+# RUN: llc -mtriple=powerpc64-ibm-xbox360 -mcpu=xenon -run-pass=postmisched -verify-machineinstrs %s -o - | FileCheck %s
+# RUN: llc -mtriple=powerpc64-ibm-xbox360 -mcpu=xenon -start-before=postmisched -verify-machineinstrs %s -o - | FileCheck %s --check-prefix=ASM
+# RUN: llc -mtriple=powerpc64-ibm-xbox360 -mcpu=xenon -start-before=postmisched -verify-machineinstrs -filetype=obj %s -o %t.obj
+# RUN: llvm-readobj --sections --section-data %t.obj | FileCheck %s --check-prefix=OBJ
+
+--- |
+  define void @saved_before_body() { ret void }
+  define void @saved_before_vector_store() { ret void }
+...
+---
+name: saved_before_body
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $x14, $x15, $x3, $x4
+    frame-setup STD killed $x14, -152, $x1
+    frame-setup STD killed $x15, -144, $x1
+    $x14 = ADDI8 $x3, 32
+    $x15 = ADDI8 $x4, 48
+    STB8 killed $x15, 0, $x14
+    $x14 = frame-destroy LD -152, $x1
+    $x15 = frame-destroy LD -144, $x1
+    BLR8 implicit $lr8, implicit $rm, implicit $x14, implicit $x15
+...
+
+# CHECK-LABEL: name: saved_before_body
+# CHECK: frame-setup STD
+# CHECK-NEXT: frame-setup STD
+# CHECK-NEXT: $x14 = ADDI8
+# CHECK: STB8
+# CHECK-NEXT: $x14 = frame-destroy LD
+# CHECK-NEXT: $x15 = frame-destroy LD
+# CHECK-NEXT: BLR8
+
+# ASM-LABEL: saved_before_body:
+# ASM: std 14, -152(1)
+# ASM-NEXT: std 15, -144(1)
+# ASM-NEXT: Lxbox_prologue_end{{[0-9]+}}:
+# ASM-NEXT: addi 14, 3, 32
+# ASM: stb
+# ASM-NEXT: ld 14, -152(1)
+# ASM-NEXT: ld 15, -144(1)
+# ASM-NEXT: blr
+
+---
+name: saved_before_vector_store
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $x14, $x15, $x3, $v1
+    frame-setup STD killed $x14, -152, $x1
+    frame-setup STD killed $x15, -144, $x1
+    $x12 = ADDI8 $x1, -128
+    STVX killed $v1, $zero8, killed $x12
+    $x14 = ADDI8 $x3, 32
+    STW8 killed $x14, 0, $x1
+    $x14 = frame-destroy LD -152, $x1
+    $x15 = frame-destroy LD -144, $x1
+    BLR8 implicit $lr8, implicit $rm, implicit $x14, implicit $x15
+...
+
+# CHECK-LABEL: name: saved_before_vector_store
+# CHECK: frame-setup STD
+# CHECK-NEXT: frame-setup STD
+# CHECK-NOT: frame-setup
+# CHECK: STVX
+# CHECK: $x14 = frame-destroy LD
+# CHECK-NEXT: $x15 = frame-destroy LD
+# CHECK-NEXT: BLR8
+
+# ASM-LABEL: saved_before_vector_store:
+# ASM: std 14, -152(1)
+# ASM-NEXT: std 15, -144(1)
+# ASM-NEXT: Lxbox_prologue_end{{[0-9]+}}:
+# ASM-NOT: Lxbox_prologue_end
+# ASM: stvx 1, 0, 12
+
+# OBJ: Name: .pdata
+# OBJ-NOT: Name:
+# OBJ: RawDataSize: 16
+# OBJ: SectionData (
+# OBJ-NEXT: 0000: 00000000 40000802 00000020 40000902
