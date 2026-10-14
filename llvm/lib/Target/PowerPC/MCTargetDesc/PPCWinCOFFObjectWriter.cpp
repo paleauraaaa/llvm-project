@@ -103,7 +103,7 @@ unsigned PPCWinCOFFObjectWriter::getRelocType(MCContext &Ctx, const MCValue &Tar
     case MCSymbolRefExpr::VK_PPC_HA:
       return llvm::COFF::IMAGE_REL_PPC_REFHI;
     case MCSymbolRefExpr::VK_SECREL:
-      return llvm::COFF::IMAGE_REL_PPC_SECRELLO;
+      return llvm::COFF::IMAGE_REL_PPC_SECREL16;
     default:
       ;
     }

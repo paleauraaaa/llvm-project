@@ -2201,6 +2201,13 @@ bool PPCInstrInfo::isPredicated(const MachineInstr &MI) const {
 bool PPCInstrInfo::isSchedulingBoundary(const MachineInstr &MI,
                                         const MachineBasicBlock *MBB,
                                         const MachineFunction &MF) const {
+  // Xbox unwind metadata describes a contiguous, reverse-executable prologue.
+  // Keep body instructions out of it and preserve the restore sequence too.
+  if (MF.getSubtarget<PPCSubtarget>().isTargetXbox360() &&
+      (MI.getFlag(MachineInstr::FrameSetup) ||
+       MI.getFlag(MachineInstr::FrameDestroy)))
+    return true;
+
   switch (MI.getOpcode()) {
   default:
     break;
@@ -3040,6 +3047,7 @@ PPCInstrInfo::getSerializableDirectMachineOperandTargetFlags() const {
       {MO_TPREL_PCREL_FLAG, "ppc-tprel-pcrel"},
       {MO_TLS_PCREL_FLAG, "ppc-tls-pcrel"},
       {MO_GOT_PCREL_FLAG, "ppc-got-pcrel"},
+      {MO_SECREL, "ppc-secrel"},
   };
   return ArrayRef(TargetFlags);
 }

@@ -9,9 +9,9 @@ define void @saved() nounwind {
 
 ; ASM-LABEL: saved:
 ; ASM: Lxbox_begin{{[0-9]+}}:
-; ASM: li [[INDEX:[0-9]+]], {{-?[0-9]+}}
 ; ASM-DAG: std 14, {{-?[0-9]+}}(1)
 ; ASM-DAG: stfd 14, {{-?[0-9]+}}(1)
+; ASM: li [[INDEX:[0-9]+]], {{-?[0-9]+}}
 ; ASM: stvx128 64, 1, [[INDEX]]
 ; ASM-NEXT: Lxbox_prologue_end{{[0-9]+}}:
 ; ASM: blr

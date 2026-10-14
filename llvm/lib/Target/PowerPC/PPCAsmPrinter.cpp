@@ -327,9 +327,20 @@ public:
   void emitFunctionBodyStart() override;
   void emitInstruction(const MachineInstr *MI) override;
   void emitFunctionBodyEnd() override;
+  void emitEndOfAsmFile(Module &M) override;
 };
 
 } // end anonymous namespace
+
+void PPCXbox360AsmPrinter::emitEndOfAsmFile(Module &M) {
+  if (!TM.useEmulatedTLS() &&
+      llvm::any_of(M.globals(), [](const GlobalVariable &GV) {
+        return GV.isThreadLocal();
+      }))
+    OutStreamer->emitSymbolAttribute(OutContext.getOrCreateSymbol("_tls_index"),
+                                    MCSA_Global);
+  PPCAsmPrinter::emitEndOfAsmFile(M);
+}
 
 void PPCXbox360AsmPrinter::emitFunctionBodyStart() {
   UnwindBegin = nullptr;
