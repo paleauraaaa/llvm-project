@@ -505,13 +505,49 @@ bool PPCFrameLowering::needsXboxEHStackPointer(const MachineFunction &MF) const 
 StackOffset PPCFrameLowering::getFrameIndexReference(const MachineFunction &MF,
                                                    int FI,
                                                    Register &FrameReg) const {
+  return getXboxEHFrameIndexReference(
+      MF, FI, MF.getInfo<PPCFunctionInfo>()->isXboxEHFuncletSpillSlot(FI),
+      FrameReg);
+}
+
+StackOffset PPCFrameLowering::getXboxEHFrameIndexReference(
+    const MachineFunction &MF, int FI, bool IsFunclet, Register &FrameReg) const {
   StackOffset Offset =
       TargetFrameLowering::getFrameIndexReference(MF, FI, FrameReg);
   if (Subtarget.isTargetXbox360() && MF.hasEHFunclets() &&
       MF.getFrameInfo().isSpillSlotObjectIndex(FI) &&
-      !MF.getInfo<PPCFunctionInfo>()->isSharedXboxEHSpillSlot(FI))
+      !MF.getInfo<PPCFunctionInfo>()->isSharedXboxEHSpillSlot(FI)) {
     FrameReg = needsXboxEHStackPointer(MF) ? PPC::X30 : PPC::X1;
+    if (IsFunclet) {
+      const auto *PFI = MF.getInfo<PPCFunctionInfo>();
+      Offset = StackOffset::getFixed((int64_t)PFI->getXboxEHFuncletFrameSize() +
+                                    PFI->getXboxEHSpillOffset(FI));
+    }
+  }
   return Offset;
+}
+
+void PPCFrameLowering::calculateXboxEHFuncletFrame(MachineFunction &MF) const {
+  const MachineFrameInfo &MFI = MF.getFrameInfo();
+  auto *PFI = MF.getInfo<PPCFunctionInfo>();
+  uint64_t Size = PFI->mustSaveLR() ? getReturnSaveOffset() : 0;
+  Size = std::max(
+      Size, uint64_t(-MFI.getObjectOffset(PFI->getFramePointerSaveIndex())));
+  for (const CalleeSavedInfo &CS : MFI.getCalleeSavedInfo())
+    if (!CS.isSpilledToReg() && MFI.getObjectOffset(CS.getFrameIdx()) < 0)
+      Size = std::max(Size, (uint64_t)(-MFI.getObjectOffset(CS.getFrameIdx())));
+
+  // Keep private spills separate from the parent's locals and shared spills.
+  // Include emergency scavenging slots, which can be used in any EH scope.
+  for (int FI = 0, E = MFI.getObjectIndexEnd(); FI != E; ++FI) {
+    if (MFI.isDeadObjectIndex(FI) || !MFI.isSpillSlotObjectIndex(FI) ||
+        PFI->isSharedXboxEHSpillSlot(FI))
+      continue;
+    Size = alignTo(Size + MFI.getObjectSize(FI), MFI.getObjectAlign(FI));
+    PFI->setXboxEHSpillOffset(FI, -(int64_t)Size);
+  }
+  Size += MFI.getMaxCallFrameSize();
+  PFI->setXboxEHFuncletFrameSize(alignTo(Size, getStackAlign()));
 }
 
 void PPCFrameLowering::replaceFPWithRealFP(MachineFunction &MF) const {
@@ -776,6 +812,12 @@ void PPCFrameLowering::emitPrologue(MachineFunction &MF,
   // Work out frame sizes.
   uint64_t FrameSize =
       IsXboxFunclet ? MFI.getStackSize() : determineFrameLayoutAndUpdate(MF);
+  if (isXbox360 && MF.hasEHFunclets()) {
+    if (!IsXboxFunclet)
+      calculateXboxEHFuncletFrame(MF);
+    else
+      FrameSize = MF.getInfo<PPCFunctionInfo>()->getXboxEHFuncletFrameSize();
+  }
   int64_t NegFrameSize = -FrameSize;
   if (!isPPC64 && (!isInt<32>(FrameSize) || !isInt<32>(NegFrameSize)))
     llvm_unreachable("Unhandled stack size!");
@@ -785,6 +827,9 @@ void PPCFrameLowering::emitPrologue(MachineFunction &MF,
 
   // Check if the link register (LR) must be saved.
   PPCFunctionInfo *FI = MF.getInfo<PPCFunctionInfo>();
+  bool UseXboxStackProbe =
+      FI->usesXboxStackProbe() &&
+      (!IsXboxFunclet || FrameSize >= XboxInlineProbeLimit);
   bool MustSaveLR = FI->mustSaveLR();
   bool MustSaveTOC = FI->mustSaveTOC();
   const SmallVectorImpl<Register> &MustSaveCRs = FI->getMustSaveCRs();
@@ -962,17 +1007,17 @@ void PPCFrameLowering::emitPrologue(MachineFunction &MF,
         .addImm(FPOffset)
         .addReg(SPReg);
     // Recover the parent frame before the LR/CR saves clobber r12.
-    if (isInt<16>(NegFrameSize)) {
+    int64_t ParentOffset = -(int64_t)MFI.getStackSize();
+    if (isInt<16>(ParentOffset)) {
       BuildMI(MBB, MBBI, dl, TII.get(PPC::ADDI8), FPReg)
           .addReg(PPC::X12)
-          .addImm(NegFrameSize);
+          .addImm(ParentOffset);
     } else {
-      TII.materializeImmPostRA(MBB, MBBI, dl, PPC::X0, NegFrameSize);
+      TII.materializeImmPostRA(MBB, MBBI, dl, PPC::X0, ParentOffset);
       BuildMI(MBB, MBBI, dl, TII.get(PPC::ADD8), FPReg)
           .addReg(PPC::X12)
           .addReg(PPC::X0);
     }
-  }
 
   // If we need to spill the CR and the LR but we don't have two separate
   // registers available, we must spill them one at a time
@@ -1119,7 +1164,7 @@ void PPCFrameLowering::emitPrologue(MachineFunction &MF,
     }
   } else {
     auto EmitXboxProbe = [&]() {
-      if (!FI->usesXboxStackProbe())
+      if (!UseXboxStackProbe)
         return;
       if (ScratchReg != PPC::X12)
         BuildMI(MBB, StackUpdateLoc, dl, TII.get(PPC::OR8), PPC::X12)
@@ -1129,7 +1174,7 @@ void PPCFrameLowering::emitPrologue(MachineFunction &MF,
           .addExternalSymbol("_RtlCheckStack12");
       ScratchReg = PPC::X12;
     };
-    if (isXbox360 && !FI->usesXboxStackProbe()) {
+    if (isXbox360 && !UseXboxStackProbe) {
       for (uint64_t Offset = XboxStackProbeSize; Offset < FrameSize;
            Offset += XboxStackProbeSize)
         BuildMI(MBB, StackUpdateLoc, dl, TII.get(PPC::LD), ScratchReg)
@@ -1167,7 +1212,7 @@ void PPCFrameLowering::emitPrologue(MachineFunction &MF,
           .addReg(SPReg, RegState::Kill)
           .addReg(SPReg)
           .addReg(ScratchReg);
-    } else if (!isLargeFrame && !FI->usesXboxStackProbe()) {
+    } else if (!isLargeFrame && !UseXboxStackProbe) {
       BuildMI(MBB, StackUpdateLoc, dl, StoreUpdtInst, SPReg)
           .addReg(SPReg)
           .addImm(NegFrameSize)
@@ -1783,6 +1828,8 @@ void PPCFrameLowering::emitEpilogue(MachineFunction &MF,
 
   // Get the number of bytes allocated from the FrameInfo.
   int64_t FrameSize = MFI.getStackSize();
+  if (isXbox360 && MF.getInfo<PPCFunctionInfo>()->isXboxEHFuncletBlock(&MBB))
+    FrameSize = MF.getInfo<PPCFunctionInfo>()->getXboxEHFuncletFrameSize();
 
   // Check if the link register (LR) has been saved.
   PPCFunctionInfo *FI = MF.getInfo<PPCFunctionInfo>();
@@ -2333,6 +2380,9 @@ void PPCFrameLowering::processFunctionBeforeFrameFinalized(MachineFunction &MF,
     for (const MachineBasicBlock &MBB : MF) {
       auto Scope = Scopes.find(&MBB);
       assert(Scope != Scopes.end() && "Missing Xbox EH scope");
+      bool IsFunclet = Scope->second != MF.front().getNumber();
+      if (IsFunclet)
+        FI->addXboxEHFuncletBlock(&MBB);
       for (const MachineInstr &MI : MBB)
         for (const MachineOperand &MO : MI.operands()) {
           if (!MO.isFI() ||
@@ -2340,6 +2390,8 @@ void PPCFrameLowering::processFunctionBeforeFrameFinalized(MachineFunction &MF,
             continue;
           auto [It, Inserted] =
               SpillScopes.try_emplace(MO.getIndex(), Scope->second);
+          if (IsFunclet)
+            FI->addXboxEHFuncletSpillSlot(MO.getIndex());
           if (!Inserted && It->second != Scope->second)
             FI->addSharedXboxEHSpillSlot(MO.getIndex());
         }

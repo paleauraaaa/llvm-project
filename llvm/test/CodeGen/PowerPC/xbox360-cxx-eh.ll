@@ -23,7 +23,7 @@ declare void @use(ptr)
 ; CHECK: .long __CxxFrameHandler
 ; CHECK-NEXT: .long ($cppxdata$catch_int)
 ; CHECK: addi 31, 12, -[[FRAME]]
-; CHECK: stwu 1, -[[FRAME]](1)
+; CHECK: stwu 1, -{{[0-9]+}}(1)
 ; CHECK: lwz {{[0-9]+}}, {{[0-9]+}}(31)
 ; CHECK: lis 3, {{.*}}@ha
 ; CHECK-NEXT: addi 3, 3, {{.*}}@l
@@ -102,7 +102,12 @@ unwind:
 ; CHECK: lis 0, -1
 ; CHECK: ori 0, 0, {{[0-9]+}}
 ; CHECK: add 31, 12, 0
-; CHECK: stwux 1, 1, {{[0-9]+}}
+; The funclet needs only its private frame, not another 40 KB of parent locals.
+; CHECK-NOT: bl _RtlCheckStack12
+; CHECK: stwu 1, -[[PRIVATE:96|112]](1)
+; CHECK-NOT: bl _RtlCheckStack12
+; CHECK: bl destroy
+; CHECK: addi 1, 1, [[PRIVATE]]
 ; CHECK: blr
 ; CHECK: .long (0x40000000
 ; CHECK: $cppxdata$large_frame:

@@ -13,7 +13,9 @@
 #ifndef LLVM_LIB_TARGET_POWERPC_PPCMACHINEFUNCTIONINFO_H
 #define LLVM_LIB_TARGET_POWERPC_PPCMACHINEFUNCTIONINFO_H
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/CodeGen/CallingConvLower.h"
 #include "llvm/CodeGen/MachineFunction.h"
@@ -70,6 +72,10 @@ private:
   /// Whether the fixed frame requires a runtime probe in its prologue.
   bool UsesXboxStackProbe = false;
   SmallDenseSet<int, 4> SharedXboxEHSpillSlots;
+  SmallDenseSet<int, 4> XboxEHFuncletSpillSlots;
+  SmallPtrSet<const MachineBasicBlock *, 8> XboxEHFuncletBlocks;
+  DenseMap<int, int64_t> XboxEHSpillOffsets;
+  uint64_t XboxEHFuncletFrameSize = 0;
 
   /// MustSaveTOC - Indicates that the TOC save needs to be performed in the
   /// prologue of the function. This is typically the case when there are
@@ -219,6 +225,28 @@ public:
   bool isSharedXboxEHSpillSlot(int FI) const {
     return SharedXboxEHSpillSlots.contains(FI);
   }
+  void addXboxEHFuncletSpillSlot(int FI) { XboxEHFuncletSpillSlots.insert(FI); }
+  bool isXboxEHFuncletSpillSlot(int FI) const {
+    return XboxEHFuncletSpillSlots.contains(FI);
+  }
+  void addXboxEHFuncletBlock(const MachineBasicBlock *MBB) {
+    XboxEHFuncletBlocks.insert(MBB);
+  }
+  bool isXboxEHFuncletBlock(const MachineBasicBlock *MBB) const {
+    return XboxEHFuncletBlocks.contains(MBB);
+  }
+  void setXboxEHSpillOffset(int FI, int64_t Offset) {
+    XboxEHSpillOffsets[FI] = Offset;
+  }
+  int64_t getXboxEHSpillOffset(int FI) const {
+    auto It = XboxEHSpillOffsets.find(FI);
+    assert(It != XboxEHSpillOffsets.end() && "Missing Xbox funclet spill");
+    return It->second;
+  }
+  void setXboxEHFuncletFrameSize(uint64_t Size) {
+    XboxEHFuncletFrameSize = Size;
+  }
+  uint64_t getXboxEHFuncletFrameSize() const { return XboxEHFuncletFrameSize; }
   bool mustSaveLR() const    { return MustSaveLR; }
 
   void setMustSaveTOC(bool U) { MustSaveTOC = U; }
