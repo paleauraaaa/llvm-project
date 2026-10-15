@@ -13,6 +13,7 @@
 #ifndef LLVM_LIB_TARGET_POWERPC_PPCMACHINEFUNCTIONINFO_H
 #define LLVM_LIB_TARGET_POWERPC_PPCMACHINEFUNCTIONINFO_H
 
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/CodeGen/CallingConvLower.h"
 #include "llvm/CodeGen/MachineFunction.h"
@@ -68,6 +69,7 @@ private:
 
   /// Whether the fixed frame requires a runtime probe in its prologue.
   bool UsesXboxStackProbe = false;
+  SmallDenseSet<int, 4> SharedXboxEHSpillSlots;
 
   /// MustSaveTOC - Indicates that the TOC save needs to be performed in the
   /// prologue of the function. This is typically the case when there are
@@ -213,6 +215,10 @@ public:
   void setMustSaveLR(bool U) { MustSaveLR = U; }
   bool usesXboxStackProbe() const { return UsesXboxStackProbe; }
   void setUsesXboxStackProbe() { UsesXboxStackProbe = true; }
+  void addSharedXboxEHSpillSlot(int FI) { SharedXboxEHSpillSlots.insert(FI); }
+  bool isSharedXboxEHSpillSlot(int FI) const {
+    return SharedXboxEHSpillSlots.contains(FI);
+  }
   bool mustSaveLR() const    { return MustSaveLR; }
 
   void setMustSaveTOC(bool U) { MustSaveTOC = U; }

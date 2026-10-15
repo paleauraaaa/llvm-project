@@ -173,15 +173,14 @@ void PPCMCExpr::visitUsedExpr(MCStreamer &Streamer) const {
   Streamer.visitUsedExpr(*getSubExpr());
 }
 
-const PPCXboxPDataExpr *PPCXboxPDataExpr::create(MCContext &Ctx,
-                                                 const MCSymbol *Begin,
-                                                 const MCSymbol *PrologueEnd,
-                                                 const MCSymbol *End) {
-  return new (Ctx) PPCXboxPDataExpr(Ctx, Begin, PrologueEnd, End);
+const PPCXboxPDataExpr *PPCXboxPDataExpr::create(
+    MCContext &Ctx, const MCSymbol *Begin, const MCSymbol *PrologueEnd,
+    const MCSymbol *End, bool HasHandler) {
+  return new (Ctx) PPCXboxPDataExpr(Ctx, Begin, PrologueEnd, End, HasHandler);
 }
 
 void PPCXboxPDataExpr::printImpl(raw_ostream &OS, const MCAsmInfo *MAI) const {
-  OS << "(0x40000000 | ((";
+  OS << (HasHandler ? "(0xc0000000 | ((" : "(0x40000000 | ((");
   End->print(OS, MAI);
   OS << " - ";
   Begin->print(OS, MAI);
@@ -208,7 +207,8 @@ bool PPCXboxPDataExpr::evaluateAsRelocatableImpl(MCValue &Res,
     Res = MCValue::get(int64_t(0));
     return true;
   }
-  Res = MCValue::get(0x40000000 | ((Length / 4) << 8) | (PrologueLength / 4));
+  Res = MCValue::get((HasHandler ? 0xc0000000 : 0x40000000) |
+                    ((Length / 4) << 8) | (PrologueLength / 4));
   return true;
 }
 

@@ -38,6 +38,7 @@ WinException::WinException(AsmPrinter *A) : EHStreamer(A) {
   useImageRel32 = (A->getDataLayout().getPointerSizeInBits() == 64);
   isAArch64 = Asm->TM.getTargetTriple().isAArch64();
   isThumb = Asm->TM.getTargetTriple().isThumb();
+  isXbox360 = Asm->TM.getTargetTriple().isOSXbox360();
 }
 
 WinException::~WinException() = default;
@@ -96,6 +97,11 @@ void WinException::beginFunction(const MachineFunction *MF) {
   // If we're not using CFI, we don't want the CFI or the personality, but we
   // might want EH tables if we had EH pads.
   if (!Asm->MAI->usesWindowsCFI()) {
+    if (isXbox360) {
+      shouldEmitMoves = false;
+      shouldEmitPersonality = shouldEmitLSDA = hasEHFunclets;
+      return;
+    }
     if (Per == EHPersonality::MSVC_X86SEH && !hasEHFunclets) {
       // If this is 32-bit SEH and we don't have any funclets (really invokes),
       // make sure we emit the parent offset label. Some unreferenced filter
@@ -174,6 +180,8 @@ static MCSymbol *getMCSymbolForMBB(AsmPrinter *Asm,
     return nullptr;
 
   assert(MBB->isEHFuncletEntry());
+  if (Asm->TM.getTargetTriple().isOSXbox360())
+    return MBB->getSymbol();
 
   // Give catches and cleanups a name based off of their parent function and
   // their funclet entry block's number.
@@ -190,6 +198,8 @@ static MCSymbol *getMCSymbolForMBB(AsmPrinter *Asm,
 void WinException::beginFunclet(const MachineBasicBlock &MBB,
                                 MCSymbol *Sym) {
   CurrentFuncletEntry = &MBB;
+  if (isXbox360)
+    return;
 
   const Function &F = Asm->MF->getFunction();
   // If a symbol was not provided for the funclet, invent one.
@@ -251,6 +261,10 @@ void WinException::endFuncletImpl() {
   // No funclet to process?  Great, we have nothing to do.
   if (!CurrentFuncletEntry)
     return;
+  if (isXbox360) {
+    CurrentFuncletEntry = nullptr;
+    return;
+  }
 
   const MachineFunction *MF = Asm->MF;
   if (shouldEmitMoves || shouldEmitPersonality) {
@@ -317,6 +331,8 @@ const MCExpr *WinException::create32bitRef(const GlobalValue *GV) {
 }
 
 const MCExpr *WinException::getLabel(const MCSymbol *Label) {
+  if (isXbox360)
+    return create32bitRef(Label);
   return MCSymbolRefExpr::create(Label, MCSymbolRefExpr::VK_COFF_IMGREL32,
                                  Asm->OutContext);
 }
@@ -343,6 +359,8 @@ const MCExpr *WinException::getOffsetPlusOne(const MCSymbol *OffsetOf,
 
 int WinException::getFrameIndexOffset(int FrameIndex,
                                       const WinEHFuncInfo &FuncInfo) {
+  if (isXbox360)
+    return Asm->MF->getFrameInfo().getObjectOffset(FrameIndex);
   const TargetFrameLowering &TFI = *Asm->MF->getSubtarget().getFrameLowering();
   Register UnusedReg;
   if (Asm->MAI->usesWindowsCFI()) {
@@ -832,7 +850,7 @@ void WinException::emitCXXFrameHandler3Table(const MachineFunction *MF) {
 
     // All funclets use the same parent frame offset currently.
     unsigned ParentFrameOffset = 0;
-    if (shouldEmitPersonality) {
+    if (shouldEmitPersonality && !isXbox360) {
       const TargetFrameLowering *TFI = MF->getSubtarget().getFrameLowering();
       ParentFrameOffset = TFI->getWinEHParentFrameOffset(*MF);
     }
@@ -878,7 +896,7 @@ void WinException::emitCXXFrameHandler3Table(const MachineFunction *MF) {
         AddComment("Handler");
         OS.emitValue(create32bitRef(HandlerSym), 4);
 
-        if (shouldEmitPersonality) {
+        if (shouldEmitPersonality && !isXbox360) {
           AddComment("ParentFrameOffset");
           OS.emitInt32(ParentFrameOffset);
         }
@@ -952,7 +970,7 @@ void WinException::computeIP2StateTable(
       // account that the return address is after the call instruction (whose EH
       // state we should be using), but on other platforms we need to +1 to the
       // label so that we are using the correct EH state.
-      const MCExpr *LabelExpression = (isAArch64 || isThumb)
+      const MCExpr *LabelExpression = (isAArch64 || isThumb || isXbox360)
                                           ? getLabel(ChangeLabel)
                                           : getLabelPlusOne(ChangeLabel);
       IPToStateTable.push_back(

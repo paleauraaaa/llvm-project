@@ -95,16 +95,18 @@ class PPCXboxPDataExpr final : public PPCMCExpr {
   const MCSymbol *Begin;
   const MCSymbol *PrologueEnd;
   const MCSymbol *End;
+  bool HasHandler;
 
   PPCXboxPDataExpr(MCContext &Ctx, const MCSymbol *Begin,
-                  const MCSymbol *PrologueEnd, const MCSymbol *End)
+                  const MCSymbol *PrologueEnd, const MCSymbol *End,
+                  bool HasHandler)
       : PPCMCExpr(VK_PPC_PDATA, MCSymbolRefExpr::create(Begin, Ctx)), Ctx(Ctx),
-        Begin(Begin), PrologueEnd(PrologueEnd), End(End) {}
+        Begin(Begin), PrologueEnd(PrologueEnd), End(End), HasHandler(HasHandler) {}
 
 public:
-  static const PPCXboxPDataExpr *create(MCContext &Ctx, const MCSymbol *Begin,
-                                        const MCSymbol *PrologueEnd,
-                                        const MCSymbol *End);
+  static const PPCXboxPDataExpr *
+  create(MCContext &Ctx, const MCSymbol *Begin, const MCSymbol *PrologueEnd,
+         const MCSymbol *End, bool HasHandler = false);
   void printImpl(raw_ostream &OS, const MCAsmInfo *MAI) const override;
   bool evaluateAsRelocatableImpl(MCValue &Res, const MCAssembler *Asm,
                                  const MCFixup *Fixup) const override;

@@ -1,0 +1,126 @@
+# RUN: llc -mtriple=powerpc64-ibm-xbox360 -mcpu=xenon -run-pass=prologepilog -verify-machineinstrs %s -o - | FileCheck %s
+
+--- |
+  declare i32 @__CxxFrameHandler(...)
+  declare void @may_throw()
+  define void @private_spills() personality ptr @__CxxFrameHandler {
+  entry:
+    invoke void @may_throw() to label %return unwind label %cleanup
+  return:
+    ret void
+  cleanup:
+    %pad = cleanuppad within none []
+    cleanupret from %pad unwind to caller
+  }
+  define void @dynamic_private_spills() personality ptr @__CxxFrameHandler {
+  entry:
+    invoke void @may_throw() to label %return unwind label %cleanup
+  return:
+    ret void
+  cleanup:
+    %pad = cleanuppad within none []
+    cleanupret from %pad unwind to caller
+  }
+...
+---
+name: private_spills
+tracksRegLiveness: true
+hasEHScopes: true
+hasEHFunclets: true
+frameInfo:
+  adjustsStack: true
+  hasCalls: true
+  maxCallFrameSize: 80
+stack:
+  - { id: 0, type: default, size: 4, alignment: 4 }
+  - { id: 1, type: spill-slot, size: 4, alignment: 4 }
+  - { id: 2, type: spill-slot, size: 4, alignment: 4 }
+body: |
+  bb.0.entry:
+    successors: %bb.1, %bb.2
+    $r3 = LI 5
+    STW killed $r3, 0, %stack.2
+    ADJCALLSTACKDOWN 80, 0, implicit-def $r1, implicit $r1
+    BL @may_throw, csr_xbox360, implicit-def $lr, implicit $rm
+    ADJCALLSTACKUP 80, 0, implicit-def $r1, implicit $r1
+    B %bb.1
+  bb.1.return:
+    BLR8 implicit $lr8, implicit $rm
+  bb.2.cleanup (landing-pad, ehfunclet-entry):
+    $r3 = LI 7
+    STW $r3, 0, %stack.0
+    STW killed $r3, 0, %stack.1
+    $r3 = LWZ 0, %stack.1
+    STW killed $r3, 0, %stack.0
+    $r3 = LWZ 0, %stack.2
+    XBOX_CLEANUPRET implicit $lr8, implicit $rm
+
+# CHECK: bb.2.cleanup
+# CHECK: liveins: $x12
+# CHECK: $x31 = frame-setup ADDI8 $x12, -[[SIZE:[0-9]+]]
+# CHECK: $x1 = frame-setup STWU8 $x1, -[[SIZE]], $x1
+# CHECK: STW $r3, [[LOCAL:[0-9]+]], $x31
+# CHECK: STW killed $r3, [[SPILL:[0-9]+]], $x1
+# CHECK: $r3 = LWZ [[SPILL]], $x1
+# CHECK: STW killed $r3, [[LOCAL]], $x31
+# CHECK: $r3 = LWZ {{[0-9]+}}, $x31
+# CHECK: $x1 = ADDI8 $x1, [[SIZE]]
+# CHECK: XBOX_CLEANUPRET
+...
+---
+name: dynamic_private_spills
+tracksRegLiveness: true
+hasEHScopes: true
+hasEHFunclets: true
+frameInfo:
+  adjustsStack: true
+  hasCalls: true
+  maxCallFrameSize: 80
+stack:
+  - { id: 0, type: default, size: 4, alignment: 4 }
+  - { id: 1, type: spill-slot, size: 4, alignment: 4 }
+  - { id: 2, type: variable-sized, alignment: 16 }
+  - { id: 3, type: spill-slot, size: 4, alignment: 4 }
+body: |
+  bb.0.entry:
+    successors: %bb.1, %bb.2
+    $r3 = LI 5
+    STW killed $r3, 0, %stack.3
+    ADJCALLSTACKDOWN 80, 0, implicit-def $r1, implicit $r1
+    BL @may_throw, csr_xbox360, implicit-def $lr, implicit $rm
+    ADJCALLSTACKUP 80, 0, implicit-def $r1, implicit $r1
+    B %bb.1
+  bb.1.return:
+    BLR8 implicit $lr8, implicit $rm
+  bb.2.cleanup (landing-pad, ehfunclet-entry):
+    $r3 = LI 7
+    STW $r3, 0, %stack.0
+    STW killed $r3, 0, %stack.1
+    $r3 = LWZ 0, %stack.1
+    STW killed $r3, 0, %stack.0
+    $r3 = LWZ 0, %stack.3
+    XBOX_CLEANUPRET implicit $lr8, implicit $rm
+
+# CHECK-LABEL: name: dynamic_private_spills
+# CHECK: bb.0.entry:
+# CHECK: STD killed $x30, {{-?[0-9]+}}, $x1
+# CHECK: $x1 = frame-setup STWU8 $x1, -[[DSIZE:[0-9]+]], $x1
+# CHECK: $x30 = frame-setup OR8 $x1, $x1
+# CHECK: $x31 = frame-setup OR8 $x1, $x1
+# CHECK: bb.1.return:
+# CHECK: $x1 = LWZ8 0, $x30
+# CHECK: $x30 = frame-destroy LD {{-?[0-9]+}}, $x1
+# CHECK: bb.2.cleanup
+# CHECK: $x31 = frame-setup ADDI8 $x12, -[[DSIZE]]
+# CHECK: STD killed $x30, {{-?[0-9]+}}, $x1
+# CHECK: $x1 = frame-setup STWU8 $x1, -[[DSIZE]], $x1
+# CHECK: $x30 = frame-setup OR8 $x1, $x1
+# CHECK: STW $r3, [[DLOCAL:[0-9]+]], $x31
+# CHECK: STW killed $r3, [[DSPILL:[0-9]+]], $x30
+# CHECK: $r3 = LWZ [[DSPILL]], $x30
+# CHECK: STW killed $r3, [[DLOCAL]], $x31
+# CHECK: $r3 = LWZ {{[0-9]+}}, $x31
+# CHECK: $x1 = LWZ8 0, $x30
+# CHECK: $x30 = frame-destroy LD {{-?[0-9]+}}, $x1
+# CHECK: XBOX_CLEANUPRET
+...

@@ -19302,6 +19302,12 @@ Register PPCTargetLowering::getExceptionSelectorRegister(
   return Subtarget.isPPC64() && !Subtarget.isTargetXbox360() ? PPC::X4 : PPC::R4;
 }
 
+bool PPCTargetLowering::needsFixedCatchObjects() const {
+  if (Subtarget.isTargetXbox360())
+    return false;
+  return TargetLowering::needsFixedCatchObjects();
+}
+
 bool
 PPCTargetLowering::shouldExpandBuildVectorWithShuffles(
                      EVT VT , unsigned DefinedValues) const {

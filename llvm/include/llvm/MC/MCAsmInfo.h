@@ -40,6 +40,7 @@ enum class EncodingType {
   CE,      /// Windows CE ARM, PowerPC, SH3, SH4
   Itanium, /// Windows x64, Windows Itanium (IA-64)
   X86,     /// Windows x86, uses no CFI, just EH tables
+  Xbox360, /// Xbox 360 PowerPC, target-specific packed unwind records
   MIPS = Alpha,
 };
 
@@ -661,7 +662,8 @@ public:
   bool usesWindowsCFI() const {
     return ExceptionsType == ExceptionHandling::WinEH &&
            (WinEHEncodingType != WinEH::EncodingType::Invalid &&
-            WinEHEncodingType != WinEH::EncodingType::X86);
+            WinEHEncodingType != WinEH::EncodingType::X86 &&
+            WinEHEncodingType != WinEH::EncodingType::Xbox360);
   }
 
   bool doesDwarfUseRelocationsAcrossSections() const {

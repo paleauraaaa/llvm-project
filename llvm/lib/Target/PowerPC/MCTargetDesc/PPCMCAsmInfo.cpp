@@ -96,4 +96,8 @@ PPCCOFFMCAsmInfo::PPCCOFFMCAsmInfo(bool Is64Bit, const Triple &T) {
   DollarIsPC = true;
 
   IsLittleEndian = false;
+    
+  ExceptionsType = ExceptionHandling::WinEH;
+    
+  WinEHEncodingType = WinEH::EncodingType::Xbox360;
 }

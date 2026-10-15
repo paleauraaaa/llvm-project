@@ -45,6 +45,7 @@
 #include "llvm/CodeGen/StackMaps.h"
 #include "llvm/CodeGen/TargetLoweringObjectFileImpl.h"
 #include "llvm/IR/DataLayout.h"
+#include "llvm/IR/EHPersonalities.h"
 #include "llvm/IR/GlobalValue.h"
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/Module.h"
@@ -311,6 +312,11 @@ class PPCXbox360AsmPrinter : public PPCAsmPrinter {
   MCSymbol *UnwindBegin = nullptr;
   MCSymbol *UnwindPrologueEnd = nullptr;
   const MachineInstr *LastPrologueInst = nullptr;
+  bool HasHandler = false;
+
+  void emitHandlerPrefix(Align Alignment);
+  void beginUnwindRange(const MachineBasicBlock &MBB, bool Handler);
+  void endUnwindRange();
 
 public:
   PPCXbox360AsmPrinter(TargetMachine &TM, std::unique_ptr<MCStreamer> Streamer)
@@ -325,6 +331,8 @@ public:
   }
 
   void emitFunctionBodyStart() override;
+  void emitFunctionEntryLabel() override;
+  void emitBasicBlockStart(const MachineBasicBlock &MBB) override;
   void emitInstruction(const MachineInstr *MI) override;
   void emitFunctionBodyEnd() override;
   void emitEndOfAsmFile(Module &M) override;
@@ -342,6 +350,30 @@ void PPCXbox360AsmPrinter::emitEndOfAsmFile(Module &M) {
   PPCAsmPrinter::emitEndOfAsmFile(M);
 }
 
+void PPCXbox360AsmPrinter::emitHandlerPrefix(Align Alignment) {
+  Alignment = std::max(Alignment, Align(8));
+  emitAlignment(Alignment);
+  OutStreamer->emitZeros(Alignment.value() - 8);
+  OutStreamer->emitSymbolValue(OutContext.getOrCreateSymbol("__CxxFrameHandler"),
+                              4);
+  StringRef Name = GlobalValue::dropLLVMManglingEscape(MF->getName());
+  OutStreamer->emitSymbolValue(
+      OutContext.getOrCreateSymbol(Twine("$cppxdata$") + Name), 4);
+}
+
+void PPCXbox360AsmPrinter::emitFunctionEntryLabel() {
+  const Function &F = MF->getFunction();
+  if (F.hasPersonalityFn() &&
+      (classifyEHPersonality(F.getPersonalityFn()) != EHPersonality::MSVC_CXX ||
+       cast<Function>(F.getPersonalityFn()->stripPointerCasts())->getName() !=
+           "__CxxFrameHandler"))
+    report_fatal_error(
+        "Xbox 360 handler-bearing unwind records require __CxxFrameHandler");
+  if (MF->hasEHFunclets())
+    emitHandlerPrefix(MF->getAlignment());
+  PPCAsmPrinter::emitFunctionEntryLabel();
+}
+
 void PPCXbox360AsmPrinter::emitFunctionBodyStart() {
   UnwindBegin = nullptr;
   UnwindPrologueEnd = nullptr;
@@ -349,16 +381,26 @@ void PPCXbox360AsmPrinter::emitFunctionBodyStart() {
   const Function &F = MF->getFunction();
   if (F.hasFnAttribute(Attribute::Naked))
     return;
-  if (F.hasPersonalityFn())
-    report_fatal_error(
-        "Xbox 360 handler-bearing unwind records are not supported");
   if (MF->hasBBSections())
     report_fatal_error("Xbox 360 unwind records require contiguous functions");
 
-  for (const MachineInstr &MI : MF->front())
+  for (const MachineBasicBlock &MBB : *MF)
+    if (&MBB != &MF->front() && !MBB.isEHFuncletEntry())
+      for (const MachineInstr &MI : MBB)
+        if (MI.getFlag(MachineInstr::FrameSetup))
+          report_fatal_error(
+              "Xbox 360 unwind prologue must be in an entry block");
+  beginUnwindRange(MF->front(), MF->hasEHFunclets());
+}
+
+void PPCXbox360AsmPrinter::beginUnwindRange(const MachineBasicBlock &MBB,
+                                          bool Handler) {
+  HasHandler = Handler;
+  LastPrologueInst = nullptr;
+  for (const MachineInstr &MI : MBB)
     if (MI.getFlag(MachineInstr::FrameSetup))
       LastPrologueInst = &MI;
-  for (const MachineInstr &MI : MF->front()) {
+  for (const MachineInstr &MI : MBB) {
     if (!LastPrologueInst)
       break;
     if (!MI.isMetaInstruction()) {
@@ -407,13 +449,6 @@ void PPCXbox360AsmPrinter::emitFunctionBodyStart() {
     if (&MI == LastPrologueInst)
       break;
   }
-  for (const MachineBasicBlock &MBB : *MF)
-    if (&MBB != &MF->front())
-      for (const MachineInstr &MI : MBB)
-        if (MI.getFlag(MachineInstr::FrameSetup))
-          report_fatal_error(
-              "Xbox 360 unwind prologue must be in the entry block");
-
   UnwindBegin = OutContext.createNamedTempSymbol("xbox_begin");
   UnwindPrologueEnd = OutContext.createNamedTempSymbol("xbox_prologue_end");
   OutStreamer->emitLabel(UnwindBegin);
@@ -421,13 +456,49 @@ void PPCXbox360AsmPrinter::emitFunctionBodyStart() {
     OutStreamer->emitLabel(UnwindPrologueEnd);
 }
 
+void PPCXbox360AsmPrinter::emitBasicBlockStart(const MachineBasicBlock &MBB) {
+  if (MBB.isEHFuncletEntry()) {
+    endUnwindRange();
+    if (!MBB.isCleanupFuncletEntry())
+      emitHandlerPrefix(std::max(MF->getAlignment(), MBB.getAlignment()));
+  }
+  PPCAsmPrinter::emitBasicBlockStart(MBB);
+  if (MBB.isEHFuncletEntry())
+    beginUnwindRange(MBB, !MBB.isCleanupFuncletEntry());
+}
+
 void PPCXbox360AsmPrinter::emitInstruction(const MachineInstr *MI) {
-  PPCAsmPrinter::emitInstruction(MI);
+  switch (MI->getOpcode()) {
+  case PPC::XBOX_CATCHRET: {
+    const MCSymbol *Continuation = MI->getOperand(0).getMBB()->getSymbol();
+    const MCExpr *Address = MCSymbolRefExpr::create(Continuation, OutContext);
+    EmitToStreamer(*OutStreamer,
+                   MCInstBuilder(PPC::LIS)
+                       .addReg(PPC::R3)
+                       .addExpr(PPCMCExpr::createHa(Address, OutContext)));
+    EmitToStreamer(*OutStreamer,
+                   MCInstBuilder(PPC::ADDI)
+                       .addReg(PPC::R3)
+                       .addReg(PPC::R3)
+                       .addExpr(PPCMCExpr::createLo(Address, OutContext)));
+    [[fallthrough]];
+  }
+  case PPC::XBOX_CLEANUPRET:
+    EmitToStreamer(*OutStreamer, MCInstBuilder(PPC::BLR));
+    break;
+  default:
+    PPCAsmPrinter::emitInstruction(MI);
+    break;
+  }
   if (UnwindBegin && MI == LastPrologueInst)
     OutStreamer->emitLabel(UnwindPrologueEnd);
 }
 
 void PPCXbox360AsmPrinter::emitFunctionBodyEnd() {
+  endUnwindRange();
+}
+
+void PPCXbox360AsmPrinter::endUnwindRange() {
   if (!UnwindBegin)
     return;
   if (!UnwindPrologueEnd->isDefined())
@@ -445,9 +516,11 @@ void PPCXbox360AsmPrinter::emitFunctionBodyEnd() {
   OutStreamer->emitValueToAlignment(Align(4));
   OutStreamer->emitSymbolValue(UnwindBegin, 4);
   OutStreamer->emitValue(
-      PPCXboxPDataExpr::create(OutContext, UnwindBegin, UnwindPrologueEnd, End),
+      PPCXboxPDataExpr::create(OutContext, UnwindBegin, UnwindPrologueEnd, End,
+                              HasHandler),
       4);
   OutStreamer->switchSection(Text);
+  UnwindBegin = nullptr;
 }
 
 void PPCAsmPrinter::PrintSymbolOperand(const MachineOperand &MO,

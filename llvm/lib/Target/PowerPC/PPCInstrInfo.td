@@ -702,6 +702,7 @@ let WantsParent = true in {
 // PowerPC Instruction Predicate Definitions.
 def In32BitMode  : Predicate<"!Subtarget->isPPC64()">;
 def In64BitMode  : Predicate<"Subtarget->isPPC64()">;
+def IsXbox360 : Predicate<"Subtarget->isTargetXbox360()">;
 def IsBookE  : Predicate<"Subtarget->isBookE()">;
 def IsNotBookE  : Predicate<"!Subtarget->isBookE()">;
 def HasOnlyMSYNC : Predicate<"Subtarget->hasOnlyMSYNC()">;
@@ -1317,6 +1318,16 @@ def RESTORE_CR : PPCEmitTimePseudo<(outs crrc:$cond), (ins memri:$F),
                      "#RESTORE_CR", []>;
 def RESTORE_CRBIT : PPCEmitTimePseudo<(outs crbitrc:$cond), (ins memri:$F),
                            "#RESTORE_CRBIT", []>;
+}
+
+let isTerminator = 1, isBarrier = 1, isReturn = 1, isEHScopeReturn = 1,
+    hasSideEffects = 1, Uses = [LR8, RM], Predicates = [IsXbox360] in {
+  let Defs = [R3], Size = 12 in
+    def XBOX_CATCHRET : PPCEmitTimePseudo<
+        (outs), (ins directbrtarget:$dst, directbrtarget:$src),
+        "#XBOX_CATCHRET", [(catchret bb:$dst, bb:$src)]>;
+  def XBOX_CLEANUPRET : PPCEmitTimePseudo<(outs), (ins),
+      "#XBOX_CLEANUPRET", [(cleanupret bb)]>;
 }
 
 let isTerminator = 1, isBarrier = 1, PPC970_Unit = 7, hasSideEffects = 0 in {
