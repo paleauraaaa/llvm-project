@@ -2072,6 +2072,8 @@ void CodeGenFunction::emitAutoVarTypeCleanup(
     llvm_unreachable("no cleanup for trivially-destructible variable");
 
   case QualType::DK_cxx_destructor:
+    if (getTarget().getTriple().isOSXbox360())
+      cleanupKind = getCleanupKind(dtorKind);
     // If there's an NRVO flag on the emission, we need a different
     // cleanup.
     if (emission.NRVOFlag) {

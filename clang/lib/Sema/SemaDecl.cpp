@@ -15956,6 +15956,72 @@ void Sema::CheckCoroutineWrapper(FunctionDecl *FD) {
     Diag(FD->getLocation(), diag::err_coroutine_return_type) << RD;
 }
 
+namespace {
+class XboxSEHObjectUnwindChecker
+    : public EvaluatedExprVisitor<XboxSEHObjectUnwindChecker> {
+  bool RequiresUnwind = false;
+
+public:
+  explicit XboxSEHObjectUnwindChecker(ASTContext &Context)
+      : EvaluatedExprVisitor(Context) {}
+
+  void CheckType(QualType T) {
+    if (!T->isDependentType() &&
+        T.isDestructedType() == QualType::DK_cxx_destructor)
+      RequiresUnwind = true;
+  }
+
+  void VisitDeclStmt(DeclStmt *DS) {
+    for (Decl *D : DS->decls()) {
+      if (auto *VD = dyn_cast<VarDecl>(D)) {
+        if (!VD->isInvalidDecl() && !VD->hasExternalStorage()) {
+          CheckType(VD->getType());
+          if (Expr *Init = VD->getInit())
+            Visit(Init);
+        }
+      }
+    }
+  }
+
+  void VisitCXXBindTemporaryExpr(CXXBindTemporaryExpr *E) {
+    RequiresUnwind = true;
+    Visit(E->getSubExpr());
+  }
+
+  void VisitCXXDefaultArgExpr(CXXDefaultArgExpr *E) { Visit(E->getExpr()); }
+
+  void VisitCXXDefaultInitExpr(CXXDefaultInitExpr *E) { Visit(E->getExpr()); }
+
+  bool requiresUnwind() const { return RequiresUnwind; }
+};
+
+void diagnoseXboxSEHObjectUnwind(Sema &S, FunctionDecl *FD, Stmt *Body,
+                                SourceLocation TryLoc) {
+  XboxSEHObjectUnwindChecker Checker(S.Context);
+  Checker.Visit(Body);
+  if (FD) {
+    for (ParmVarDecl *Param : FD->parameters())
+      Checker.CheckType(Param->getType());
+    if (isa<CXXConstructorDecl, CXXDestructorDecl>(FD)) {
+      auto *RD = cast<CXXMethodDecl>(FD)->getParent();
+      if (!RD->isDependentType()) {
+        for (const CXXBaseSpecifier &Base : RD->bases())
+          Checker.CheckType(Base.getType());
+        for (const CXXBaseSpecifier &Base : RD->vbases())
+          Checker.CheckType(Base.getType());
+        for (FieldDecl *Field : RD->fields())
+          Checker.CheckType(Field->getType());
+      }
+      if (auto *Ctor = dyn_cast<CXXConstructorDecl>(FD))
+        for (CXXCtorInitializer *Init : Ctor->inits())
+          Checker.Visit(Init->getInit());
+    }
+  }
+  if (Checker.requiresUnwind())
+    S.Diag(TryLoc, diag::err_xbox_seh_object_unwind);
+}
+} // namespace
+
 Decl *Sema::ActOnFinishFunctionBody(Decl *dcl, Stmt *Body,
                                     bool IsInstantiation) {
   FunctionScopeInfo *FSI = getCurFunction();
@@ -16336,6 +16402,10 @@ Decl *Sema::ActOnFinishFunctionBody(Decl *dcl, Stmt *Body,
       // Verify that gotos and switch cases don't jump into scopes illegally.
       if (FSI->NeedsScopeChecking() && !PP.isCodeCompletionEnabled())
         DiagnoseInvalidJumps(Body);
+
+      if (Context.getTargetInfo().getTriple().isOSXbox360() &&
+          getLangOpts().CXXExceptions && FSI->FirstSEHTryLoc.isValid())
+        diagnoseXboxSEHObjectUnwind(*this, FD, Body, FSI->FirstSEHTryLoc);
 
       if (CXXDestructorDecl *Destructor = dyn_cast<CXXDestructorDecl>(dcl)) {
         if (!Destructor->getParent()->isDependentType())

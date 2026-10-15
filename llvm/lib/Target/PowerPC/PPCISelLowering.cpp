@@ -655,6 +655,8 @@ PPCTargetLowering::PPCTargetLowering(const PPCTargetMachine &TM,
 
   // We want to custom lower some of our intrinsics.
   setOperationAction(ISD::INTRINSIC_WO_CHAIN, MVT::Other, Custom);
+  if (Subtarget.isTargetXbox360())
+    setOperationAction(ISD::LOCAL_RECOVER, MVT::i32, Custom);
   setOperationAction(ISD::INTRINSIC_WO_CHAIN, MVT::f64, Custom);
   setOperationAction(ISD::INTRINSIC_WO_CHAIN, MVT::ppcf128, Custom);
   setOperationAction(ISD::INTRINSIC_WO_CHAIN, MVT::v4f32, Custom);
@@ -5996,6 +5998,9 @@ bool PPCTargetLowering::isEligibleForTCO(
     const SmallVectorImpl<ISD::OutputArg> &Outs,
     const SmallVectorImpl<ISD::InputArg> &Ins, const Function *CallerFunc,
     bool isCalleeExternalSymbol) const {
+  if (CalleeCC == CallingConv::PPC_Xbox360_SEH)
+    return false;
+
   if (Subtarget.isTargetXbox360() && CB && CB->isMustTailCall() &&
       !isVarArg && !CallerFunc->isVarArg() && CallerCC == CallingConv::C &&
       CalleeCC == CallerCC &&
@@ -7310,6 +7315,29 @@ SDValue PPCTargetLowering::LowerCall_Xbox360(
     SelectionDAG &DAG, SmallVectorImpl<SDValue> &InVals,
     const CallBase *CB) const {
 
+    if (CFlags.CallConv == CallingConv::PPC_Xbox360_SEH) {
+        if (CFlags.IsVarArg || Outs.size() != 2)
+            report_fatal_error("Xbox 360 SEH helpers require two arguments");
+        assert(!CFlags.IsTailCall && "SEH helper calls cannot be tail calls");
+        unsigned NumBytes = Subtarget.getFrameLowering()->getLinkageSize() + 64;
+        Chain = DAG.getCALLSEQ_START(Chain, NumBytes, 0, dl);
+        SDValue CallSeqStart = Chain;
+        SDValue Glue;
+        SmallVector<std::pair<unsigned, SDValue>, 8> RegsToPass;
+        for (unsigned I = 0; I != 2; ++I) {
+            if (!Outs[I].VT.isScalarInteger())
+                report_fatal_error(
+                    "Xbox 360 SEH arguments must be integers or pointers");
+            SDValue Arg = DAG.getZExtOrTrunc(OutVals[I], dl, MVT::i64);
+            unsigned Reg = I ? PPC::X12 : PPC::X3;
+            RegsToPass.emplace_back(Reg, Arg);
+            Chain = DAG.getCopyToReg(Chain, dl, Reg, Arg, Glue);
+            Glue = Chain.getValue(1);
+        }
+        return FinishCall(CFlags, dl, DAG, RegsToPass, Glue, Chain, CallSeqStart,
+                          Callee, 0, NumBytes, Ins, InVals, CB);
+    }
+
     unsigned NumOps = Outs.size();
     bool IsSibCall = false;
     bool IsFastCall = CFlags.CallConv == CallingConv::Fast;
@@ -7908,6 +7936,23 @@ SDValue PPCTargetLowering::LowerFormalArguments_Xbox360(
     MachineFunction &MF = DAG.getMachineFunction();
     MachineFrameInfo &MFI = MF.getFrameInfo();
     PPCFunctionInfo *FuncInfo = MF.getInfo<PPCFunctionInfo>();
+
+    if (CallConv == CallingConv::PPC_Xbox360_SEH) {
+        if (isVarArg || Ins.size() != 2)
+            report_fatal_error("Xbox 360 SEH helpers require two arguments");
+        for (unsigned I = 0; I != 2; ++I) {
+            if (!Ins[I].VT.isScalarInteger())
+                report_fatal_error(
+                    "Xbox 360 SEH arguments must be integers or pointers");
+            Register VReg = MF.addLiveIn(I ? PPC::X12 : PPC::X3,
+                                        &PPC::G8RCRegClass);
+            SDValue Arg = DAG.getCopyFromReg(Chain, dl, VReg, MVT::i64);
+            InVals.push_back(extendArgForPPC64(Ins[I].Flags, Ins[I].VT, DAG,
+                                             Arg, dl));
+        }
+        FuncInfo->setMinReservedArea(80);
+        return Chain;
+    }
 
     assert(!(CallConv == CallingConv::Fast && isVarArg) &&
         "fastcc not supported on varargs functions");
@@ -12214,6 +12259,17 @@ SDValue PPCTargetLowering::LowerINTRINSIC_WO_CHAIN(SDValue Op,
   SDLoc dl(Op);
 
   switch (IntrinsicID) {
+  case Intrinsic::localaddress: {
+    if (!Subtarget.isTargetXbox360())
+      return SDValue();
+    MachineFrameInfo &MFI = DAG.getMachineFunction().getFrameInfo();
+    int FI = MFI.CreateFixedObject(4, 0, false);
+    return DAG.getFrameIndex(FI, getPointerTy(DAG.getDataLayout()));
+  }
+  case Intrinsic::eh_recoverfp:
+    if (!Subtarget.isTargetXbox360())
+      return SDValue();
+    return Op.getOperand(2);
   case Intrinsic::thread_pointer:
     if (Subtarget.isTargetXbox360())
       report_fatal_error("Xbox 360 doesn't store the thread pointer in a dedicated register.");
@@ -12550,6 +12606,12 @@ SDValue PPCTargetLowering::LowerINTRINSIC_VOID(SDValue Op,
   int ArgStart = isa<ConstantSDNode>(Op.getOperand(0)) ? 0 : 1;
   SDLoc DL(Op);
   switch (Op.getConstantOperandVal(ArgStart)) {
+  case Intrinsic::seh_try_end:
+    assert(Subtarget.isTargetXbox360() && "Expected Xbox SEH scope boundary");
+    // A local-unwind continuation must have an address inside the remaining
+    // scopes, even when the next instruction ends another enclosing scope.
+    return SDValue(
+        DAG.getMachineNode(PPC::NOP, DL, MVT::Other, Op.getOperand(0)), 0);
   case Intrinsic::ppc_cfence: {
     assert(ArgStart == 1 && "llvm.ppc.cfence must carry a chain argument.");
     SDValue Val = Op.getOperand(ArgStart + 1);
@@ -13366,6 +13428,9 @@ SDValue PPCTargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
   case ISD::BUILD_VECTOR:       return LowerBUILD_VECTOR(Op, DAG);
   case ISD::VECTOR_SHUFFLE:     return LowerVECTOR_SHUFFLE(Op, DAG);
   case ISD::INTRINSIC_WO_CHAIN: return LowerINTRINSIC_WO_CHAIN(Op, DAG);
+  case ISD::LOCAL_RECOVER:
+    return SDValue(DAG.getMachineNode(PPC::XBOX_LOCAL_RECOVER, SDLoc(Op),
+                                     MVT::i32, Op.getOperand(0)), 0);
   case ISD::SCALAR_TO_VECTOR:   return LowerSCALAR_TO_VECTOR(Op, DAG);
   case ISD::INSERT_VECTOR_ELT:  return LowerINSERT_VECTOR_ELT(Op, DAG);
   case ISD::MUL:                return LowerMUL(Op, DAG);
@@ -18661,7 +18726,7 @@ void PPCTargetLowering::LowerAsmOperandForConstraint(SDValue Op,
 void PPCTargetLowering::CollectTargetIntrinsicOperands(const CallInst &I,
                                               SmallVectorImpl<SDValue> &Ops,
                                               SelectionDAG &DAG) const {
-  if (I.getNumOperands() <= 1)
+  if (Ops.size() <= 1)
     return;
   if (!isa<ConstantSDNode>(Ops[1].getNode()))
     return;

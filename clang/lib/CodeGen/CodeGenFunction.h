@@ -2246,6 +2246,9 @@ public:
     case QualType::DK_none:
       return false;
     case QualType::DK_cxx_destructor:
+      return getLangOpts().Exceptions &&
+             (!getTarget().getTriple().isOSXbox360() ||
+              getLangOpts().CXXExceptions);
     case QualType::DK_objc_weak_lifetime:
     case QualType::DK_nontrivial_c_struct:
       return getLangOpts().Exceptions;

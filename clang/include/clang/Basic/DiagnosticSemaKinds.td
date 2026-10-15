@@ -8250,6 +8250,12 @@ def err_mixing_cxx_try_seh_try : Error<
   "in the same function as SEH '__try'">;
 def err_seh_try_unsupported : Error<
   "SEH '__try' is not supported on this target">;
+def err_xbox_seh_object_unwind : Error<
+  "cannot use SEH '__try' in a function that requires C++ object unwinding on Xbox 360">;
+def err_xbox_seh_alloca : Error<
+  "%0 cannot be called from a filter expression or '__finally' block on Xbox 360">;
+def err_xbox_seh_except_in_finally : Error<
+  "cannot use '__except' in a '__finally' block on Xbox 360">;
 def note_conflicting_try_here : Note<
   "conflicting %0 here">;
 def warn_jump_out_of_seh_finally : Warning<

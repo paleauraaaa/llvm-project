@@ -394,6 +394,10 @@ pushTemporaryCleanup(CodeGenFunction &CGF, const MaterializeTemporaryExpr *M,
   if (!ReferenceTemporaryDtor)
     return;
 
+  CleanupKind TemporaryCleanup = NormalAndEHCleanup;
+  if (CGF.getTarget().getTriple().isOSXbox360())
+    TemporaryCleanup = CGF.getCleanupKind(QualType::DK_cxx_destructor);
+
   // Call the destructor for the temporary.
   switch (M->getStorageDuration()) {
   case SD_Static:
@@ -417,16 +421,18 @@ pushTemporaryCleanup(CodeGenFunction &CGF, const MaterializeTemporaryExpr *M,
   }
 
   case SD_FullExpression:
-    CGF.pushDestroy(NormalAndEHCleanup, ReferenceTemporary, E->getType(),
+    CGF.pushDestroy(TemporaryCleanup, ReferenceTemporary, E->getType(),
                     CodeGenFunction::destroyCXXObject,
-                    CGF.getLangOpts().Exceptions);
+                    CGF.getLangOpts().Exceptions &&
+                        (TemporaryCleanup & EHCleanup));
     break;
 
   case SD_Automatic:
-    CGF.pushLifetimeExtendedDestroy(NormalAndEHCleanup,
+    CGF.pushLifetimeExtendedDestroy(TemporaryCleanup,
                                     ReferenceTemporary, E->getType(),
                                     CodeGenFunction::destroyCXXObject,
-                                    CGF.getLangOpts().Exceptions);
+                                    CGF.getLangOpts().Exceptions &&
+                                        (TemporaryCleanup & EHCleanup));
     break;
 
   case SD_Dynamic:

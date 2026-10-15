@@ -3354,6 +3354,15 @@ void SelectionDAGBuilder::visitInvoke(const InvokeInst &I) {
           // a block referenced by EH table
           // so dtor-funclet not removed by opts
           EHPadMBB->setMachineBlockAddressTaken();
+      if (Fn->getIntrinsicID() == Intrinsic::seh_try_end &&
+          DAG.getTarget().getTargetTriple().isOSXbox360()) {
+        const TargetLowering &TLI = DAG.getTargetLoweringInfo();
+        SDLoc DL = getCurSDLoc();
+        DAG.setRoot(DAG.getNode(
+           ISD::INTRINSIC_VOID, DL, MVT::Other, getControlRoot(),
+           DAG.getTargetConstant(Intrinsic::seh_try_end, DL,
+                                 TLI.getPointerTy(DAG.getDataLayout()))));
+      }
       break;
     case Intrinsic::experimental_patchpoint_void:
     case Intrinsic::experimental_patchpoint:

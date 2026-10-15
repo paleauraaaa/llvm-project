@@ -1675,7 +1675,8 @@ void CodeGenFunction::EmitSEHTryStmt(const SEHTryStmt &S) {
 
     llvm::BasicBlock *TryBB = nullptr;
     // IsEHa: emit an invoke to _seh_try_begin() runtime for -EHa
-    if (getLangOpts().EHAsynch) {
+    if (getLangOpts().EHAsynch ||
+        getTarget().getTriple().isOSXbox360()) {
       EmitRuntimeCallOrInvoke(getSehTryBeginFn(CGM));
       if (SEHTryEpilogueStack.size() == 1) // outermost only
         TryBB = Builder.GetInsertBlock();
@@ -1729,10 +1730,19 @@ void CodeGenFunction::VolatilizeTryBlocks(
 }
 
 namespace {
+// Route every normal exit from an Xbox except scope through the asynchronous
+// scope-end machinery, including exits without a lexical fallthrough.
+struct PerformSEHTryExit final : EHScopeStack::Cleanup {
+  bool isSEHTryExit() const override { return true; }
+  void Emit(CodeGenFunction &, Flags) override {}
+};
+
 struct PerformSEHFinally final : EHScopeStack::Cleanup {
   llvm::Function *OutlinedFinally;
   PerformSEHFinally(llvm::Function *OutlinedFinally)
       : OutlinedFinally(OutlinedFinally) {}
+
+  bool isSEHFinally() const override { return true; }
 
   void Emit(CodeGenFunction &CGF, Flags F) override {
     ASTContext &Context = CGF.getContext();
@@ -1744,7 +1754,8 @@ struct PerformSEHFinally final : EHScopeStack::Cleanup {
     QualType ArgTys[2] = {Context.UnsignedCharTy, Context.VoidPtrTy};
     llvm::Value *FP = nullptr;
     // If CFG.IsOutlinedSEHHelper is true, then we are within a finally block.
-    if (CGF.IsOutlinedSEHHelper) {
+    if (CGF.IsOutlinedSEHHelper &&
+        !CGF.getTarget().getTriple().isOSXbox360()) {
       FP = &CGF.CurFn->arg_begin()[1];
     } else {
       llvm::Function *LocalAddrFn =
@@ -1767,6 +1778,33 @@ struct PerformSEHFinally final : EHScopeStack::Cleanup {
       IsForEH = CGF.Builder.CreateICmpNE(Load, Zero);
     }
 
+    llvm::BasicBlock *UnwindCont = nullptr;
+    if (CGF.getTarget().getTriple().isOSXbox360() && !F.isForEHCleanup() &&
+        F.hasExitSwitch() && F.getSEHUnwindDest()) {
+      llvm::BasicBlock *Unwind = CGF.createBasicBlock("seh.localunwind");
+      llvm::BasicBlock *Normal = CGF.createBasicBlock("seh.finally.normal");
+      UnwindCont = CGF.createBasicBlock("seh.localunwind.cont");
+      CGF.Builder.CreateCondBr(IsForEH, Unwind, Normal);
+      CGF.EmitBlock(Unwind);
+
+      llvm::FunctionType *Ty = llvm::FunctionType::get(
+          CGM.VoidTy, {CGM.VoidPtrTy, CGM.VoidPtrTy}, false);
+      llvm::FunctionCallee JumpUnwind =
+          CGM.CreateRuntimeFunction(Ty, "__jump_unwind");
+      llvm::BlockAddress *Target =
+          llvm::BlockAddress::get(CGF.CurFn, UnwindCont);
+      auto Bundles = CGF.getBundlesForFunclet(JumpUnwind.getCallee());
+      llvm::InvokeInst *Call = CGF.Builder.CreateInvoke(
+          JumpUnwind, UnwindCont, F.getSEHUnwindDest(), {FP, Target}, Bundles);
+      // The runtime resumes at Target, not at the return address of the call.
+      // Model nonlocal resumption and do not merge different unwind sites.
+      Call->addFnAttr(llvm::Attribute::ReturnsTwice);
+      Call->addFnAttr(llvm::Attribute::NoMerge);
+
+      CGF.EmitBlock(Normal);
+      IsForEH = llvm::ConstantInt::get(CGF.ConvertType(ArgTys[0]), 0);
+    }
+
     Args.add(RValue::get(IsForEH), ArgTys[0]);
     Args.add(RValue::get(FP), ArgTys[1]);
 
@@ -1775,7 +1813,12 @@ struct PerformSEHFinally final : EHScopeStack::Cleanup {
         CGM.getTypes().arrangeBuiltinFunctionCall(Context.VoidTy, Args);
 
     auto Callee = CGCallee::forDirect(OutlinedFinally);
-    CGF.EmitCall(FnInfo, Callee, ReturnValueSlot(), Args);
+    llvm::CallBase *Call;
+    CGF.EmitCall(FnInfo, Callee, ReturnValueSlot(), Args, &Call);
+    if (CGF.getTarget().getTriple().isOSXbox360())
+      Call->setCallingConv(llvm::CallingConv::PPC_Xbox360_SEH);
+    if (UnwindCont)
+      CGF.EmitBlock(UnwindCont);
   }
 };
 } // end anonymous namespace
@@ -1840,6 +1883,19 @@ struct CaptureFinder : ConstStmtVisitor<CaptureFinder> {
 Address CodeGenFunction::recoverAddrOfEscapedLocal(CodeGenFunction &ParentCGF,
                                                    Address ParentVar,
                                                    llvm::Value *ParentFP) {
+  if (getTarget().getTriple().isOSXbox360() &&
+      !isa<llvm::AllocaInst>(ParentVar.getBasePointer())) {
+    // A nested helper may capture an address recovered by its parent. Escape
+    // that address in the immediate parent's frame, rather than confusing the
+    // original owner's frame with the outlining parent's frame.
+    Address Capture = ParentCGF.CreateMemTemp(getContext().VoidPtrTy,
+                                             "seh.capture");
+    ParentCGF.Builder.CreateStore(ParentVar.emitRawPointer(ParentCGF), Capture);
+    Address Recovered = recoverAddrOfEscapedLocal(ParentCGF, Capture, ParentFP);
+    CGBuilderTy Builder(*this, AllocaInsertPt);
+    return ParentVar.withPointer(Builder.CreateLoad(Recovered), KnownNonNull);
+  }
+
   llvm::CallInst *RecoverCall = nullptr;
   CGBuilderTy Builder(*this, AllocaInsertPt);
   if (auto *ParentAlloca =
@@ -1910,7 +1966,7 @@ void CodeGenFunction::EmitCapturedLocals(CodeGenFunction &ParentCGF,
   }
 
   llvm::Value *ParentFP = EntryFP;
-  if (IsFilter) {
+  if (IsFilter && !getTarget().getTriple().isOSXbox360()) {
     // Given whatever FP the runtime provided us in EntryFP, recover the true
     // frame pointer of the parent function. We only need to do this in filters,
     // since finally funclets recover the parent FP for us.
@@ -2074,6 +2130,11 @@ void CodeGenFunction::startOutlinedSEHHelper(CodeGenFunction &ParentCGF,
   CurSEHParent = ParentCGF.CurSEHParent;
 
   CGM.SetInternalFunctionAttributes(GlobalDecl(), CurFn, FnInfo);
+  if (getTarget().getTriple().isOSXbox360()) {
+    Fn->setCallingConv(llvm::CallingConv::PPC_Xbox360_SEH);
+    Fn->addFnAttr(llvm::Attribute::NoInline);
+    CGM.addUsedGlobal(Fn);
+  }
   EmitCapturedLocals(ParentCGF, OutlinedStmt, IsFilter);
 }
 
@@ -2200,7 +2261,8 @@ void CodeGenFunction::EnterSEHTryStmt(const SEHTryStmt &S) {
   llvm::Constant *C =
     ConstantEmitter(*this).tryEmitAbstract(Except->getFilterExpr(),
                                            getContext().IntTy);
-  if (CGM.getTarget().getTriple().getArch() != llvm::Triple::x86 && C &&
+  if (CGM.getTarget().getTriple().getArch() != llvm::Triple::x86 &&
+      !getTarget().getTriple().isOSXbox360() && C &&
       C->isOneValue()) {
     CatchScope->setCatchAllHandler(0, createBasicBlock("__except"));
     return;
@@ -2211,9 +2273,14 @@ void CodeGenFunction::EnterSEHTryStmt(const SEHTryStmt &S) {
   llvm::Function *FilterFunc =
       HelperCGF.GenerateSEHFilterFunction(*this, *Except);
   CatchScope->setHandler(0, FilterFunc, createBasicBlock("__except.ret"));
+  if (getTarget().getTriple().isOSXbox360())
+    EHStack.pushCleanup<PerformSEHTryExit>(NormalCleanup);
 }
 
 void CodeGenFunction::ExitSEHTryStmt(const SEHTryStmt &S) {
+  if (getTarget().getTriple().isOSXbox360() && S.getExceptHandler())
+    PopCleanupBlock();
+
   // Just pop the cleanup if it's a __finally block.
   if (S.getFinallyHandler()) {
     PopCleanupBlock();
@@ -2221,7 +2288,8 @@ void CodeGenFunction::ExitSEHTryStmt(const SEHTryStmt &S) {
   }
 
   // IsEHa: emit an invoke _seh_try_end() to mark end of FT flow
-  if (getLangOpts().EHAsynch && Builder.GetInsertBlock()) {
+  if (getLangOpts().EHAsynch && !getTarget().getTriple().isOSXbox360() &&
+      Builder.GetInsertBlock()) {
     llvm::FunctionCallee SehTryEnd = getSehTryEndFn(CGM);
     EmitRuntimeCallOrInvoke(SehTryEnd);
   }
