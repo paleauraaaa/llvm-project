@@ -451,6 +451,10 @@ BitVector PPCRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   }
 
   if (Subtarget.hasVMX128()) {
+    if (Subtarget.reserveVMX128())
+      for (unsigned RegNo = 64; RegNo <= 95; ++RegNo)
+        markSuperRegs(Reserved, getVMX128Register(RegNo));
+
     // Architectural reads must not observe registers reused by allocation,
     // including when the read occurs outside the entry block.
     for (const Instruction &I : instructions(MF.getFunction())) {

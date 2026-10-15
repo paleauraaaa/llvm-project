@@ -1,0 +1,122 @@
+# RUN: llc -mtriple=powerpc64-ibm-xbox360 -mcpu=xenon -run-pass=greedy,virtregrewriter -verify-machineinstrs %s -o - | FileCheck %s --check-prefix=DEFAULT
+# RUN: llc -mtriple=powerpc64-ibm-xbox360 -mcpu=xenon -mattr=+vmx128-reserve -run-pass=greedy,virtregrewriter -verify-machineinstrs %s -o - | FileCheck %s --check-prefix=RESERVE
+# RUN: llc -mtriple=powerpc64-ibm-xbox360 -mcpu=xenon -mattr=+vmx128-reserve,-vmx128-reserve -run-pass=greedy,virtregrewriter -verify-machineinstrs %s -o - | FileCheck %s --check-prefix=DEFAULT
+
+--- |
+  define void @register_hints() { ret void }
+...
+---
+name: register_hints
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: vr128rc, preferred-register: '$v64' }
+  - { id: 1, class: vr128rc, preferred-register: '$v65' }
+  - { id: 2, class: vr128rc, preferred-register: '$v66' }
+  - { id: 3, class: vr128rc, preferred-register: '$v67' }
+  - { id: 4, class: vr128rc, preferred-register: '$v68' }
+  - { id: 5, class: vr128rc, preferred-register: '$v69' }
+  - { id: 6, class: vr128rc, preferred-register: '$v70' }
+  - { id: 7, class: vr128rc, preferred-register: '$v71' }
+  - { id: 8, class: vr128rc, preferred-register: '$v72' }
+  - { id: 9, class: vr128rc, preferred-register: '$v73' }
+  - { id: 10, class: vr128rc, preferred-register: '$v74' }
+  - { id: 11, class: vr128rc, preferred-register: '$v75' }
+  - { id: 12, class: vr128rc, preferred-register: '$v76' }
+  - { id: 13, class: vr128rc, preferred-register: '$v77' }
+  - { id: 14, class: vr128rc, preferred-register: '$v78' }
+  - { id: 15, class: vr128rc, preferred-register: '$v79' }
+  - { id: 16, class: vr128rc, preferred-register: '$v80' }
+  - { id: 17, class: vr128rc, preferred-register: '$v81' }
+  - { id: 18, class: vr128rc, preferred-register: '$v82' }
+  - { id: 19, class: vr128rc, preferred-register: '$v83' }
+  - { id: 20, class: vr128rc, preferred-register: '$v84' }
+  - { id: 21, class: vr128rc, preferred-register: '$v85' }
+  - { id: 22, class: vr128rc, preferred-register: '$v86' }
+  - { id: 23, class: vr128rc, preferred-register: '$v87' }
+  - { id: 24, class: vr128rc, preferred-register: '$v88' }
+  - { id: 25, class: vr128rc, preferred-register: '$v89' }
+  - { id: 26, class: vr128rc, preferred-register: '$v90' }
+  - { id: 27, class: vr128rc, preferred-register: '$v91' }
+  - { id: 28, class: vr128rc, preferred-register: '$v92' }
+  - { id: 29, class: vr128rc, preferred-register: '$v93' }
+  - { id: 30, class: vr128rc, preferred-register: '$v94' }
+  - { id: 31, class: vr128rc, preferred-register: '$v95' }
+  - { id: 32, class: vr128rc, preferred-register: '$v96' }
+# DEFAULT-LABEL: name: register_hints
+# DEFAULT-COUNT-32: $v{{(6[4-9]|[78][0-9]|9[0-5])}} = IMPLICIT_DEF
+# DEFAULT: $v96 = IMPLICIT_DEF
+# RESERVE-LABEL: name: register_hints
+# RESERVE-NOT: $v{{(6[4-9]|[78][0-9]|9[0-5])}}
+# RESERVE: $v96 = IMPLICIT_DEF
+# RESERVE-NOT: $v{{(6[4-9]|[78][0-9]|9[0-5])}}
+body: |
+  bb.0:
+    liveins: $x3
+    %0:vr128rc = IMPLICIT_DEF
+    %1:vr128rc = IMPLICIT_DEF
+    %2:vr128rc = IMPLICIT_DEF
+    %3:vr128rc = IMPLICIT_DEF
+    %4:vr128rc = IMPLICIT_DEF
+    %5:vr128rc = IMPLICIT_DEF
+    %6:vr128rc = IMPLICIT_DEF
+    %7:vr128rc = IMPLICIT_DEF
+    %8:vr128rc = IMPLICIT_DEF
+    %9:vr128rc = IMPLICIT_DEF
+    %10:vr128rc = IMPLICIT_DEF
+    %11:vr128rc = IMPLICIT_DEF
+    %12:vr128rc = IMPLICIT_DEF
+    %13:vr128rc = IMPLICIT_DEF
+    %14:vr128rc = IMPLICIT_DEF
+    %15:vr128rc = IMPLICIT_DEF
+    %16:vr128rc = IMPLICIT_DEF
+    %17:vr128rc = IMPLICIT_DEF
+    %18:vr128rc = IMPLICIT_DEF
+    %19:vr128rc = IMPLICIT_DEF
+    %20:vr128rc = IMPLICIT_DEF
+    %21:vr128rc = IMPLICIT_DEF
+    %22:vr128rc = IMPLICIT_DEF
+    %23:vr128rc = IMPLICIT_DEF
+    %24:vr128rc = IMPLICIT_DEF
+    %25:vr128rc = IMPLICIT_DEF
+    %26:vr128rc = IMPLICIT_DEF
+    %27:vr128rc = IMPLICIT_DEF
+    %28:vr128rc = IMPLICIT_DEF
+    %29:vr128rc = IMPLICIT_DEF
+    %30:vr128rc = IMPLICIT_DEF
+    %31:vr128rc = IMPLICIT_DEF
+    %32:vr128rc = IMPLICIT_DEF
+    STVX128 %0, $zero8, $x3
+    STVX128 %1, $zero8, $x3
+    STVX128 %2, $zero8, $x3
+    STVX128 %3, $zero8, $x3
+    STVX128 %4, $zero8, $x3
+    STVX128 %5, $zero8, $x3
+    STVX128 %6, $zero8, $x3
+    STVX128 %7, $zero8, $x3
+    STVX128 %8, $zero8, $x3
+    STVX128 %9, $zero8, $x3
+    STVX128 %10, $zero8, $x3
+    STVX128 %11, $zero8, $x3
+    STVX128 %12, $zero8, $x3
+    STVX128 %13, $zero8, $x3
+    STVX128 %14, $zero8, $x3
+    STVX128 %15, $zero8, $x3
+    STVX128 %16, $zero8, $x3
+    STVX128 %17, $zero8, $x3
+    STVX128 %18, $zero8, $x3
+    STVX128 %19, $zero8, $x3
+    STVX128 %20, $zero8, $x3
+    STVX128 %21, $zero8, $x3
+    STVX128 %22, $zero8, $x3
+    STVX128 %23, $zero8, $x3
+    STVX128 %24, $zero8, $x3
+    STVX128 %25, $zero8, $x3
+    STVX128 %26, $zero8, $x3
+    STVX128 %27, $zero8, $x3
+    STVX128 %28, $zero8, $x3
+    STVX128 %29, $zero8, $x3
+    STVX128 %30, $zero8, $x3
+    STVX128 %31, $zero8, $x3
+    STVX128 %32, $zero8, $x3
+    BLR8 implicit $lr8, implicit $rm
+...
