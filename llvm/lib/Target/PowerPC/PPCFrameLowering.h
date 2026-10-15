@@ -108,6 +108,9 @@ public:
                         MachineBasicBlock &PrologMBB) const override;
 
   bool needsFP(const MachineFunction &MF) const;
+  bool needsXboxEHStackPointer(const MachineFunction &MF) const;
+  StackOffset getFrameIndexReference(const MachineFunction &MF, int FI,
+                                    Register &FrameReg) const override;
   void replaceFPWithRealFP(MachineFunction &MF) const;
 
   void determineCalleeSaves(MachineFunction &MF, BitVector &SavedRegs,

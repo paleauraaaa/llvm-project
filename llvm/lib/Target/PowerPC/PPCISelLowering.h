@@ -1144,6 +1144,8 @@ namespace llvm {
     Register
     getExceptionSelectorRegister(const Constant *PersonalityFn) const override;
 
+    bool needsFixedCatchObjects() const override;
+
     /// Override to support customized stack guard loading.
     bool useLoadStackGuardNode(const Module &M) const override;
     void insertSSPDeclarations(Module &M) const override;

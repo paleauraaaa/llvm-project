@@ -422,6 +422,8 @@ BitVector PPCRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
 
   if (TFI->needsFP(MF))
     markSuperRegs(Reserved, PPC::R31);
+  if (TFI->needsXboxEHStackPointer(MF))
+    markSuperRegs(Reserved, PPC::R30);
 
   bool IsPositionIndependent = TM.isPositionIndependent();
   if (hasBasePointer(MF)) {
@@ -903,7 +905,8 @@ void PPCRegisterInfo::prepareDynamicAlloca(MachineBasicBlock::iterator II,
 
   if (MI.getOpcode() == PPC::XBOX_PROBED_ALLOCA) {
     // The caller obtains the backchain after the runtime helper call.
-  } else if (MaxAlign < TargetAlign && isInt<16>(FrameSize)) {
+  } else if (!TFI->needsXboxEHStackPointer(MF) && MaxAlign < TargetAlign &&
+             isInt<16>(FrameSize)) {
     if (Use64BitStackOps)
       BuildMI(MBB, II, dl, TII.get(PPC::ADDI8), FramePointer)
           .addReg(PPC::X31)
@@ -1758,8 +1761,12 @@ PPCRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
       Subtarget.isTargetXbox360() &&
       (MI.getFlag(MachineInstr::FrameSetup) ||
        MI.getFlag(MachineInstr::FrameDestroy));
+  // Funclet spills belong to the runtime-call frame, not the parent locals.
   if (IsXboxCalleeSave)
     FrameReg = PPC::X1;
+  else if (Subtarget.isTargetXbox360() && MF.hasEHFunclets() &&
+           MFI.isSpillSlotObjectIndex(FrameIndex))
+    getFrameLowering(MF)->getFrameIndexReference(MF, FrameIndex, FrameReg);
   if (Subtarget.isTargetXbox360() &&
       PPC::G8RCRegClass.contains(FrameReg)) {
     const TargetRegisterClass *FrameRC =

@@ -617,6 +617,7 @@ bool AsmPrinter::doInitialization(Module &M) {
       break;
     case WinEH::EncodingType::X86:
     case WinEH::EncodingType::Itanium:
+    case WinEH::EncodingType::Xbox360:
       ES = new WinException(this);
       break;
     }
