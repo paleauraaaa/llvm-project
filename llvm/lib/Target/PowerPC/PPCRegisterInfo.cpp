@@ -1682,6 +1682,13 @@ PPCRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
   MachineFrameInfo &MFI = MF.getFrameInfo();
   DebugLoc dl = MI.getDebugLoc();
 
+  if (Subtarget.isTargetXbox360() &&
+      MI.getOpcode() == TargetOpcode::LOCAL_ESCAPE) {
+    int FI = MI.getOperand(FIOperandNum).getIndex();
+    MI.getOperand(FIOperandNum).ChangeToImmediate(MFI.getObjectOffset(FI));
+    return false;
+  }
+
   unsigned OffsetOperandNo = getOffsetONFromFION(MI, FIOperandNum);
 
   // Get the frame index.
@@ -1846,6 +1853,8 @@ PPCRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
   // offset in.
 
   bool is64Bit = TM.isPPC64();
+  if (Subtarget.isTargetXbox360() && PPC::GPRCRegClass.contains(FrameReg))
+    is64Bit = false;
   const TargetRegisterClass *G8RC = &PPC::G8RCRegClass;
   const TargetRegisterClass *GPRC = &PPC::GPRCRegClass;
   const TargetRegisterClass *RC = is64Bit ? G8RC : GPRC;

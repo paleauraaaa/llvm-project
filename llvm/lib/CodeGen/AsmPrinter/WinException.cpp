@@ -139,7 +139,7 @@ void WinException::endFunction(const MachineFunction *MF) {
   endFuncletImpl();
 
   // endFunclet will emit the necessary .xdata tables for table-based SEH.
-  if (Per == EHPersonality::MSVC_TableSEH && MF->hasEHFunclets())
+  if (Per == EHPersonality::MSVC_TableSEH && MF->hasEHFunclets() && !isXbox360)
     return;
 
   if (shouldEmitPersonality || shouldEmitLSDA) {
@@ -579,13 +579,19 @@ void WinException::emitCSpecificHandlerTable(const MachineFunction *MF) {
   MCContext &Ctx = Asm->OutContext;
   const WinEHFuncInfo &FuncInfo = *MF->getWinEHFuncInfo();
 
+  if (isXbox360) {
+    StringRef Name = GlobalValue::dropLLVMManglingEscape(MF->getName());
+    OS.emitValueToAlignment(Align(4));
+    OS.emitLabel(Ctx.getOrCreateSymbol(Twine("$sehxdata$") + Name));
+  }
+
   bool VerboseAsm = OS.isVerboseAsm();
   auto AddComment = [&](const Twine &Comment) {
     if (VerboseAsm)
       OS.AddComment(Comment);
   };
 
-  if (!isAArch64) {
+  if (!isAArch64 && !isXbox360) {
     // Emit a label assignment with the SEH frame offset so we can use it for
     // llvm.eh.recoverfp.
     StringRef FLinkageName =
@@ -626,6 +632,75 @@ void WinException::emitCSpecificHandlerTable(const MachineFunction *MF) {
   MachineFunction::const_iterator Stop = std::next(MF->begin());
   while (Stop != End && !Stop->isEHFuncletEntry())
     ++Stop;
+  if (isXbox360) {
+    struct ScopeRange {
+      const MCSymbol *Begin;
+      const MCSymbol *End;
+      unsigned BeginPosition;
+      unsigned EndPosition;
+    };
+    DenseMap<const MCSymbol *, unsigned> Positions;
+    SmallVector<unsigned> NonBranchCounts(1, 0);
+    unsigned Position = 0;
+    for (auto MBB = MF->begin(); MBB != Stop; ++MBB) {
+      // Do not extend a try range across an except entry, even if the
+      // handler happens to consist only of a branch.
+      if (MBB->isEHPad()) {
+        ++Position;
+        NonBranchCounts.push_back(NonBranchCounts.back() + 1);
+      }
+      for (const MachineInstr &MI : *MBB) {
+        if (MI.isEHLabel())
+          Positions[MI.getOperand(0).getMCSymbol()] = Position;
+        else if (!MI.isMetaInstruction()) {
+          ++Position;
+          NonBranchCounts.push_back(NonBranchCounts.back() + !MI.isBranch());
+        }
+      }
+    }
+    SmallVector<SmallVector<ScopeRange>> Ranges(FuncInfo.SEHUnwindMap.size());
+    for (const auto &[Begin, StateAndEnd] : FuncInfo.LabelToStateMap) {
+      auto B = Positions.find(Begin);
+      auto E = Positions.find(StateAndEnd.second);
+      if (B == Positions.end() || E == Positions.end() ||
+          B->second == E->second)
+        continue;
+      for (int State = StateAndEnd.first; State != -1;
+           State = FuncInfo.SEHUnwindMap[State].ToState)
+        Ranges[State].push_back(
+            {Begin, StateAndEnd.second, B->second, E->second});
+    }
+    // Local unwind compares the target PC with each enclosing scope's
+    // range. Denormalized per-state rows would run an enclosing finally
+    // when the target is in a different row of that same scope. Merge the
+    // ranges per scope, and always visit inner scopes before their parents.
+    for (int State = static_cast<int>(Ranges.size()) - 1; State >= 0; --State) {
+      auto &ScopeRanges = Ranges[State];
+      llvm::sort(ScopeRanges, [](const ScopeRange &L, const ScopeRange &R) {
+        return L.BeginPosition < R.BeginPosition;
+      });
+      std::optional<ScopeRange> Current;
+      for (const ScopeRange &Range : ScopeRanges) {
+        if (!Current) {
+          Current = Range;
+        } else if (Range.BeginPosition <= Current->EndPosition ||
+                   NonBranchCounts[Range.BeginPosition] ==
+                       NonBranchCounts[Current->EndPosition]) {
+          if (Range.EndPosition > Current->EndPosition) {
+            Current->End = Range.End;
+            Current->EndPosition = Range.EndPosition;
+          }
+        } else {
+          emitSEHActionsForRange(FuncInfo, Current->Begin, Current->End, State);
+          Current = Range;
+        }
+      }
+      if (Current)
+        emitSEHActionsForRange(FuncInfo, Current->Begin, Current->End, State);
+    }
+    OS.emitLabel(TableEnd);
+    return;
+  }
   for (const auto &StateChange :
        InvokeStateChangeIterator::range(FuncInfo, MF->begin(), Stop)) {
     // Emit all the actions for the state we just transitioned out of
@@ -663,21 +738,29 @@ void WinException::emitSEHActionsForRange(const WinEHFuncInfo &FuncInfo,
     } else {
       // For an except, the filter can be 1 (catch-all) or a function
       // label.
-      FilterOrFinally = UME.Filter ? create32bitRef(UME.Filter)
-                                   : MCConstantExpr::create(1, Ctx);
+      if (UME.Filter)
+        FilterOrFinally = create32bitRef(UME.Filter);
+      else if (isXbox360)
+        FilterOrFinally = create32bitRef(Ctx.getOrCreateSymbol(
+            Twine("$sehfilter$") +
+            GlobalValue::dropLLVMManglingEscape(Asm->MF->getName())));
+      else
+        FilterOrFinally = MCConstantExpr::create(1, Ctx);
       ExceptOrNull = create32bitRef(Handler->getSymbol());
     }
 
     AddComment("LabelStart");
     OS.emitValue(getLabel(BeginLabel), 4);
     AddComment("LabelEnd");
-    OS.emitValue(getLabelPlusOne(EndLabel), 4);
+    OS.emitValue(isXbox360 ? getLabel(EndLabel) : getLabelPlusOne(EndLabel), 4);
     AddComment(UME.IsFinally ? "FinallyFunclet" : UME.Filter ? "FilterFunction"
                                                              : "CatchAll");
     OS.emitValue(FilterOrFinally, 4);
     AddComment(UME.IsFinally ? "Null" : "ExceptionHandler");
     OS.emitValue(ExceptOrNull, 4);
 
+    if (isXbox360)
+      break;
     assert(UME.ToState < State && "states should decrease");
     State = UME.ToState;
   }

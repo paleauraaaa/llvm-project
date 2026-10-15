@@ -1556,6 +1556,8 @@ bool PPCFastISel::finishCall(MVT RetVT, CallLoweringInfo &CLI, unsigned &NumByte
 
 bool PPCFastISel::fastLowerCall(CallLoweringInfo &CLI) {
   CallingConv::ID CC  = CLI.CallConv;
+  if (CC == CallingConv::PPC_Xbox360_SEH)
+    return false;
   bool IsTailCall     = CLI.IsTailCall;
   bool IsVarArg       = CLI.IsVarArg;
   const Value *Callee = CLI.Callee;

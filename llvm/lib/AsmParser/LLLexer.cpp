@@ -683,6 +683,7 @@ lltok::Kind LLLexer::LexIdentifier() {
   KEYWORD(m68k_rtdcc);
   KEYWORD(graalcc);
   KEYWORD(riscv_vector_cc);
+  KEYWORD(ppc_xbox360_sehcc);
 
   KEYWORD(cc);
   KEYWORD(c);

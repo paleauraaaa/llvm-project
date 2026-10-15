@@ -44,6 +44,7 @@
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/StackMaps.h"
 #include "llvm/CodeGen/TargetLoweringObjectFileImpl.h"
+#include "llvm/CodeGen/WinEHFuncInfo.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/EHPersonalities.h"
 #include "llvm/IR/GlobalValue.h"
@@ -354,21 +355,28 @@ void PPCXbox360AsmPrinter::emitHandlerPrefix(Align Alignment) {
   Alignment = std::max(Alignment, Align(8));
   emitAlignment(Alignment);
   OutStreamer->emitZeros(Alignment.value() - 8);
-  OutStreamer->emitSymbolValue(OutContext.getOrCreateSymbol("__CxxFrameHandler"),
+  const Function &F = MF->getFunction();
+  bool IsSEH =
+      classifyEHPersonality(F.getPersonalityFn()) == EHPersonality::MSVC_TableSEH;
+  OutStreamer->emitSymbolValue(getSymbol(cast<Function>(
+                                  F.getPersonalityFn()->stripPointerCasts())),
                               4);
   StringRef Name = GlobalValue::dropLLVMManglingEscape(MF->getName());
   OutStreamer->emitSymbolValue(
-      OutContext.getOrCreateSymbol(Twine("$cppxdata$") + Name), 4);
+      OutContext.getOrCreateSymbol(Twine(IsSEH ? "$sehxdata$" : "$cppxdata$") +
+                                   Name), 4);
 }
 
 void PPCXbox360AsmPrinter::emitFunctionEntryLabel() {
   const Function &F = MF->getFunction();
   if (F.hasPersonalityFn() &&
-      (classifyEHPersonality(F.getPersonalityFn()) != EHPersonality::MSVC_CXX ||
-       cast<Function>(F.getPersonalityFn()->stripPointerCasts())->getName() !=
-           "__CxxFrameHandler"))
+      cast<Function>(F.getPersonalityFn()->stripPointerCasts())->getName() !=
+          "__CxxFrameHandler" &&
+      cast<Function>(F.getPersonalityFn()->stripPointerCasts())->getName() !=
+          "__C_specific_handler")
     report_fatal_error(
-        "Xbox 360 handler-bearing unwind records require __CxxFrameHandler");
+        "Xbox 360 handler-bearing unwind records require __CxxFrameHandler "
+        "or __C_specific_handler");
   if (MF->hasEHFunclets())
     emitHandlerPrefix(MF->getAlignment());
   PPCAsmPrinter::emitFunctionEntryLabel();
@@ -469,6 +477,18 @@ void PPCXbox360AsmPrinter::emitBasicBlockStart(const MachineBasicBlock &MBB) {
 
 void PPCXbox360AsmPrinter::emitInstruction(const MachineInstr *MI) {
   switch (MI->getOpcode()) {
+  case PPC::XBOX_LOCAL_RECOVER: {
+    const MCExpr *Offset = MCSymbolRefExpr::create(
+        MI->getOperand(1).getMCSymbol(), OutContext);
+    Register Dest = MI->getOperand(0).getReg();
+    EmitToStreamer(*OutStreamer,
+                   MCInstBuilder(PPC::LIS).addReg(Dest).addExpr(
+                       PPCMCExpr::createHa(Offset, OutContext)));
+    EmitToStreamer(*OutStreamer,
+                   MCInstBuilder(PPC::ADDI).addReg(Dest).addReg(Dest).addExpr(
+                       PPCMCExpr::createLo(Offset, OutContext)));
+    break;
+  }
   case PPC::XBOX_CATCHRET: {
     const MCSymbol *Continuation = MI->getOperand(0).getMBB()->getSymbol();
     const MCExpr *Address = MCSymbolRefExpr::create(Continuation, OutContext);
@@ -495,6 +515,24 @@ void PPCXbox360AsmPrinter::emitInstruction(const MachineInstr *MI) {
 }
 
 void PPCXbox360AsmPrinter::emitFunctionBodyEnd() {
+  endUnwindRange();
+  const Function &F = MF->getFunction();
+  if (!MF->hasEHFunclets() || !F.hasPersonalityFn() ||
+      classifyEHPersonality(F.getPersonalityFn()) != EHPersonality::MSVC_TableSEH ||
+      !llvm::any_of(MF->getWinEHFuncInfo()->SEHUnwindMap,
+                    [](const SEHUnwindMapEntry &E) {
+                      return !E.IsFinally && !E.Filter;
+                    }))
+    return;
+
+  StringRef Name = GlobalValue::dropLLVMManglingEscape(MF->getName());
+  emitAlignment(Align(4));
+  UnwindBegin = OutContext.getOrCreateSymbol(Twine("$sehfilter$") + Name);
+  UnwindPrologueEnd = UnwindBegin;
+  HasHandler = false;
+  OutStreamer->emitLabel(UnwindBegin);
+  EmitToStreamer(*OutStreamer, MCInstBuilder(PPC::LI).addReg(PPC::R3).addImm(1));
+  EmitToStreamer(*OutStreamer, MCInstBuilder(PPC::BLR));
   endUnwindRange();
 }
 

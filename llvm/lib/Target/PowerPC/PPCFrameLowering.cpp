@@ -621,7 +621,12 @@ PPCFrameLowering::findScratchRegister(MachineBasicBlock *MBB,
 
   if (SR2) {
     assert (SR1 && "Asking for the second scratch register but not the first?");
-    *SR2 = R12;
+    bool HasSEHArguments =
+        Subtarget.isTargetXbox360() && !UseAtEnd &&
+        &MBB->getParent()->front() == MBB &&
+        MBB->getParent()->getFunction().getCallingConv() ==
+            CallingConv::PPC_Xbox360_SEH;
+    *SR2 = HasSEHArguments ? Register(PPC::X11) : R12;
   }
 
   // If MBB is an entry or exit block, use R0 and R12 as the scratch registers.
@@ -1000,6 +1005,14 @@ void PPCFrameLowering::emitPrologue(MachineFunction &MF,
     }
   };
 
+  bool PreserveSEHParent =
+      isXbox360 && !IsXboxFunclet && UseXboxStackProbe &&
+      MF.getFunction().getCallingConv() == CallingConv::PPC_Xbox360_SEH;
+  if (PreserveSEHParent)
+    BuildMI(MBB, MBBI, dl, OrInst, PPC::X10)
+        .addReg(PPC::X12)
+        .addReg(PPC::X12);
+
   if (IsXboxFunclet) {
     MBB.addLiveIn(PPC::X12);
     BuildMI(MBB, MBBI, dl, StoreInst)
@@ -1018,6 +1031,7 @@ void PPCFrameLowering::emitPrologue(MachineFunction &MF,
           .addReg(PPC::X12)
           .addReg(PPC::X0);
     }
+  }
 
   // If we need to spill the CR and the LR but we don't have two separate
   // registers available, we must spill them one at a time
@@ -1424,6 +1438,11 @@ void PPCFrameLowering::emitPrologue(MachineFunction &MF,
         .addReg(SPReg)
         .addReg(SPReg);
 
+  if (PreserveSEHParent)
+    BuildMI(MBB, PrologueEnd, dl, OrInst, PPC::X12)
+        .addReg(PPC::X10)
+        .addReg(PPC::X10);
+
   // If there is a frame pointer, copy R1 into R31
   if (HasFP && !IsXboxFunclet) {
     // Xbox saves precede the stack update, but FP addresses the allocated frame.
@@ -1828,7 +1847,9 @@ void PPCFrameLowering::emitEpilogue(MachineFunction &MF,
 
   // Get the number of bytes allocated from the FrameInfo.
   int64_t FrameSize = MFI.getStackSize();
-  if (isXbox360 && MF.getInfo<PPCFunctionInfo>()->isXboxEHFuncletBlock(&MBB))
+  bool IsXboxFunclet =
+      isXbox360 && MF.getInfo<PPCFunctionInfo>()->isXboxEHFuncletBlock(&MBB);
+  if (IsXboxFunclet)
     FrameSize = MF.getInfo<PPCFunctionInfo>()->getXboxEHFuncletFrameSize();
 
   // Check if the link register (LR) has been saved.
@@ -2007,7 +2028,8 @@ void PPCFrameLowering::emitEpilogue(MachineFunction &MF,
     // enabled (=> hasFastCall()==true) the fastcc call might contain a tail
     // call which invalidates the stack pointer value in SP(0). So we use the
     // value of R31 in this case. Similar situation exists with setjmp.
-    else if (FI->hasFastCall() || MF.exposesReturnsTwice()) {
+    else if (!IsXboxFunclet &&
+             (FI->hasFastCall() || MF.exposesReturnsTwice())) {
       assert(HasFP && "Expecting a valid frame pointer.");
       if (!HasRedZone)
         RBReg = FPReg;
@@ -2017,8 +2039,7 @@ void PPCFrameLowering::emitEpilogue(MachineFunction &MF,
       } else {
         TII.materializeImmPostRA(MBB, isXbox360 ? StackUpdateLoc : MBBI,
                                 dl, ScratchReg, FrameSize);
-        BuildMI(MBB, isXbox360 ? StackUpdateLoc : MBBI, dl, AddInst)
-          .addReg(RBReg)
+        BuildMI(MBB, isXbox360 ? StackUpdateLoc : MBBI, dl, AddInst, RBReg)
           .addReg(FPReg)
           .addReg(ScratchReg);
       }
@@ -2379,8 +2400,11 @@ void PPCFrameLowering::processFunctionBeforeFrameFinalized(MachineFunction &MF,
     // Those slots must be shared through the parent frame.
     for (const MachineBasicBlock &MBB : MF) {
       auto Scope = Scopes.find(&MBB);
-      assert(Scope != Scopes.end() && "Missing Xbox EH scope");
-      bool IsFunclet = Scope->second != MF.front().getNumber();
+      assert((Scopes.empty() || Scope != Scopes.end()) &&
+             "Missing Xbox EH scope");
+      int ScopeNumber =
+          Scopes.empty() ? MF.front().getNumber() : Scope->second;
+      bool IsFunclet = ScopeNumber != MF.front().getNumber();
       if (IsFunclet)
         FI->addXboxEHFuncletBlock(&MBB);
       for (const MachineInstr &MI : MBB)
@@ -2389,10 +2413,10 @@ void PPCFrameLowering::processFunctionBeforeFrameFinalized(MachineFunction &MF,
               !MF.getFrameInfo().isSpillSlotObjectIndex(MO.getIndex()))
             continue;
           auto [It, Inserted] =
-              SpillScopes.try_emplace(MO.getIndex(), Scope->second);
+              SpillScopes.try_emplace(MO.getIndex(), ScopeNumber);
           if (IsFunclet)
             FI->addXboxEHFuncletSpillSlot(MO.getIndex());
-          if (!Inserted && It->second != Scope->second)
+          if (!Inserted && It->second != ScopeNumber)
             FI->addSharedXboxEHSpillSlot(MO.getIndex());
         }
     }

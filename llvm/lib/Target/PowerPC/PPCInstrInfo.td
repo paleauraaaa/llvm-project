@@ -1330,6 +1330,10 @@ let isTerminator = 1, isBarrier = 1, isReturn = 1, isEHScopeReturn = 1,
       "#XBOX_CLEANUPRET", [(cleanupret bb)]>;
 }
 
+let Predicates = [IsXbox360], Size = 8 in
+def XBOX_LOCAL_RECOVER : PPCEmitTimePseudo<(outs gprc_nor0:$dst), (ins i32imm:$offset),
+                                         "#XBOX_LOCAL_RECOVER", []>;
+
 let isTerminator = 1, isBarrier = 1, PPC970_Unit = 7, hasSideEffects = 0 in {
   let isPredicable = 1, isReturn = 1, Uses = [LR, RM] in
     def BLR : XLForm_2_ext<19, 16, 20, 0, 0, (outs), (ins), "blr", IIC_BrB,

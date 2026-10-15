@@ -602,7 +602,8 @@ void llvm::calculateSEHStateNumbers(const Function *Fn,
 
   calculateStateNumbersForInvokes(Fn, FuncInfo);
 
-  bool IsEHa = Fn->getParent()->getModuleFlag("eh-asynch");
+  bool IsEHa = Fn->getParent()->getModuleFlag("eh-asynch") ||
+               Triple(Fn->getParent()->getTargetTriple()).isOSXbox360();
   if (IsEHa) {
     const BasicBlock *EntryBB = &(Fn->getEntryBlock());
     calculateSEHStateForAsynchEH(EntryBB, -1, FuncInfo);

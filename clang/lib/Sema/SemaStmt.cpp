@@ -23,8 +23,10 @@
 #include "clang/AST/IgnoreExpr.h"
 #include "clang/AST/StmtCXX.h"
 #include "clang/AST/StmtObjC.h"
+#include "clang/AST/StmtVisitor.h"
 #include "clang/AST/TypeLoc.h"
 #include "clang/AST/TypeOrdering.h"
+#include "clang/Basic/Builtins.h"
 #include "clang/Basic/TargetInfo.h"
 #include "clang/Lex/Preprocessor.h"
 #include "clang/Sema/EnterExpressionEvaluationContext.h"
@@ -4400,6 +4402,8 @@ StmtResult Sema::ActOnCXXTryBlock(SourceLocation TryLoc, Stmt *TryBlock,
                             Handlers);
 }
 
+static void diagnoseXboxSEHAlloca(Sema &S, const Stmt *Body);
+
 StmtResult Sema::ActOnSEHTryBlock(bool IsCXXTry, SourceLocation TryLoc,
                                   Stmt *TryBlock, Stmt *Handler) {
   assert(TryBlock && Handler);
@@ -4435,12 +4439,74 @@ StmtResult Sema::ActOnSEHTryBlock(bool IsCXXTry, SourceLocation TryLoc,
   if (!Context.getTargetInfo().isSEHTrySupported())
     Diag(TryLoc, diag::err_seh_try_unsupported);
 
+  if (Context.getTargetInfo().getTriple().isOSXbox360())
+    if (auto *Finally = dyn_cast<SEHFinallyStmt>(Handler))
+      diagnoseXboxSEHAlloca(*this, Finally->getBlock());
+
   return SEHTryStmt::Create(Context, IsCXXTry, TryLoc, TryBlock, Handler);
+}
+
+namespace {
+class XboxSEHAllocaChecker : public ConstStmtVisitor<XboxSEHAllocaChecker> {
+  Sema &S;
+
+public:
+  explicit XboxSEHAllocaChecker(Sema &S) : S(S) {}
+
+  void VisitStmt(const Stmt *Node) {
+    for (const Stmt *Child : Node->children())
+      if (Child)
+        Visit(Child);
+  }
+
+  void VisitCallExpr(const CallExpr *Call) {
+    if (const FunctionDecl *Callee = Call->getDirectCallee()) {
+      switch (Callee->getBuiltinID()) {
+      case Builtin::BI_alloca:
+      case Builtin::BIalloca:
+      case Builtin::BI__builtin_alloca:
+      case Builtin::BI__builtin_alloca_uninitialized:
+      case Builtin::BI__builtin_alloca_with_align:
+      case Builtin::BI__builtin_alloca_with_align_uninitialized:
+        S.Diag(Call->getExprLoc(), diag::err_xbox_seh_alloca) << Callee;
+        break;
+      default:
+        break;
+      }
+    }
+    VisitStmt(Call);
+  }
+
+  void VisitLambdaExpr(const LambdaExpr *Lambda) {
+    for (const Expr *Init : Lambda->capture_inits())
+      if (Init)
+        Visit(Init);
+  }
+
+  void VisitBlockExpr(const BlockExpr *) {}
+
+  // Nested handlers are checked when their own SEH statements are finished.
+  void VisitSEHFinallyStmt(const SEHFinallyStmt *) {}
+  void VisitSEHExceptStmt(const SEHExceptStmt *Except) {
+    Visit(Except->getBlock());
+  }
+};
+} // namespace
+
+static void diagnoseXboxSEHAlloca(Sema &S, const Stmt *Body) {
+  XboxSEHAllocaChecker(S).Visit(Body);
 }
 
 StmtResult Sema::ActOnSEHExceptBlock(SourceLocation Loc, Expr *FilterExpr,
                                      Stmt *Block) {
   assert(FilterExpr && Block);
+  if (Context.getTargetInfo().getTriple().isOSXbox360() &&
+      !inTemplateInstantiation() &&
+      !CurrentSEHFinally.empty() &&
+      CurrentSEHFinally.back()->getFnParent() == getCurScope()->getFnParent())
+    Diag(Loc, diag::err_xbox_seh_except_in_finally);
+  if (Context.getTargetInfo().getTriple().isOSXbox360())
+    diagnoseXboxSEHAlloca(*this, FilterExpr);
   QualType FTy = FilterExpr->getType();
   if (!FTy->isIntegerType() && !FTy->isDependentType()) {
     return StmtError(

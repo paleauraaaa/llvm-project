@@ -1913,7 +1913,11 @@ void SelectionDAGISel::SelectAllBasicBlocks(const Function &Fn) {
   }
 
   // AsynchEH: Report Block State under -AsynchEH
-  if (Fn.getParent()->getModuleFlag("eh-asynch"))
+  if (Fn.getParent()->getModuleFlag("eh-asynch") ||
+      (MF->getTarget().getTargetTriple().isOSXbox360() &&
+       Fn.hasPersonalityFn() &&
+       classifyEHPersonality(Fn.getPersonalityFn()) ==
+           EHPersonality::MSVC_TableSEH))
     reportIPToStateForBlocks(MF);
 
   SP->copyToMachineFrameInfo(MF->getFrameInfo());

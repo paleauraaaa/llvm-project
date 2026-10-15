@@ -1,4 +1,5 @@
 ; RUN: not --crash llc -mtriple=powerpc64-ibm-xbox360 -mcpu=xenon %s -o - 2>&1 | FileCheck %s
+; RUN: sed 's/__CxxFrameHandler/__C_specific_handler/g' %s | not --crash llc -mtriple=powerpc64-ibm-xbox360 -mcpu=xenon -o - 2>&1 | FileCheck %s
 ; CHECK: Xbox 360 exception handling does not support stack realignment
 
 declare i32 @__CxxFrameHandler(...)

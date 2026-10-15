@@ -328,6 +328,13 @@ added in the future:
     convention supports varargs function calls and tolerates some
     mismatch in the declared prototype and implemented declaration of
     the function (as does normal C).
+"``ppc_xbox360_sehcc``" - Xbox 360 SEH helper convention
+    Used by PowerPC Xbox 360 exception filters and termination handlers.
+    The two integer or pointer arguments are passed in ``r3`` and ``r12``.
+    The first argument is an exception-information pointer for a filter or
+    an abnormal-termination flag for a termination handler. The second is
+    the parent function's incoming stack pointer. Filters return an integer
+    in ``r3``; termination handlers return void. Varargs are not supported.
 "``fastcc``" - The fast calling convention
     This calling convention attempts to make calls as fast as possible
     (e.g. by passing things in registers). This calling convention
@@ -14180,6 +14187,11 @@ The ``fp`` argument to '``llvm.localrecover``' must be a frame pointer of a
 call frame that is currently live. The return value of '``llvm.localaddress``'
 is one way to produce such a value, but various runtimes also expose a suitable
 pointer in platform-specific ways.
+
+On Xbox 360, this pointer is the parent's incoming stack pointer. Escaped
+offsets are relative to that pointer, including for functions with dynamic
+stack allocation. ``llvm.localaddress`` produces this incoming stack pointer,
+and ``llvm.eh.recoverfp`` leaves the runtime-provided pointer unchanged.
 
 The ``idx`` argument to '``llvm.localrecover``' indicates which alloca passed to
 '``llvm.localescape``' to recover. It is zero-indexed.

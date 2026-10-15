@@ -1595,9 +1595,10 @@ public:
 
   /// Whether the target supports SEH __try.
   bool isSEHTrySupported() const {
-    return getTriple().isOSWindows() &&
-           (getTriple().isX86() ||
-            getTriple().getArch() == llvm::Triple::aarch64);
+    return getTriple().isOSXbox360() ||
+           (getTriple().isOSWindows() &&
+            (getTriple().isX86() ||
+             getTriple().getArch() == llvm::Triple::aarch64));
   }
 
   /// Return true if {|} are normal characters in the asm string.

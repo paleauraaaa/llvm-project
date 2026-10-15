@@ -368,6 +368,9 @@ static void PrintCallingConv(unsigned cc, raw_ostream &Out) {
   case CallingConv::RISCV_VectorCall:
     Out << "riscv_vector_cc";
     break;
+  case CallingConv::PPC_Xbox360_SEH:
+    Out << "ppc_xbox360_sehcc";
+    break;
   }
 }
 

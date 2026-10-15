@@ -777,7 +777,10 @@ void CodeGenFunction::PopCleanupBlock(bool FallthroughIsBranchThrough,
     cleanupFlags.setIsEHCleanupKind();
 
   // Under -EHa, invoke seh.scope.end() to mark scope end before dtor
-  bool IsEHa = getLangOpts().EHAsynch && !Scope.isLifetimeMarker();
+  bool IsEHa = (getLangOpts().EHAsynch ||
+                (getTarget().getTriple().isOSXbox360() &&
+                 (Fn->isSEHFinally() || Fn->isSEHTryExit()))) &&
+               !Scope.isLifetimeMarker();
   const EHPersonality &Personality = EHPersonality::get(*this);
   if (!RequiresNormalCleanup) {
     // Mark CPP scope end for passed-by-value Arg temp
@@ -943,10 +946,16 @@ void CodeGenFunction::PopCleanupBlock(bool FallthroughIsBranchThrough,
       } else {
         // We should always have a branch-through destination in this case.
         assert(BranchThroughDest);
+        if (getTarget().getTriple().isOSXbox360() &&
+            currentFunctionUsesSEHTry())
+          cleanupFlags.setHasExitSwitch();
         InstsToAppend.push_back(llvm::BranchInst::Create(BranchThroughDest));
       }
 
       // IV.  Pop the cleanup and emit it.
+      // Local unwind must still name the exited scope, not its parent.
+      if (getTarget().getTriple().isOSXbox360() && Fn->isSEHFinally())
+        cleanupFlags.setSEHUnwindDest(getInvokeDest());
       Scope.MarkEmitted();
       EHStack.popCleanup();
       assert(EHStack.hasNormalCleanups() == HasEnclosingCleanups);
@@ -1048,7 +1057,7 @@ void CodeGenFunction::PopCleanupBlock(bool FallthroughIsBranchThrough,
     if (!Personality.isMSVCPersonality()) {
       EHStack.pushTerminate();
       PushedTerminate = true;
-    } else if (IsEHa && getInvokeDest()) {
+    } else if (IsEHa && Personality.isMSVCXXPersonality() && getInvokeDest()) {
       EmitSehCppScopeEnd();
     }
 
@@ -1314,8 +1323,10 @@ RawAddress CodeGenFunction::getNormalCleanupDestSlot() {
 void CodeGenFunction::EmitCXXTemporary(const CXXTemporary *Temporary,
                                        QualType TempType,
                                        Address Ptr) {
-  pushDestroy(NormalAndEHCleanup, Ptr, TempType, destroyCXXObject,
-              /*useEHCleanup*/ true);
+  CleanupKind Kind = NormalAndEHCleanup;
+  if (getTarget().getTriple().isOSXbox360() && !getLangOpts().CXXExceptions)
+    Kind = NormalCleanup;
+  pushDestroy(Kind, Ptr, TempType, destroyCXXObject, Kind & EHCleanup);
 }
 
 // Need to set "funclet" in OperandBundle properly for noThrow
@@ -1366,7 +1377,7 @@ void CodeGenFunction::EmitSehTryScopeBegin() {
 
 // Invoke a llvm.seh.try.end at the end of a SEH scope for -EHa
 void CodeGenFunction::EmitSehTryScopeEnd() {
-  assert(getLangOpts().EHAsynch);
+  assert(getLangOpts().EHAsynch || getTarget().getTriple().isOSXbox360());
   llvm::FunctionType *FTy =
       llvm::FunctionType::get(CGM.VoidTy, /*isVarArg=*/false);
   llvm::FunctionCallee SehCppScope =

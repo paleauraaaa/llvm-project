@@ -158,6 +158,10 @@ public:
 
     virtual bool isRedundantBeforeReturn() { return false; }
 
+    virtual bool isSEHFinally() const { return false; }
+
+    virtual bool isSEHTryExit() const { return false; }
+
     /// Generation flags.
     class Flags {
       enum {
@@ -167,6 +171,7 @@ public:
         F_HasExitSwitch = 0x8,
       };
       unsigned flags = 0;
+      llvm::BasicBlock *SEHUnwindDest = nullptr;
 
     public:
       Flags() = default;
@@ -186,6 +191,9 @@ public:
 
       bool hasExitSwitch() const { return flags & F_HasExitSwitch; }
       void setHasExitSwitch() { flags |= F_HasExitSwitch; }
+
+      llvm::BasicBlock *getSEHUnwindDest() const { return SEHUnwindDest; }
+      void setSEHUnwindDest(llvm::BasicBlock *BB) { SEHUnwindDest = BB; }
     };
 
     /// Emit the cleanup.  For normal cleanups, this is run in the
