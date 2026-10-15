@@ -3974,6 +3974,12 @@ MicrosoftCXXABI::getAddrOfCXXCatchHandlerType(QualType Type,
       decomposeTypeForEH(getContext(), Type, IsConst, IsVolatile, IsUnaligned);
 
   bool IsReference = CatchHandlerType->isReferenceType();
+  if (IsReference && CGM.getTarget().getTriple().isXbox360()) {
+    QualType Referent = CatchHandlerType->getPointeeType();
+    IsConst = Referent.isConstQualified();
+    IsVolatile = Referent.isVolatileQualified();
+    IsUnaligned = Referent.getQualifiers().hasUnaligned();
+  }
 
   uint32_t Flags = 0;
   if (IsConst)

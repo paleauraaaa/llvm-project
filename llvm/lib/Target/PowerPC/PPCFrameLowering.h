@@ -109,6 +109,10 @@ public:
 
   bool needsFP(const MachineFunction &MF) const;
   bool needsXboxEHStackPointer(const MachineFunction &MF) const;
+  void calculateXboxEHFuncletFrame(MachineFunction &MF) const;
+  StackOffset getXboxEHFrameIndexReference(const MachineFunction &MF, int FI,
+                                          bool IsFunclet,
+                                          Register &FrameReg) const;
   StackOffset getFrameIndexReference(const MachineFunction &MF, int FI,
                                     Register &FrameReg) const override;
   void replaceFPWithRealFP(MachineFunction &MF) const;

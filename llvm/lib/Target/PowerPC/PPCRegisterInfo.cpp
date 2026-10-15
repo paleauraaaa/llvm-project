@@ -1764,9 +1764,16 @@ PPCRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
   // Funclet spills belong to the runtime-call frame, not the parent locals.
   if (IsXboxCalleeSave)
     FrameReg = PPC::X1;
-  else if (Subtarget.isTargetXbox360() && MF.hasEHFunclets() &&
-           MFI.isSpillSlotObjectIndex(FrameIndex))
-    getFrameLowering(MF)->getFrameIndexReference(MF, FrameIndex, FrameReg);
+  bool IsXboxPrivateSpill =
+      !IsXboxCalleeSave && Subtarget.isTargetXbox360() && MF.hasEHFunclets() &&
+      MFI.isSpillSlotObjectIndex(FrameIndex) &&
+      !MF.getInfo<PPCFunctionInfo>()->isSharedXboxEHSpillSlot(FrameIndex);
+  StackOffset XboxSpillOffset;
+  if (IsXboxPrivateSpill)
+    XboxSpillOffset = getFrameLowering(MF)->getXboxEHFrameIndexReference(
+        MF, FrameIndex,
+        MF.getInfo<PPCFunctionInfo>()->isXboxEHFuncletBlock(MI.getParent()),
+        FrameReg);
   if (Subtarget.isTargetXbox360() &&
       PPC::G8RCRegClass.contains(FrameReg)) {
     const TargetRegisterClass *FrameRC =
@@ -1798,6 +1805,9 @@ PPCRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
     if (!IsXboxCalleeSave && !(hasBasePointer(MF) && FrameIndex < 0))
       Offset += MFI.getStackSize();
   }
+  if (IsXboxPrivateSpill)
+    Offset =
+        XboxSpillOffset.getFixed() + MI.getOperand(OffsetOperandNo).getImm();
 
   // If we encounter an LXVP/STXVP with an offset that doesn't fit, we can
   // transform it to the prefixed version so we don't have to use the XForm.

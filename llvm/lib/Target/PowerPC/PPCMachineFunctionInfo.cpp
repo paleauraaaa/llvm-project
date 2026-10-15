@@ -28,7 +28,12 @@ MachineFunctionInfo *
 PPCFunctionInfo::clone(BumpPtrAllocator &Allocator, MachineFunction &DestMF,
                        const DenseMap<MachineBasicBlock *, MachineBasicBlock *>
                            &Src2DstMBB) const {
-  return DestMF.cloneInfo<PPCFunctionInfo>(*this);
+  auto *Info = DestMF.cloneInfo<PPCFunctionInfo>(*this);
+  Info->XboxEHFuncletBlocks.clear();
+  for (auto [Src, Dst] : Src2DstMBB)
+    if (XboxEHFuncletBlocks.contains(Src))
+      Info->XboxEHFuncletBlocks.insert(Dst);
+  return Info;
 }
 
 MCSymbol *PPCFunctionInfo::getPICOffsetSymbol(MachineFunction &MF) const {

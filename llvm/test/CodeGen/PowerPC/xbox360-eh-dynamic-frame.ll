@@ -23,7 +23,7 @@ declare void @llvm.stackrestore(ptr)
 ; CHECK: ld 30, {{-?[0-9]+}}(1)
 ; CHECK: blr
 ; CHECK: addi 31, 12, -[[SIZE]]
-; CHECK: stwu 1, -[[SIZE]](1)
+; CHECK: stwu 1, -{{[0-9]+}}(1)
 ; CHECK: mr 30, 1
 ; CHECK: lwz {{[0-9]+}}, [[SHARED]](31)
 ; CHECK: bl _RtlCheckStack12

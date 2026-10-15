@@ -445,6 +445,7 @@ public:
   }
 
   void addIRPasses() override;
+  void addCodeGenPrepare() override;
   bool addPreISel() override;
   bool addILPOpts() override;
   bool addInstSelector() override;
@@ -520,13 +521,28 @@ bool PPCPassConfig::addPreISel() {
     addPass(createGlobalMergePass(TM, GlobalMergeMaxOffset, false, false, true,
                                   true));
 
-  if (!DisableInstrFormPrep && getOptLevel() != CodeGenOptLevel::None)
+  if (!TM->getTargetTriple().isXbox360() && !DisableInstrFormPrep &&
+      getOptLevel() != CodeGenOptLevel::None)
     addPass(createPPCLoopInstrFormPrepPass(getPPCTargetMachine()));
 
-  if (!DisableCTRLoops && getOptLevel() != CodeGenOptLevel::None)
+  if (!TM->getTargetTriple().isXbox360() && !DisableCTRLoops &&
+      getOptLevel() != CodeGenOptLevel::None)
     addPass(createHardwareLoopsLegacyPass());
 
   return false;
+}
+
+void PPCPassConfig::addCodeGenPrepare() {
+  TargetPassConfig::addCodeGenPrepare();
+  // Loop preparation can introduce PHIs in EH pads. Run it before WinEHPrepare
+  // demotes PHIs and establishes the funclet invariants required by ISel.
+  if (TM->getTargetTriple().isXbox360() &&
+      getOptLevel() != CodeGenOptLevel::None) {
+    if (!DisableInstrFormPrep)
+      addPass(createPPCLoopInstrFormPrepPass(getPPCTargetMachine()));
+    if (!DisableCTRLoops)
+      addPass(createHardwareLoopsLegacyPass());
+  }
 }
 
 bool PPCPassConfig::addILPOpts() {
