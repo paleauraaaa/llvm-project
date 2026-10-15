@@ -121,6 +121,8 @@ EHPersonality::MSVC_except_handler = { "_except_handler3", nullptr };
 const EHPersonality
 EHPersonality::MSVC_C_specific_handler = { "__C_specific_handler", nullptr };
 const EHPersonality
+EHPersonality::MSVC_CxxFrameHandler = { "__CxxFrameHandler", nullptr };
+const EHPersonality
 EHPersonality::MSVC_CxxFrameHandler3 = { "__CxxFrameHandler3", nullptr };
 const EHPersonality
 EHPersonality::GNU_Wasm_CPlusPlus = { "__gxx_wasm_personality_v0", nullptr };
@@ -129,11 +131,16 @@ const EHPersonality EHPersonality::XL_CPlusPlus = {"__xlcxx_personality_v1",
 const EHPersonality EHPersonality::ZOS_CPlusPlus = {"__zos_cxx_personality_v2",
                                                     nullptr};
 
+static const EHPersonality &getMSVCCXXPersonality(const llvm::Triple &T) {
+  return T.isOSXbox360() ? EHPersonality::MSVC_CxxFrameHandler
+                        : EHPersonality::MSVC_CxxFrameHandler3;
+}
+
 static const EHPersonality &getCPersonality(const TargetInfo &Target,
                                             const LangOptions &L) {
   const llvm::Triple &T = Target.getTriple();
   if (T.isWindowsMSVCEnvironment())
-    return EHPersonality::MSVC_CxxFrameHandler3;
+    return getMSVCCXXPersonality(T);
   if (L.hasSjLjExceptions())
     return EHPersonality::GNU_C_SJLJ;
   if (L.hasDWARFExceptions())
@@ -147,7 +154,7 @@ static const EHPersonality &getObjCPersonality(const TargetInfo &Target,
                                                const LangOptions &L) {
   const llvm::Triple &T = Target.getTriple();
   if (T.isWindowsMSVCEnvironment())
-    return EHPersonality::MSVC_CxxFrameHandler3;
+    return getMSVCCXXPersonality(T);
 
   switch (L.ObjCRuntime.getKind()) {
   case ObjCRuntime::FragileMacOSX:
@@ -177,7 +184,7 @@ static const EHPersonality &getCXXPersonality(const TargetInfo &Target,
                                               const LangOptions &L) {
   const llvm::Triple &T = Target.getTriple();
   if (T.isWindowsMSVCEnvironment())
-    return EHPersonality::MSVC_CxxFrameHandler3;
+    return getMSVCCXXPersonality(T);
   if (T.isOSAIX())
     return EHPersonality::XL_CPlusPlus;
   if (L.hasSjLjExceptions())
@@ -198,7 +205,7 @@ static const EHPersonality &getCXXPersonality(const TargetInfo &Target,
 static const EHPersonality &getObjCXXPersonality(const TargetInfo &Target,
                                                  const LangOptions &L) {
   if (Target.getTriple().isWindowsMSVCEnvironment())
-    return EHPersonality::MSVC_CxxFrameHandler3;
+    return getMSVCCXXPersonality(Target.getTriple());
 
   switch (L.ObjCRuntime.getKind()) {
   // In the fragile ABI, just use C++ exception handling and hope
