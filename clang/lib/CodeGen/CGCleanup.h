@@ -674,6 +674,7 @@ struct EHPersonality {
   static const EHPersonality GNU_CPlusPlus_SEH;
   static const EHPersonality MSVC_except_handler;
   static const EHPersonality MSVC_C_specific_handler;
+  static const EHPersonality MSVC_CxxFrameHandler;
   static const EHPersonality MSVC_CxxFrameHandler3;
   static const EHPersonality GNU_Wasm_CPlusPlus;
   static const EHPersonality XL_CPlusPlus;
@@ -687,12 +688,14 @@ struct EHPersonality {
 
   bool isMSVCPersonality() const {
     return this == &MSVC_except_handler || this == &MSVC_C_specific_handler ||
-           this == &MSVC_CxxFrameHandler3;
+           isMSVCXXPersonality();
   }
 
   bool isWasmPersonality() const { return this == &GNU_Wasm_CPlusPlus; }
 
-  bool isMSVCXXPersonality() const { return this == &MSVC_CxxFrameHandler3; }
+  bool isMSVCXXPersonality() const {
+    return this == &MSVC_CxxFrameHandler || this == &MSVC_CxxFrameHandler3;
+  }
 };
 }
 }
