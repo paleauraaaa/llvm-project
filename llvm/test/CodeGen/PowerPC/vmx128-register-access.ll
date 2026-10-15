@@ -4,6 +4,7 @@
 ; RUN: llc -mtriple=powerpc-unknown-linux-gnu -mcpu=xenon -O2 -verify-machineinstrs < %s | FileCheck %s
 ; RUN: llc -mtriple=powerpc64-ibm-xbox360 -mcpu=xenon -relocation-model=static -O0 -verify-machineinstrs < %s | FileCheck %s --check-prefix=XBOX
 ; RUN: llc -mtriple=powerpc64-ibm-xbox360 -mcpu=xenon -relocation-model=static -O2 -verify-machineinstrs < %s | FileCheck %s --check-prefix=XBOX
+; RUN: llc -mtriple=powerpc64-ibm-xbox360 -mcpu=xenon -mattr=+vmx128-reserve -relocation-model=static -O2 -verify-machineinstrs < %s | FileCheck %s --check-prefix=XBOX
 
 declare <4 x i32> @llvm.ppc.altivec.get.vr128(i32 immarg)
 declare void @llvm.ppc.altivec.set.vr128(<4 x i32>, i32 immarg)

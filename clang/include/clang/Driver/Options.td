@@ -5223,6 +5223,16 @@ def maltivec : Flag<["-"], "maltivec">, Group<m_ppc_Features_Group>,
 def mno_altivec : Flag<["-"], "mno-altivec">, Group<m_ppc_Features_Group>;
 def mvmx128 : Flag<["-"], "mvmx128">, Group<m_ppc_Features_Group>;
 def mno_vmx128 : Flag<["-"], "mno-vmx128">, Group<m_ppc_Features_Group>;
+def mvmx128_reserve : Flag<["-"], "mvmx128-reserve">,
+  Group<m_ppc_Features_Group>,
+  HelpText<"Reserve VMX128 registers VR64-VR95 for explicit register intrinsics">;
+def mno_vmx128_reserve : Flag<["-"], "mno-vmx128-reserve">,
+  Group<m_ppc_Features_Group>,
+  HelpText<"Allow allocation of VMX128 registers VR64-VR95 (default)">;
+def QVMXReserve : Flag<["/"], "QVMXReserve">, Visibility<[CLOption]>,
+  Alias<mvmx128_reserve>;
+def QVMXReserve_ : Flag<["/"], "QVMXReserve-">, Visibility<[CLOption]>,
+  Alias<mno_vmx128_reserve>;
 def mpcrel: Flag<["-"], "mpcrel">, Group<m_ppc_Features_Group>;
 def mno_pcrel: Flag<["-"], "mno-pcrel">, Group<m_ppc_Features_Group>;
 def mprefixed: Flag<["-"], "mprefixed">, Group<m_ppc_Features_Group>;

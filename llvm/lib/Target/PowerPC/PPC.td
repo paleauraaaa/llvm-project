@@ -85,6 +85,9 @@ def FeatureAltivec   : SubtargetFeature<"altivec","HasAltivec", "true",
 def FeatureVMX128    : SubtargetFeature<"vmx128","HasVMX128", "true",
                                         "Enable VMX128 instructions",
                                         [FeatureFPU]>;
+def FeatureVMX128Reserve : SubtargetFeature<"vmx128-reserve", "ReserveVMX128",
+                                          "true",
+                                          "Reserve VMX128 registers VR64-VR95">;
 def FeatureSPE       : SubtargetFeature<"spe","HasSPE", "true",
                                         "Enable SPE instructions",
                                         [FeatureHardFloat]>;

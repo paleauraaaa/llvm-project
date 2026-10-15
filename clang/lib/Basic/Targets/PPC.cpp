@@ -39,6 +39,8 @@ bool PPCTargetInfo::handleTargetFeatures(std::vector<std::string> &Features,
       HasAltivec = true;
     } else if (Feature == "+vmx128") {
       HasVMX128 = true;
+    } else if (Feature == "+vmx128-reserve") {
+      ReserveVMX128 = true;
     } else if (Feature == "+vsx") {
       HasVSX = true;
     } else if (Feature == "+crbits") {
@@ -417,6 +419,8 @@ void PPCTargetInfo::getTargetDefines(const LangOptions &Opts,
   }
   if (HasVMX128)
     Builder.defineMacro("__VMX128__");
+  if (ReserveVMX128)
+    Builder.defineMacro("__VMX128_RESERVE", "1");
   if (HasSPE)
     Builder.defineMacro("__SPE__");
   if (HasSPE || FloatABI == SoftFloat)
@@ -751,6 +755,7 @@ bool PPCTargetInfo::hasFeature(StringRef Feature) const {
       .Case("powerpc", true)
       .Case("altivec", HasAltivec)
       .Case("vmx128", HasVMX128)
+      .Case("vmx128-reserve", ReserveVMX128)
       .Case("vsx", HasVSX)
       .Case("crbits", UseCRBits)
       .Case("power8-vector", HasP8Vector)

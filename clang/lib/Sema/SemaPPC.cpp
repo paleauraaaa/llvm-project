@@ -178,7 +178,16 @@ bool SemaPPC::CheckPPCBuiltinFunctionCall(const TargetInfo &TI,
     return SemaRef.BuiltinConstantArgRange(TheCall, 0, -16, 15);
   case PPC::BI__VMXGetReg:
   case PPC::BI__VMXSetReg:
-    return SemaRef.BuiltinConstantArgRange(TheCall, 0, 0, 127);
+  case PPC::BI__builtin_altivec_get_vr128: {
+    bool Reserve = TI.hasFeature("vmx128-reserve");
+    return SemaRef.BuiltinConstantArgRange(TheCall, 0, Reserve ? 64 : 0,
+                                         Reserve ? 95 : 127);
+  }
+  case PPC::BI__builtin_altivec_set_vr128: {
+    bool Reserve = TI.hasFeature("vmx128-reserve");
+    return SemaRef.BuiltinConstantArgRange(TheCall, 1, Reserve ? 64 : 0,
+                                         Reserve ? 95 : 127);
+  }
   case PPC::BI__vrlimi:
     return SemaRef.BuiltinConstantArgRange(TheCall, 2, 0, 15) ||
            SemaRef.BuiltinConstantArgRange(TheCall, 3, 0, 3);
@@ -234,10 +243,6 @@ bool SemaPPC::CheckPPCBuiltinFunctionCall(const TargetInfo &TI,
     return SemaRef.BuiltinConstantArgRange(TheCall, 2, 0, 7);
   case PPC::BI__builtin_altivec_vsrdbi:
     return SemaRef.BuiltinConstantArgRange(TheCall, 2, 0, 7);
-  case PPC::BI__builtin_altivec_get_vr128:
-    return SemaRef.BuiltinConstantArgRange(TheCall, 0, 0, 127);
-  case PPC::BI__builtin_altivec_set_vr128:
-    return SemaRef.BuiltinConstantArgRange(TheCall, 1, 0, 127);
   case PPC::BI__builtin_vsx_xxpermx:
     return SemaRef.BuiltinConstantArgRange(TheCall, 3, 0, 7);
   case PPC::BI__builtin_ppc_tw:
