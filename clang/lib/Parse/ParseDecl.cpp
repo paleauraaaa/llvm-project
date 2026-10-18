@@ -4760,6 +4760,9 @@ void Parser::ParseDeclarationSpecifiers(
     case tok::annot_pragma_pack:
       HandlePragmaPack();
       continue;
+    case tok::annot_pragma_bitfield_order:
+      HandlePragmaBitfieldOrder();
+      continue;
 
     case tok::annot_pragma_ms_pragma:
       HandlePragmaMSPragma();
@@ -5151,6 +5154,10 @@ void Parser::ParseStructUnionBody(SourceLocation RecordLoc,
       continue;
     }
 
+    if (Tok.is(tok::annot_pragma_bitfield_order)) {
+      HandlePragmaBitfieldOrder();
+      continue;
+    }
     if (Tok.is(tok::annot_pragma_pack)) {
       HandlePragmaPack();
       continue;
