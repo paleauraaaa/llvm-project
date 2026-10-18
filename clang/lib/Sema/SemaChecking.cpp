@@ -3281,6 +3281,30 @@ void Sema::checkCall(NamedDecl *FDecl, const FunctionProtoType *Proto,
   if (CurContext->isDependentContext())
     return;
 
+  if (Context.getTargetInfo().getTriple().isOSXbox360() &&
+      !isa_and_nonnull<ObjCMethodDecl>(FDecl)) {
+    const FunctionProtoType *CallProto = Proto;
+    if (!CallProto)
+      if (const auto *FD = dyn_cast_or_null<FunctionDecl>(FDecl))
+        CallProto = FD->getType()->getAs<FunctionProtoType>();
+    if (!CallProto || CallProto->isVariadic()) {
+      // Ellipsis arguments are checked by checkVariadicArgument below.
+      unsigned NumArgs = CallProto
+                             ? std::min<unsigned>(CallProto->getNumParams(),
+                                                  Args.size())
+                             : Args.size();
+      for (unsigned I = 0; I != NumArgs; ++I) {
+        const Expr *Arg = Args[I];
+        if (!Arg ||
+            (CallProto && CallProto->getParamType(I)->isReferenceType()))
+          continue;
+        if (const auto *RD = Arg->getType()->getAsRecordDecl();
+            RD && RD->hasAttr<IntrinTypeAttr>())
+          Diag(Arg->getExprLoc(), diag::err_xbox_vector_vararg);
+      }
+    }
+  }
+
   // Printf and scanf checking.
   llvm::SmallBitVector CheckedVarArgs;
   if (FDecl) {
