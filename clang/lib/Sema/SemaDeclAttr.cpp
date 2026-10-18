@@ -1859,7 +1859,8 @@ static void handleNakedAttr(Sema &S, Decl *D, const ParsedAttr &AL) {
     const auto &Triple = S.getASTContext().getTargetInfo().getTriple();
     const auto &Arch = Triple.getArch();
     if (Arch != llvm::Triple::x86 &&
-        (Arch != llvm::Triple::arm && Arch != llvm::Triple::thumb)) {
+        Arch != llvm::Triple::arm && Arch != llvm::Triple::thumb &&
+        !Triple.isOSXbox360()) {
       S.Diag(AL.getLoc(), diag::err_attribute_not_supported_on_arch)
           << AL << Triple.getArchName();
       return;
