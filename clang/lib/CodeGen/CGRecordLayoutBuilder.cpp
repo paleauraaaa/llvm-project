@@ -175,7 +175,7 @@ struct CGRecordLowering {
       FieldTypes.push_back(getByteArrayType(Size));
   }
   uint64_t getFieldBitOffset(const FieldDecl *FD) const {
-    return Layout.getFieldOffset(FD->getFieldIndex());
+    return Layout.getFieldAllocationOffset(FD->getFieldIndex());
   }
   // Layout routines.
   void setBitFieldInfo(const FieldDecl *FD, CharUnits StartOffset,
@@ -241,7 +241,8 @@ void CGRecordLowering::setBitFieldInfo(
     const FieldDecl *FD, CharUnits StartOffset, llvm::Type *StorageType) {
   CGBitFieldInfo &Info = BitFields[FD->getCanonicalDecl()];
   Info.IsSigned = FD->getType()->isSignedIntegerOrEnumerationType();
-  Info.Offset = (unsigned)(getFieldBitOffset(FD) - Context.toBits(StartOffset));
+  Info.Offset = (unsigned)(Layout.getFieldOffset(FD->getFieldIndex()) -
+                           Context.toBits(StartOffset));
   Info.Size = FD->getBitWidthValue();
   Info.StorageSize = (unsigned)DataLayout.getTypeAllocSizeInBits(StorageType);
   Info.StorageOffset = StartOffset;
@@ -1189,7 +1190,9 @@ CodeGenTypes::ComputeRecordLayout(const RecordDecl *D, llvm::StructType *Ty) {
       // is in-bounds. However, on BE systems, the offset may be non-zero, but
       // the size + offset should match the storage size in that case as it
       // "starts" at the back.
-      if (getDataLayout().isBigEndian())
+      const auto *Order = FD->getAttr<BitfieldOrderAttr>();
+      if (getDataLayout().isBigEndian() &&
+          (!Order || Order->getOrder() != BitfieldOrderAttr::LSBToMSB))
         assert(static_cast<unsigned>(Info.Offset + Info.Size) ==
                Info.StorageSize &&
                "Big endian union bitfield does not end at the back");

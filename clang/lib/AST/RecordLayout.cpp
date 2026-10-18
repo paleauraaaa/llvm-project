@@ -12,11 +12,46 @@
 
 #include "clang/AST/RecordLayout.h"
 #include "clang/AST/ASTContext.h"
+#include "clang/AST/Attr.h"
+#include "clang/AST/Decl.h"
 #include "clang/Basic/TargetCXXABI.h"
 #include "clang/Basic/TargetInfo.h"
 #include <cassert>
 
 using namespace clang;
+
+void ASTRecordLayout::applyBitfieldOrder(const ASTContext &Ctx,
+                                       const RecordDecl *RD) {
+  if (!llvm::any_of(RD->fields(), [](const FieldDecl *FD) {
+        const auto *Order = FD->getAttr<BitfieldOrderAttr>();
+        return Order && Order->getOrder() == BitfieldOrderAttr::LSBToMSB;
+      }))
+    return;
+
+  FieldAllocationOffsets.append(Ctx, FieldOffsets.begin(), FieldOffsets.end());
+  uint64_t Start = 0, UnitSize = 0;
+  bool InUnit = false;
+  for (const FieldDecl *FD : RD->fields()) {
+    unsigned Index = FD->getFieldIndex();
+    uint64_t Offset = FieldAllocationOffsets[Index];
+    if (!FD->isBitField() || FD->isZeroLengthBitField()) {
+      InUnit = false;
+      continue;
+    }
+    uint64_t Size = Ctx.getTypeSize(FD->getType());
+    if (RD->isUnion() || !InUnit || Size != UnitSize ||
+        Offset >= Start + UnitSize) {
+      Start = Offset;
+      UnitSize = Size;
+      InUnit = true;
+    }
+    const auto *Order = FD->getAttr<BitfieldOrderAttr>();
+    if (Order && Order->getOrder() == BitfieldOrderAttr::LSBToMSB) {
+      uint64_t Width = std::min<uint64_t>(FD->getBitWidthValue(), UnitSize);
+      FieldOffsets[Index] = Start + UnitSize - (Offset - Start) - Width;
+    }
+  }
+}
 
 void ASTRecordLayout::Destroy(ASTContext &Ctx) {
   if (CXXInfo) {

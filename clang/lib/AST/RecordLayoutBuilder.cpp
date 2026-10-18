@@ -3340,7 +3340,7 @@ ASTContext::getASTRecordLayout(const RecordDecl *D) const {
   const ASTRecordLayout *Entry = ASTRecordLayouts[D];
   if (Entry) return *Entry;
 
-  const ASTRecordLayout *NewEntry = nullptr;
+  ASTRecordLayout *NewEntry = nullptr;
 
   if (isMsLayout(*this)) {
     if (const auto *RD = dyn_cast<CXXRecordDecl>(D)) {
@@ -3364,6 +3364,8 @@ ASTContext::getASTRecordLayout(const RecordDecl *D) const {
           Builder.Alignment, Builder.RequiredAlignment, Builder.Size,
           Builder.FieldOffsets);
     }
+    if (getTargetInfo().getTriple().isOSXbox360())
+      NewEntry->applyBitfieldOrder(*this, D);
   } else {
     if (const auto *RD = dyn_cast<CXXRecordDecl>(D)) {
       EmptySubobjectMap EmptySubobjects(*this, RD);

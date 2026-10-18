@@ -86,6 +86,12 @@ private:
   /// FieldOffsets - Array of field offsets in bits.
   ASTVector<uint64_t> FieldOffsets;
 
+  /// Declaration-order allocation offsets when physical bitfield positions
+  /// differ from the allocation cursor.
+  ASTVector<uint64_t> FieldAllocationOffsets;
+
+  void applyBitfieldOrder(const ASTContext &Ctx, const RecordDecl *RD);
+
   /// CXXRecordLayoutInfo - Contains C++ specific layout information.
   struct CXXRecordLayoutInfo {
     /// NonVirtualSize - The non-virtual size (in chars) of an object, which is
@@ -199,6 +205,11 @@ public:
   /// bits.
   uint64_t getFieldOffset(unsigned FieldNo) const {
     return FieldOffsets[FieldNo];
+  }
+
+  uint64_t getFieldAllocationOffset(unsigned FieldNo) const {
+    return FieldAllocationOffsets.empty() ? getFieldOffset(FieldNo)
+                                         : FieldAllocationOffsets[FieldNo];
   }
 
   /// getDataSize() - Get the record data size, which is the record size

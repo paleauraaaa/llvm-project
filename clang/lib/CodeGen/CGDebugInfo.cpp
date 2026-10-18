@@ -1665,7 +1665,11 @@ CGDebugInfo::createBitFieldType(const FieldDecl *BitFieldDecl,
   // The bit offsets for big endian machines are reversed for big
   // endian target, compensate for that as the DIDerivedType requires
   // un-reversed offsets.
-  if (CGM.getDataLayout().isBigEndian())
+  // PPC CodeView describes bit positions from the integer's least-significant
+  // end, unlike the memory-order offsets used by DWARF.
+  bool XboxCodeView = CGM.getCodeGenOpts().EmitCodeView &&
+                     CGM.getTarget().getTriple().isOSXbox360();
+  if (CGM.getDataLayout().isBigEndian() && !XboxCodeView)
     Offset = BitFieldInfo.StorageSize - BitFieldInfo.Size - Offset;
   uint64_t OffsetInBits = StorageOffsetInBits + Offset;
   llvm::DINode::DIFlags Flags = getAccessFlag(BitFieldDecl->getAccess(), RD);
