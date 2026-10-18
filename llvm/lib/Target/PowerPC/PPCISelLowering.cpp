@@ -2873,6 +2873,7 @@ bool PPCTargetLowering::SelectAddressRegImm(
       Disp = N.getOperand(1).getOperand(0);  // The global address.
       assert(Disp.getOpcode() == ISD::TargetGlobalAddress ||
              Disp.getOpcode() == ISD::TargetGlobalTLSAddress ||
+             Disp.getOpcode() == ISD::TargetExternalSymbol ||
              Disp.getOpcode() == ISD::TargetConstantPool ||
              Disp.getOpcode() == ISD::TargetJumpTable);
       Base = N.getOperand(0);
@@ -3764,6 +3765,25 @@ SDValue PPCTargetLowering::LowerGlobalAddress(SDValue Op,
   GlobalAddressSDNode *GSDN = cast<GlobalAddressSDNode>(Op);
   SDLoc DL(GSDN);
   const GlobalValue *GV = GSDN->getGlobal();
+
+  if (Subtarget.isTargetXbox360() && GV->hasDLLImportStorageClass()) {
+    MachineFunction &MF = DAG.getMachineFunction();
+    const char *Name = MF.createExternalSymbolName(
+        ("__imp_" + getTargetMachine().getSymbol(GV)->getName()).str());
+    SDValue Hi = DAG.getTargetExternalSymbol(Name, PtrVT, PPCII::MO_HA);
+    SDValue Lo = DAG.getTargetExternalSymbol(Name, PtrVT, PPCII::MO_LO);
+    SDValue ImportAddress = LowerLabelRef(Hi, Lo, /*isPIC=*/false, DAG);
+    SDValue Address = DAG.getLoad(
+        MVT::i32, DL, DAG.getEntryNode(), ImportAddress,
+        MachinePointerInfo::getGOT(MF), Align(4),
+        MachineMemOperand::MODereferenceable | MachineMemOperand::MOInvariant);
+    Address = DAG.getZExtOrTrunc(Address, DL, PtrVT);
+    if (GSDN->getOffset())
+      Address = DAG.getNode(
+          ISD::ADD, DL, PtrVT, Address,
+          DAG.getConstant(GSDN->getOffset(), DL, PtrVT));
+    return Address;
+  }
 
   // 64-bit SVR4 ABI & AIX ABI code is always position-independent.
   // The actual address of the GlobalValue is stored in the TOC.
@@ -20441,6 +20461,7 @@ PPC::AddrMode PPCTargetLowering::SelectOptimalAddrMode(const SDNode *Parent,
       Disp = N.getOperand(1).getOperand(0); // The global address.
       assert(Disp.getOpcode() == ISD::TargetGlobalAddress ||
              Disp.getOpcode() == ISD::TargetGlobalTLSAddress ||
+             Disp.getOpcode() == ISD::TargetExternalSymbol ||
              Disp.getOpcode() == ISD::TargetConstantPool ||
              Disp.getOpcode() == ISD::TargetJumpTable);
       Base = N.getOperand(0);

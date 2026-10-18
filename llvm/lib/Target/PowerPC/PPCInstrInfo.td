@@ -3239,6 +3239,8 @@ def : Pat<(int_ppc_mffsl), (MFFSL)>;
 // Hi and Lo for Darwin Global Addresses.
 def : Pat<(PPChi tglobaladdr:$in, 0), (LIS tglobaladdr:$in)>;
 def : Pat<(PPClo tglobaladdr:$in, 0), (LI tglobaladdr:$in)>;
+def : Pat<(PPChi texternalsym:$in, 0), (LIS texternalsym:$in)>;
+def : Pat<(PPClo texternalsym:$in, 0), (LI texternalsym:$in)>;
 def : Pat<(PPChi tconstpool:$in, 0), (LIS tconstpool:$in)>;
 def : Pat<(PPClo tconstpool:$in, 0), (LI tconstpool:$in)>;
 def : Pat<(PPChi tjumptable:$in, 0), (LIS tjumptable:$in)>;

@@ -1141,7 +1141,9 @@ public:
   }
 
   /// Tests if the environment supports dllimport/export annotations.
-  bool hasDLLImportExport() const { return isOSWindows() || isPS(); }
+  bool hasDLLImportExport() const {
+    return isOSWindows() || isOSXbox360() || isPS();
+  }
 
   /// @}
   /// @name Mutators

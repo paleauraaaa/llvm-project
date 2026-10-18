@@ -2121,6 +2121,10 @@ unsigned PPCFastISel::PPCMaterializeGV(const GlobalValue *GV, MVT VT) {
   if (GV->isThreadLocal())
     return 0;
 
+  // SelectionDAG handles the 32-bit Xbox import address table indirection.
+  if (Subtarget->isTargetXbox360() && GV->hasDLLImportStorageClass())
+    return 0;
+
   // Xbox 360 has no TOC, so we need to generate direct accesses.
   if (Subtarget->isTargetXbox360()) {
       const TargetRegisterClass *RC =
