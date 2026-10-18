@@ -873,6 +873,16 @@ def AlignNatural : InheritableAttr {
   let Documentation = [InternalOnly];
 }
 
+def BitfieldOrder : Attr {
+  let Spellings = [];
+  let SemaHandler = 0;
+  let Subjects = SubjectList<[Field]>;
+  let Args = [EnumArgument<"Order", "OrderKind", /*is_string=*/false,
+                          ["msb_to_lsb", "lsb_to_msb"],
+                          ["MSBToLSB", "LSBToMSB"]>];
+  let Documentation = [InternalOnly];
+}
+
 def AlwaysInline : DeclOrStmtAttr {
   let Spellings = [GCC<"always_inline">, CXX11<"clang", "always_inline">,
                    C23<"clang", "always_inline">, CustomKeyword<"__forceinline">];
