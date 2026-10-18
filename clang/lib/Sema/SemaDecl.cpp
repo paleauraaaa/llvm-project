@@ -18727,6 +18727,14 @@ FieldDecl *Sema::CheckFieldDecl(DeclarationName Name, QualType T,
 
   FieldDecl *NewFD = FieldDecl::Create(Context, Record, TSSL, Loc, II, T, TInfo,
                                        BitWidth, Mutable, InitStyle);
+  // Template patterns do not freeze the order: CheckFieldDecl captures it when
+  // their concrete fields are instantiated.
+  if (BitWidth && !Record->isDependentContext() &&
+      Context.getTargetInfo().getTriple().isOSXbox360())
+    NewFD->addAttr(BitfieldOrderAttr::CreateImplicit(
+        Context, BitfieldOrderStack.CurrentValue == BitfieldOrder::LSBToMSB
+                     ? BitfieldOrderAttr::LSBToMSB
+                     : BitfieldOrderAttr::MSBToLSB));
   if (InvalidDecl)
     NewFD->setInvalidDecl();
 
