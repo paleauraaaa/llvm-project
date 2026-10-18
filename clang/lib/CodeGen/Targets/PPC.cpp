@@ -1109,6 +1109,11 @@ public:
   int getDwarfEHStackPointer(CodeGen::CodeGenModule &M) const override {
     return 1; // r1 is the dedicated stack pointer
   }
+  bool isNoProtoCallVariadic(const CallArgList &args,
+                             const FunctionNoProtoType *fnType) const override {
+    // Unprototyped Xbox calls duplicate floating-point arguments into GPRs.
+    return true;
+  }
 };
 
 } // namespace
