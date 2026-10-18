@@ -395,6 +395,7 @@ CodeGenTBAA::CollectFields(uint64_t BaseOffset,
     const ASTRecordLayout &Layout = Context.getASTRecordLayout(RD);
     const CGRecordLayout &CGRL = CGTypes.getCGRecordLayout(RD);
 
+    SmallVector<CharUnits, 4> BitfieldUnits;
     unsigned idx = 0;
     for (RecordDecl::field_iterator i = RD->field_begin(), e = RD->field_end();
          i != e; ++i, ++idx) {
@@ -414,6 +415,11 @@ CodeGenTBAA::CollectFields(uint64_t BaseOffset,
         bool IsBE = Context.getTargetInfo().isBigEndian();
         bool IsFirst = IsBE ? Info.StorageSize - (Info.Offset + Info.Size) == 0
                             : Info.Offset == 0;
+        if ((*i)->hasAttr<BitfieldOrderAttr>()) {
+          IsFirst = !llvm::is_contained(BitfieldUnits, Info.StorageOffset);
+          BitfieldUnits.push_back(Info.StorageOffset);
+          Offset = BaseOffset + Info.StorageOffset.getQuantity();
+        }
         if (!IsFirst)
           continue;
         unsigned CurrentBitFieldSize = Info.StorageSize;
@@ -502,6 +508,7 @@ llvm::MDNode *CodeGenTBAA::getBaseTypeInfoHelper(const Type *Ty) {
                    return A.Offset < B.Offset;
                  });
     }
+    SmallVector<CharUnits, 4> BitfieldUnits;
     for (FieldDecl *Field : RD->fields()) {
       if (Field->isZeroSize(Context) || Field->isUnnamedBitField())
         continue;
@@ -515,6 +522,16 @@ llvm::MDNode *CodeGenTBAA::getBaseTypeInfoHelper(const Type *Ty) {
       uint64_t BitOffset = Layout.getFieldOffset(Field->getFieldIndex());
       uint64_t Offset = Context.toCharUnitsFromBits(BitOffset).getQuantity();
       uint64_t Size = Context.getTypeSizeInChars(FieldQTy).getQuantity();
+      if (Field->isBitField() && Field->hasAttr<BitfieldOrderAttr>()) {
+        const CGBitFieldInfo &Info =
+            CGTypes.getCGRecordLayout(RD).getBitFieldInfo(Field);
+        if (llvm::is_contained(BitfieldUnits, Info.StorageOffset))
+          continue;
+        BitfieldUnits.push_back(Info.StorageOffset);
+        Offset = Info.StorageOffset.getQuantity();
+        Size = llvm::divideCeil(Info.StorageSize, Context.getCharWidth());
+        TypeNode = getChar();
+      }
       Fields.push_back(llvm::MDBuilder::TBAAStructField(Offset, Size,
                                                         TypeNode));
     }

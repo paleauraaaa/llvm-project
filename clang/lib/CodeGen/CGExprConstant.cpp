@@ -125,7 +125,8 @@ public:
   bool add(llvm::Constant *C, CharUnits Offset, bool AllowOverwrite);
 
   /// Update or overwrite the bits starting at \p OffsetInBits with \p Bits.
-  bool addBits(llvm::APInt Bits, uint64_t OffsetInBits, bool AllowOverwrite);
+  bool addBits(llvm::APInt Bits, uint64_t OffsetInBits, bool AllowOverwrite,
+               bool OrBits = false);
 
   /// Attempt to condense the value starting at \p Offset to a constant of type
   /// \p DesiredTy.
@@ -188,7 +189,7 @@ bool ConstantAggregateBuilder::add(llvm::Constant *C, CharUnits Offset,
 }
 
 bool ConstantAggregateBuilder::addBits(llvm::APInt Bits, uint64_t OffsetInBits,
-                              bool AllowOverwrite) {
+                                      bool AllowOverwrite, bool OrBits) {
   const ASTContext &Context = CGM.getContext();
   const uint64_t CharWidth = CGM.getContext().getCharWidth();
 
@@ -224,7 +225,7 @@ bool ConstantAggregateBuilder::addBits(llvm::APInt Bits, uint64_t OffsetInBits,
     if (BitsThisChar.getBitWidth() > CharWidth)
       BitsThisChar = BitsThisChar.trunc(CharWidth);
 
-    if (WantedBits == CharWidth) {
+    if (WantedBits == CharWidth && !OrBits) {
       // Got a full byte: just add it directly.
       add(llvm::ConstantInt::get(CGM.getLLVMContext(), BitsThisChar),
           OffsetInChars, AllowOverwrite);
@@ -267,9 +268,10 @@ bool ConstantAggregateBuilder::addBits(llvm::APInt Bits, uint64_t OffsetInBits,
         // Because this is a 1-CharUnit range, the constant occupying it must
         // be exactly one CharUnit wide.
         assert(CI->getBitWidth() == CharWidth && "splitAt failed");
-        assert((!(CI->getValue() & UpdateMask) || AllowOverwrite) &&
+        assert((!(CI->getValue() & UpdateMask) || AllowOverwrite || OrBits) &&
                "unexpectedly overwriting bitfield");
-        BitsThisChar |= (CI->getValue() & ~UpdateMask);
+        BitsThisChar |= OrBits ? CI->getValue()
+                               : (CI->getValue() & ~UpdateMask);
         ToUpdate = llvm::ConstantInt::get(CGM.getLLVMContext(), BitsThisChar);
       }
     }
@@ -659,7 +661,8 @@ bool ConstStructBuilder::AppendBitField(const FieldDecl *Field,
 
   return Builder.addBits(FieldValue,
                          CGM.getContext().toBits(StartOffset) + FieldOffset,
-                         AllowOverwrite);
+                         AllowOverwrite,
+                         Field->hasAttr<BitfieldOrderAttr>() && !AllowOverwrite);
 }
 
 static bool EmitDesignatedInitUpdater(ConstantEmitter &Emitter,
@@ -941,6 +944,19 @@ bool ConstStructBuilder::DoZeroInitPadding(
     const ASTRecordLayout &Layout, unsigned FieldNo, const FieldDecl &Field,
     bool AllowOverwrite, CharUnits &SizeSoFar, bool &ZeroFieldSize) {
   uint64_t StartBitOffset = Layout.getFieldOffset(FieldNo);
+  if (Field.isBitField() && Field.hasAttr<BitfieldOrderAttr>()) {
+    const CGBitFieldInfo &Info =
+        CGM.getTypes().getCGRecordLayout(Field.getParent()).getBitFieldInfo(&Field);
+    CharUnits StorageEnd = Info.StorageOffset +
+                          CGM.getContext().toCharUnitsFromBits(Info.StorageSize);
+    if (SizeSoFar < Info.StorageOffset &&
+        !AppendBytes(SizeSoFar, getPadding(CGM, Info.StorageOffset - SizeSoFar),
+                     AllowOverwrite))
+      return false;
+    SizeSoFar = std::max(SizeSoFar, StorageEnd);
+    ZeroFieldSize = Info.Size == 0;
+    return true;
+  }
   CharUnits StartOffset = CGM.getContext().toCharUnitsFromBits(StartBitOffset);
   if (SizeSoFar < StartOffset)
     if (!AppendBytes(SizeSoFar, getPadding(CGM, StartOffset - SizeSoFar),
