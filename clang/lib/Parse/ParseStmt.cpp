@@ -413,6 +413,11 @@ Retry:
     ProhibitAttributes(GNUAttrs);
     HandlePragmaMSStruct();
     return StmtEmpty();
+  case tok::annot_pragma_bitfield_order:
+    ProhibitAttributes(CXX11Attrs);
+    ProhibitAttributes(GNUAttrs);
+    HandlePragmaBitfieldOrder();
+    return StmtEmpty();
 
   case tok::annot_pragma_align:
     ProhibitAttributes(CXX11Attrs);
@@ -1075,6 +1080,9 @@ void Parser::ParseCompoundStatementLeadingPragmas() {
       break;
     case tok::annot_pragma_msstruct:
       HandlePragmaMSStruct();
+      break;
+    case tok::annot_pragma_bitfield_order:
+      HandlePragmaBitfieldOrder();
       break;
     case tok::annot_pragma_align:
       HandlePragmaAlign();

@@ -178,6 +178,8 @@ class Parser : public CodeCompletionHandler {
   std::unique_ptr<PragmaHandler> OptionsHandler;
   std::unique_ptr<PragmaHandler> PackHandler;
   std::unique_ptr<PragmaHandler> MSStructHandler;
+  std::unique_ptr<PragmaHandler> BitfieldOrderHandler;
+  std::unique_ptr<PragmaHandler> ReverseBitfieldHandler;
   std::unique_ptr<PragmaHandler> UnusedHandler;
   std::unique_ptr<PragmaHandler> WeakHandler;
   std::unique_ptr<PragmaHandler> RedefineExtnameHandler;
@@ -771,6 +773,7 @@ private:
   /// Handle the annotation token produced for
   /// #pragma ms_struct...
   void HandlePragmaMSStruct();
+  void HandlePragmaBitfieldOrder();
 
   void HandlePragmaMSPointersToMembers();
 

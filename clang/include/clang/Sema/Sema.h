@@ -1439,7 +1439,7 @@ public:
     PSK_Set = 0x1,                     // #pragma (value)
     PSK_Push = 0x2,                    // #pragma (push[, id])
     PSK_Pop = 0x4,                     // #pragma (pop[, id])
-    PSK_Show = 0x8,                    // #pragma (show) -- only for "pack"!
+    PSK_Show = 0x8,                    // #pragma (show)
     PSK_Push_Set = PSK_Push | PSK_Set, // #pragma (push[, id], value)
     PSK_Pop_Set = PSK_Pop | PSK_Set,   // #pragma (pop[, id], value)
   };
@@ -1448,6 +1448,13 @@ public:
     PragmaMsStackAction Action;
     StringRef SlotLabel;
     Token Alignment;
+  };
+
+  enum class BitfieldOrder { MSBToLSB, LSBToMSB };
+  struct PragmaBitfieldOrderInfo {
+    PragmaMsStackAction Action;
+    StringRef SlotLabel;
+    BitfieldOrder Order;
   };
 
   // #pragma pack and align.
@@ -1643,6 +1650,7 @@ public:
   /// 2: Always insert vtordisps to support RTTI on partially constructed
   ///    objects
   PragmaStack<MSVtorDispMode> VtorDispStack;
+  PragmaStack<BitfieldOrder> BitfieldOrderStack;
   PragmaStack<AlignPackInfo> AlignPackStack;
   // The current #pragma align/pack values and locations at each #include.
   struct AlignPackIncludeState {
@@ -1822,6 +1830,8 @@ public:
 
   /// ActOnPragmaMSStruct - Called on well formed \#pragma ms_struct [on|off].
   void ActOnPragmaMSStruct(PragmaMSStructKind Kind);
+  void ActOnPragmaBitfieldOrder(SourceLocation Loc,
+                               const PragmaBitfieldOrderInfo &Info);
 
   /// ActOnPragmaMSComment - Called on well formed
   /// \#pragma comment(kind, "arg").

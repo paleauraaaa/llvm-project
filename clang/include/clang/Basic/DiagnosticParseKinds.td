@@ -1205,6 +1205,8 @@ def err_type_trait_arity : Error<
 
 // Language specific pragmas
 // - Generic warnings
+def warn_pragma_bitfield_order_syntax : Warning<
+  "malformed '#pragma %0'">, InGroup<IgnoredPragmas>;
 def warn_pragma_expected_lparen : Warning<
   "missing '(' after '#pragma %0' - ignoring">, InGroup<IgnoredPragmas>;
 def warn_pragma_expected_rparen : Warning<

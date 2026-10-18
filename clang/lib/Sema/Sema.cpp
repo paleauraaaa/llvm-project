@@ -249,6 +249,7 @@ Sema::Sema(Preprocessor &pp, ASTContext &ctxt, ASTConsumer &consumer,
       MSPointerToMemberRepresentationMethod(
           LangOpts.getMSPointerToMemberRepresentationMethod()),
       MSStructPragmaOn(false), VtorDispStack(LangOpts.getVtorDispMode()),
+      BitfieldOrderStack(BitfieldOrder::MSBToLSB),
       AlignPackStack(AlignPackInfo(getLangOpts().XLPragmaPack)),
       DataSegStack(nullptr), BSSSegStack(nullptr), ConstSegStack(nullptr),
       CodeSegStack(nullptr), StrictGuardStackCheckStack(false),

@@ -614,6 +614,31 @@ void Sema::ActOnPragmaMSStruct(PragmaMSStructKind Kind) {
   MSStructPragmaOn = (Kind == PMSST_ON);
 }
 
+void Sema::ActOnPragmaBitfieldOrder(SourceLocation Loc,
+                                  const PragmaBitfieldOrderInfo &Info) {
+  if (Info.Action == PSK_Show) {
+    Diag(Loc, diag::warn_pragma_bitfield_order_show)
+        << (BitfieldOrderStack.CurrentValue == BitfieldOrder::LSBToMSB
+                ? "lsb_to_msb"
+                : "msb_to_lsb");
+    return;
+  }
+  if (Info.Action & PSK_Pop) {
+    bool Empty = BitfieldOrderStack.Stack.empty();
+    bool Missing = !Info.SlotLabel.empty() &&
+                   llvm::none_of(BitfieldOrderStack.Stack, [&](const auto &Slot) {
+                     return Slot.StackSlotLabel == Info.SlotLabel;
+                   });
+    if (Empty || Missing) {
+      Diag(Loc, diag::warn_pragma_pop_failed)
+          << "bitfield_order"
+          << (Empty ? "stack empty" : "no matching push for identifier");
+      BitfieldOrderStack.Act(Loc, PSK_Reset, StringRef(), Info.Order);
+    }
+  }
+  BitfieldOrderStack.Act(Loc, Info.Action, Info.SlotLabel, Info.Order);
+}
+
 void Sema::ActOnPragmaMSComment(SourceLocation CommentLoc,
                                 PragmaMSCommentKind Kind, StringRef Arg) {
   auto *PCD = PragmaCommentDecl::Create(

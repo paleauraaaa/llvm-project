@@ -1600,6 +1600,7 @@ bool Parser::isValidAfterTypeSpecifier(bool CouldBeBitfield) {
   // attribute is in type attribute position.
   case tok::kw___attribute:    // struct foo __attribute__((used)) x;
   case tok::annot_pragma_pack: // struct foo {...} _Pragma(pack(pop));
+  case tok::annot_pragma_bitfield_order:
   // struct foo {...} _Pragma(section(...));
   case tok::annot_pragma_ms_pragma:
   // struct foo {...} _Pragma(vtordisp(pop));
@@ -3655,6 +3656,9 @@ Parser::DeclGroupPtrTy Parser::ParseCXXClassMemberDeclarationWithPragmas(
     return nullptr;
   case tok::annot_pragma_pack:
     HandlePragmaPack();
+    return nullptr;
+  case tok::annot_pragma_bitfield_order:
+    HandlePragmaBitfieldOrder();
     return nullptr;
   case tok::annot_pragma_align:
     HandlePragmaAlign();

@@ -65,6 +65,12 @@ private:
   Sema &Actions;
 };
 
+struct PragmaBitfieldOrderHandler : public PragmaHandler {
+  explicit PragmaBitfieldOrderHandler(StringRef Name) : PragmaHandler(Name) {}
+  void HandlePragma(Preprocessor &PP, PragmaIntroducer Introducer,
+                    Token &FirstToken) override;
+};
+
 struct PragmaMSStructHandler : public PragmaHandler {
   explicit PragmaMSStructHandler() : PragmaHandler("ms_struct") {}
   void HandlePragma(Preprocessor &PP, PragmaIntroducer Introducer,
@@ -432,6 +438,14 @@ void Parser::initializePragmaHandlers() {
 
   MSStructHandler = std::make_unique<PragmaMSStructHandler>();
   PP.AddPragmaHandler(MSStructHandler.get());
+  if (PP.getTargetInfo().getTriple().isOSXbox360()) {
+    BitfieldOrderHandler =
+        std::make_unique<PragmaBitfieldOrderHandler>("bitfield_order");
+    ReverseBitfieldHandler =
+        std::make_unique<PragmaBitfieldOrderHandler>("reverse_bitfield");
+    PP.AddPragmaHandler(BitfieldOrderHandler.get());
+    PP.AddPragmaHandler(ReverseBitfieldHandler.get());
+  }
 
   UnusedHandler = std::make_unique<PragmaUnusedHandler>();
   PP.AddPragmaHandler(UnusedHandler.get());
@@ -582,6 +596,12 @@ void Parser::resetPragmaHandlers() {
   PackHandler.reset();
   PP.RemovePragmaHandler(MSStructHandler.get());
   MSStructHandler.reset();
+  if (BitfieldOrderHandler) {
+    PP.RemovePragmaHandler(BitfieldOrderHandler.get());
+    PP.RemovePragmaHandler(ReverseBitfieldHandler.get());
+    BitfieldOrderHandler.reset();
+    ReverseBitfieldHandler.reset();
+  }
   PP.RemovePragmaHandler(UnusedHandler.get());
   UnusedHandler.reset();
   PP.RemovePragmaHandler(WeakHandler.get());
@@ -749,6 +769,13 @@ void Parser::HandlePragmaMSStruct() {
   PragmaMSStructKind Kind = static_cast<PragmaMSStructKind>(
       reinterpret_cast<uintptr_t>(Tok.getAnnotationValue()));
   Actions.ActOnPragmaMSStruct(Kind);
+  ConsumeAnnotationToken();
+}
+
+void Parser::HandlePragmaBitfieldOrder() {
+  auto *Info = static_cast<Sema::PragmaBitfieldOrderInfo *>(
+      Tok.getAnnotationValue());
+  Actions.ActOnPragmaBitfieldOrder(Tok.getLocation(), *Info);
   ConsumeAnnotationToken();
 }
 
@@ -2261,6 +2288,114 @@ void PragmaPackHandler::HandlePragma(Preprocessor &PP,
   Toks[0].setLocation(PackLoc);
   Toks[0].setAnnotationEndLoc(RParenLoc);
   Toks[0].setAnnotationValue(static_cast<void*>(Info));
+  PP.EnterTokenStream(Toks, /*DisableMacroExpansion=*/true,
+                      /*IsReinject=*/false);
+}
+
+void PragmaBitfieldOrderHandler::HandlePragma(Preprocessor &PP,
+                                            PragmaIntroducer Introducer,
+                                            Token &FirstToken) {
+  Sema::PragmaBitfieldOrderInfo Info{
+      Sema::PSK_Reset, StringRef(), Sema::BitfieldOrder::MSBToLSB};
+  Token Tok;
+  PP.Lex(Tok);
+  auto Malformed = [&] {
+    PP.Diag(Tok.getLocation(), diag::warn_pragma_bitfield_order_syntax)
+        << getName();
+  };
+  if (Tok.isNot(tok::l_paren)) {
+    Malformed();
+    return;
+  }
+  PP.Lex(Tok);
+  auto Is = [&](StringRef Name) {
+    return Tok.is(tok::identifier) && Tok.getIdentifierInfo()->isStr(Name);
+  };
+  auto ParseOrder = [&]() {
+    if (!Is("lsb_to_msb") && !Is("msb_to_lsb"))
+      return false;
+    Info.Order = Is("lsb_to_msb") ? Sema::BitfieldOrder::LSBToMSB
+                                : Sema::BitfieldOrder::MSBToLSB;
+    Info.Action = static_cast<Sema::PragmaMsStackAction>(Info.Action |
+                                                       Sema::PSK_Set);
+    PP.Lex(Tok);
+    return true;
+  };
+  if (getName() == "reverse_bitfield") {
+    if (!Is("on") && !Is("off")) {
+      Malformed();
+      return;
+    }
+    Info.Action = Sema::PSK_Set;
+    Info.Order = Is("on") ? Sema::BitfieldOrder::LSBToMSB
+                         : Sema::BitfieldOrder::MSBToLSB;
+    PP.Lex(Tok);
+  } else if (Is("show")) {
+    Info.Action = Sema::PSK_Show;
+    PP.Lex(Tok);
+    if (Tok.is(tok::comma)) {
+      PP.Lex(Tok);
+      if (Tok.isNot(tok::identifier)) {
+        Malformed();
+        return;
+      }
+      PP.Lex(Tok);
+    }
+  } else if (Is("push") || Is("pop")) {
+    Info.Action = Is("push") ? Sema::PSK_Push : Sema::PSK_Pop;
+    PP.Lex(Tok);
+    if (Tok.is(tok::comma)) {
+      PP.Lex(Tok);
+      if (!ParseOrder()) {
+        if (Tok.isNot(tok::identifier)) {
+          Malformed();
+          return;
+        }
+        Info.SlotLabel = Tok.getIdentifierInfo()->getName();
+        PP.Lex(Tok);
+        if (Tok.is(tok::comma)) {
+          PP.Lex(Tok);
+          if (!ParseOrder()) {
+            Malformed();
+            return;
+          }
+        }
+      }
+    }
+  } else if (Tok.isNot(tok::r_paren) && !ParseOrder()) {
+    Malformed();
+    return;
+  }
+  if (Info.Action == Sema::PSK_Set && getName() == "bitfield_order" &&
+      Tok.is(tok::comma)) {
+    PP.Lex(Tok);
+    if (!Is("show")) {
+      Malformed();
+      return;
+    }
+    PP.Lex(Tok);
+  }
+  if (Tok.isNot(tok::r_paren)) {
+    Malformed();
+    return;
+  }
+  SourceLocation EndLoc = Tok.getLocation();
+  PP.Lex(Tok);
+  if (Tok.isNot(tok::eod)) {
+    PP.Diag(Tok.getLocation(), diag::warn_pragma_extra_tokens_at_eol)
+        << getName();
+    return;
+  }
+  auto *Stored =
+      PP.getPreprocessorAllocator().Allocate<Sema::PragmaBitfieldOrderInfo>();
+  *Stored = Info;
+  MutableArrayRef<Token> Toks(PP.getPreprocessorAllocator().Allocate<Token>(1),
+                              1);
+  Toks[0].startToken();
+  Toks[0].setKind(tok::annot_pragma_bitfield_order);
+  Toks[0].setLocation(FirstToken.getLocation());
+  Toks[0].setAnnotationEndLoc(EndLoc);
+  Toks[0].setAnnotationValue(Stored);
   PP.EnterTokenStream(Toks, /*DisableMacroExpansion=*/true,
                       /*IsReinject=*/false);
 }
