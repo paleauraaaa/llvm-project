@@ -4976,8 +4976,8 @@ bool Compiler<Emitter>::visitCompoundStmt(const CompoundStmt *S) {
 template <class Emitter>
 bool Compiler<Emitter>::visitDeclStmt(const DeclStmt *DS) {
   for (const auto *D : DS->decls()) {
-    if (isa<StaticAssertDecl, TagDecl, TypedefNameDecl, UsingEnumDecl,
-            FunctionDecl>(D))
+    if (isa<StaticAssertDecl, PragmaBitfieldOrderDecl, TagDecl, TypedefNameDecl,
+            UsingEnumDecl, FunctionDecl>(D))
       continue;
 
     const auto *VD = dyn_cast<VarDecl>(D);

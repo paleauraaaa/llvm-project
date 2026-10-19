@@ -964,6 +964,7 @@ unsigned Decl::getIdentifierNamespaceForKind(Kind DeclKind) {
     case ObjCPropertyImpl:
     case PragmaComment:
     case PragmaDetectMismatch:
+    case PragmaBitfieldOrder:
     case Block:
     case Captured:
     case OutlinedFunction:
@@ -1100,7 +1101,8 @@ bool Decl::AccessDeclContextCheck() const {
   if (isa<TranslationUnitDecl>(this) || isa<TemplateTypeParmDecl>(this) ||
       isa<NonTypeTemplateParmDecl>(this) || !getDeclContext() ||
       !isa<CXXRecordDecl>(getDeclContext()) || isInvalidDecl() ||
-      isa<StaticAssertDecl>(this) || isa<BlockDecl>(this) ||
+      isa<StaticAssertDecl, PragmaBitfieldOrderDecl>(this) ||
+      isa<BlockDecl>(this) ||
       // FIXME: a ParmVarDecl can have ClassTemplateSpecialization
       // as DeclContext (?).
       isa<ParmVarDecl>(this) ||

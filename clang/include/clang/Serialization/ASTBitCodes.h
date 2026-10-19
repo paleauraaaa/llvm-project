@@ -1507,6 +1507,9 @@ enum DeclCode {
   /// A PragmaDetectMismatchDecl record.
   DECL_PRAGMA_DETECT_MISMATCH,
 
+  /// A PragmaBitfieldOrderDecl record.
+  DECL_PRAGMA_BITFIELD_ORDER,
+
   /// An OMPDeclareMapperDecl record.
   DECL_OMP_DECLARE_MAPPER,
 

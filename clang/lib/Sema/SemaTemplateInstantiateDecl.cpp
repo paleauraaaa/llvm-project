@@ -959,6 +959,17 @@ TemplateDeclInstantiator::VisitPragmaCommentDecl(PragmaCommentDecl *D) {
   llvm_unreachable("pragma comment cannot be instantiated");
 }
 
+Decl *TemplateDeclInstantiator::VisitPragmaBitfieldOrderDecl(
+    PragmaBitfieldOrderDecl *D) {
+  auto *New = PragmaBitfieldOrderDecl::Create(
+      SemaRef.Context, Owner, D->getLocation(), D->getAction(), D->isLSBFirst(),
+      D->getLabel());
+  Owner->addDecl(New);
+  if (!Owner->isDependentContext())
+    SemaRef.ReplayPragmaBitfieldOrder(D);
+  return New;
+}
+
 Decl *TemplateDeclInstantiator::VisitPragmaDetectMismatchDecl(
     PragmaDetectMismatchDecl *D) {
   llvm_unreachable("pragma comment cannot be instantiated");

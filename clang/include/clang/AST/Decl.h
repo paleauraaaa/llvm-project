@@ -139,6 +139,41 @@ public:
   const TranslationUnitDecl *getCanonicalDecl() const { return getFirstDecl(); }
 };
 
+/// A bitfield-order stack operation retained for template instantiation.
+class PragmaBitfieldOrderDecl final : public Decl {
+  friend class ASTDeclReader;
+  friend class ASTDeclWriter;
+
+public:
+  enum ActionKind { Reset, Set, Push, Pop, Show, PushSet, PopSet };
+
+private:
+  ActionKind Action;
+  bool LSBFirst;
+  IdentifierInfo *Label;
+
+  PragmaBitfieldOrderDecl(DeclContext *DC, SourceLocation Loc, ActionKind Action,
+                         bool LSBFirst, IdentifierInfo *Label)
+      : Decl(PragmaBitfieldOrder, DC, Loc), Action(Action), LSBFirst(LSBFirst),
+        Label(Label) {}
+
+  virtual void anchor();
+
+public:
+  static PragmaBitfieldOrderDecl *
+  Create(const ASTContext &C, DeclContext *DC, SourceLocation Loc,
+         ActionKind Action, bool LSBFirst, IdentifierInfo *Label);
+  static PragmaBitfieldOrderDecl *CreateDeserialized(ASTContext &C,
+                                                   GlobalDeclID ID);
+
+  ActionKind getAction() const { return Action; }
+  bool isLSBFirst() const { return LSBFirst; }
+  IdentifierInfo *getLabel() const { return Label; }
+
+  static bool classof(const Decl *D) { return classofKind(D->getKind()); }
+  static bool classofKind(Kind K) { return K == PragmaBitfieldOrder; }
+};
+
 /// Represents a `#pragma comment` line. Always a child of
 /// TranslationUnitDecl.
 class PragmaCommentDecl final

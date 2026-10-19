@@ -66,6 +66,7 @@ namespace {
     void VisitRecordDecl(RecordDecl *D);
     void VisitEnumConstantDecl(EnumConstantDecl *D);
     void VisitEmptyDecl(EmptyDecl *D);
+    void VisitPragmaBitfieldOrderDecl(PragmaBitfieldOrderDecl *D);
     void VisitFunctionDecl(FunctionDecl *D);
     void VisitFriendDecl(FriendDecl *D);
     void VisitFieldDecl(FieldDecl *D);
@@ -491,7 +492,8 @@ void DeclPrinter::VisitDeclContext(DeclContext *DC, bool Indent) {
 
     // FIXME: Need to be able to tell the DeclPrinter when
     const char *Terminator = nullptr;
-    if (isa<OMPThreadPrivateDecl>(*D) || isa<OMPDeclareReductionDecl>(*D) ||
+    if (isa<PragmaBitfieldOrderDecl>(*D) ||
+        isa<OMPThreadPrivateDecl>(*D) || isa<OMPDeclareReductionDecl>(*D) ||
         isa<OMPDeclareMapperDecl>(*D) || isa<OMPRequiresDecl>(*D) ||
         isa<OMPAllocateDecl>(*D))
       Terminator = nullptr;
@@ -1065,6 +1067,36 @@ void DeclPrinter::VisitNamespaceAliasDecl(NamespaceAliasDecl *D) {
 
 void DeclPrinter::VisitEmptyDecl(EmptyDecl *D) {
   prettyPrintAttributes(D);
+}
+
+void DeclPrinter::VisitPragmaBitfieldOrderDecl(PragmaBitfieldOrderDecl *D) {
+  // A DeclStmt can occur after other text on the same line.
+  Out << "\n#pragma bitfield_order(";
+  switch (D->getAction()) {
+  case PragmaBitfieldOrderDecl::Reset:
+    break;
+  case PragmaBitfieldOrderDecl::Show:
+    Out << "show";
+    break;
+  case PragmaBitfieldOrderDecl::Set:
+    Out << (D->isLSBFirst() ? "lsb_to_msb" : "msb_to_lsb");
+    break;
+  case PragmaBitfieldOrderDecl::Push:
+  case PragmaBitfieldOrderDecl::Pop:
+  case PragmaBitfieldOrderDecl::PushSet:
+  case PragmaBitfieldOrderDecl::PopSet:
+    Out << (D->getAction() == PragmaBitfieldOrderDecl::Push ||
+                    D->getAction() == PragmaBitfieldOrderDecl::PushSet
+                ? "push"
+                : "pop");
+    if (D->getLabel())
+      Out << ", " << D->getLabel()->getName();
+    if (D->getAction() == PragmaBitfieldOrderDecl::PushSet ||
+        D->getAction() == PragmaBitfieldOrderDecl::PopSet)
+      Out << ", " << (D->isLSBFirst() ? "lsb_to_msb" : "msb_to_lsb");
+    break;
+  }
+  Out << ")\n";
 }
 
 void DeclPrinter::VisitCXXRecordDecl(CXXRecordDecl *D) {

@@ -2344,6 +2344,16 @@ void TextNodeDumper::VisitImportDecl(const ImportDecl *D) {
     dumpDeclRef(InitD, "initializer");
 }
 
+void TextNodeDumper::VisitPragmaBitfieldOrderDecl(
+    const PragmaBitfieldOrderDecl *D) {
+  static constexpr llvm::StringLiteral Actions[] = {
+      "reset", "set", "push", "pop", "show", "push_set", "pop_set"};
+  OS << " " << Actions[D->getAction()];
+  if (const IdentifierInfo *Label = D->getLabel())
+    OS << " " << Label->getName();
+  OS << (D->isLSBFirst() ? " lsb_to_msb" : " msb_to_lsb");
+}
+
 void TextNodeDumper::VisitPragmaCommentDecl(const PragmaCommentDecl *D) {
   OS << ' ';
   switch (D->getCommentKind()) {

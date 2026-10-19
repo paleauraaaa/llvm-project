@@ -319,6 +319,7 @@ public:
   void VisitDecl(Decl *D);
   void VisitPragmaCommentDecl(PragmaCommentDecl *D);
   void VisitPragmaDetectMismatchDecl(PragmaDetectMismatchDecl *D);
+  void VisitPragmaBitfieldOrderDecl(PragmaBitfieldOrderDecl *D);
   void VisitTranslationUnitDecl(TranslationUnitDecl *TU);
   void VisitNamedDecl(NamedDecl *ND);
   void VisitLabelDecl(LabelDecl *LD);
@@ -656,6 +657,14 @@ void ASTDeclReader::VisitDecl(Decl *D) {
   } else if (ModulePrivate) {
     D->setModuleOwnershipKind(Decl::ModuleOwnershipKind::ModulePrivate);
   }
+}
+
+void ASTDeclReader::VisitPragmaBitfieldOrderDecl(PragmaBitfieldOrderDecl *D) {
+  VisitDecl(D);
+  D->setLocation(readSourceLocation());
+  D->Action = static_cast<PragmaBitfieldOrderDecl::ActionKind>(Record.readInt());
+  D->LSBFirst = Record.readInt();
+  D->Label = Record.readIdentifier();
 }
 
 void ASTDeclReader::VisitPragmaCommentDecl(PragmaCommentDecl *D) {
@@ -4165,6 +4174,9 @@ Decl *ASTReader::ReadDeclRecord(GlobalDeclID ID) {
     break;
   case DECL_PRAGMA_COMMENT:
     D = PragmaCommentDecl::CreateDeserialized(Context, ID, Record.readInt());
+    break;
+  case DECL_PRAGMA_BITFIELD_ORDER:
+    D = PragmaBitfieldOrderDecl::CreateDeserialized(Context, ID);
     break;
   case DECL_PRAGMA_DETECT_MISMATCH:
     D = PragmaDetectMismatchDecl::CreateDeserialized(Context, ID,

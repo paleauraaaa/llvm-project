@@ -13,6 +13,7 @@ def Decl : DeclNode<?, "", 1>;
 def TranslationUnit : DeclNode<Decl>, DeclContext;
 def PragmaComment : DeclNode<Decl>;
 def PragmaDetectMismatch : DeclNode<Decl>;
+def PragmaBitfieldOrder : DeclNode<Decl>;
 def ExternCContext : DeclNode<Decl>, DeclContext;
 def Named : DeclNode<Decl, "named declarations", 1>;
   def Namespace : DeclNode<Named, "namespaces">, DeclContext;

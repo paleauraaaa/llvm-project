@@ -5321,6 +5321,21 @@ void TranslationUnitDecl::setAnonymousNamespace(NamespaceDecl *D) {
     Listener->AddedAnonymousNamespace(this, D);
 }
 
+void PragmaBitfieldOrderDecl::anchor() {}
+
+PragmaBitfieldOrderDecl *PragmaBitfieldOrderDecl::Create(
+    const ASTContext &C, DeclContext *DC, SourceLocation Loc, ActionKind Action,
+    bool LSBFirst, IdentifierInfo *Label) {
+  return new (C, DC)
+      PragmaBitfieldOrderDecl(DC, Loc, Action, LSBFirst, Label);
+}
+
+PragmaBitfieldOrderDecl *
+PragmaBitfieldOrderDecl::CreateDeserialized(ASTContext &C, GlobalDeclID ID) {
+  return new (C, ID)
+      PragmaBitfieldOrderDecl(nullptr, SourceLocation(), Reset, false, nullptr);
+}
+
 void PragmaCommentDecl::anchor() {}
 
 PragmaCommentDecl *PragmaCommentDecl::Create(const ASTContext &C,

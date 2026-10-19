@@ -502,6 +502,7 @@ namespace clang {
     ExpectedDecl VisitDecl(Decl *D);
     ExpectedDecl VisitImportDecl(ImportDecl *D);
     ExpectedDecl VisitEmptyDecl(EmptyDecl *D);
+    ExpectedDecl VisitPragmaBitfieldOrderDecl(PragmaBitfieldOrderDecl *D);
     ExpectedDecl VisitAccessSpecDecl(AccessSpecDecl *D);
     ExpectedDecl VisitStaticAssertDecl(StaticAssertDecl *D);
     ExpectedDecl VisitTranslationUnitDecl(TranslationUnitDecl *D);
@@ -2509,6 +2510,24 @@ ExpectedDecl ASTNodeImporter::VisitImportDecl(ImportDecl *D) {
   Importer.FromDiag(D->getLocation(), diag::err_unsupported_ast_node)
       << D->getDeclKindName();
   return make_error<ASTImportError>(ASTImportError::UnsupportedConstruct);
+}
+
+ExpectedDecl ASTNodeImporter::VisitPragmaBitfieldOrderDecl(
+    PragmaBitfieldOrderDecl *D) {
+  DeclContext *DC, *LexicalDC;
+  if (Error Err = ImportDeclContext(D, DC, LexicalDC))
+    return std::move(Err);
+  ExpectedSLoc Loc = import(D->getLocation());
+  if (!Loc)
+    return Loc.takeError();
+  IdentifierInfo *Label = Importer.Import(D->getLabel());
+  PragmaBitfieldOrderDecl *ToD;
+  if (GetImportedOrCreateDecl(ToD, D, Importer.getToContext(), DC, *Loc,
+                              D->getAction(), D->isLSBFirst(), Label))
+    return ToD;
+  ToD->setLexicalDeclContext(LexicalDC);
+  LexicalDC->addDeclInternal(ToD);
+  return ToD;
 }
 
 ExpectedDecl ASTNodeImporter::VisitEmptyDecl(EmptyDecl *D) {

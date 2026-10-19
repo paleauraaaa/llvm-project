@@ -416,7 +416,9 @@ Retry:
   case tok::annot_pragma_bitfield_order:
     ProhibitAttributes(CXX11Attrs);
     ProhibitAttributes(GNUAttrs);
-    HandlePragmaBitfieldOrder();
+    if (Decl *D = HandlePragmaBitfieldOrder())
+      return Actions.ActOnDeclStmt(Actions.ConvertDeclToDeclGroup(D),
+                                   D->getLocation(), D->getLocation());
     return StmtEmpty();
 
   case tok::annot_pragma_align:
@@ -1068,7 +1070,7 @@ StmtResult Parser::ParseCompoundStatement(bool isStmtExpr,
 /// Parse any pragmas at the start of the compound expression. We handle these
 /// separately since some pragmas (FP_CONTRACT) must appear before any C
 /// statement in the compound, but may be intermingled with other pragmas.
-void Parser::ParseCompoundStatementLeadingPragmas() {
+void Parser::ParseCompoundStatementLeadingPragmas(StmtVector &Stmts) {
   bool checkForPragmas = true;
   while (checkForPragmas) {
     switch (Tok.getKind()) {
@@ -1082,7 +1084,10 @@ void Parser::ParseCompoundStatementLeadingPragmas() {
       HandlePragmaMSStruct();
       break;
     case tok::annot_pragma_bitfield_order:
-      HandlePragmaBitfieldOrder();
+      if (Decl *D = HandlePragmaBitfieldOrder())
+        Stmts.push_back(Actions.ActOnDeclStmt(Actions.ConvertDeclToDeclGroup(D),
+                                             D->getLocation(), D->getLocation())
+                            .get());
       break;
     case tok::annot_pragma_align:
       HandlePragmaAlign();
@@ -1220,10 +1225,9 @@ StmtResult Parser::ParseCompoundStatementBody(bool isStmtExpr) {
   Sema::CompoundScopeRAII CompoundScope(Actions, isStmtExpr);
 
   // Parse any pragmas at the beginning of the compound statement.
-  ParseCompoundStatementLeadingPragmas();
-  Actions.ActOnAfterCompoundStatementLeadingPragmas();
-
   StmtVector Stmts;
+  ParseCompoundStatementLeadingPragmas(Stmts);
+  Actions.ActOnAfterCompoundStatementLeadingPragmas();
 
   // "__label__ X, Y, Z;" is the GNU "Local Label" extension.  These are
   // only allowed at the start of a compound stmt regardless of the language.

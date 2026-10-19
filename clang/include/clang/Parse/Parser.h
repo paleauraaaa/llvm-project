@@ -773,7 +773,7 @@ private:
   /// Handle the annotation token produced for
   /// #pragma ms_struct...
   void HandlePragmaMSStruct();
-  void HandlePragmaBitfieldOrder();
+  Decl *HandlePragmaBitfieldOrder();
 
   void HandlePragmaMSPointersToMembers();
 
@@ -2193,7 +2193,7 @@ private:
   StmtResult ParseCompoundStatement(bool isStmtExpr = false);
   StmtResult ParseCompoundStatement(bool isStmtExpr,
                                     unsigned ScopeFlags);
-  void ParseCompoundStatementLeadingPragmas();
+  void ParseCompoundStatementLeadingPragmas(StmtVector &Stmts);
   void DiagnoseLabelAtEndOfCompoundStatement();
   bool ConsumeNullStmt(StmtVector &Stmts);
   StmtResult ParseCompoundStatementBody(bool isStmtExpr = false);

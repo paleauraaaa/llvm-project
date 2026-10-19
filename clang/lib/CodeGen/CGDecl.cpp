@@ -130,6 +130,7 @@ void CodeGenFunction::EmitDecl(const Decl &D) {
   case Decl::OMPCapturedExpr:
   case Decl::OMPRequires:
   case Decl::Empty:
+  case Decl::PragmaBitfieldOrder:
   case Decl::Concept:
   case Decl::ImplicitConceptSpecialization:
   case Decl::LifetimeExtendedTemporary:
