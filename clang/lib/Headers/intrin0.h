@@ -25,6 +25,8 @@ extern "C" {
 
 unsigned char _BitScanForward(unsigned long *_Index, unsigned long _Mask);
 unsigned char _BitScanReverse(unsigned long *_Index, unsigned long _Mask);
+void _ReadBarrier(void);
+void _WriteBarrier(void);
 void _ReadWriteBarrier(void);
 
 #if defined(__aarch64__) || defined(__arm64ec__)

@@ -265,7 +265,6 @@ TARGET_HEADER_BUILTIN(_InterlockedDecrement64_acq, "LLiLLiD*", "nh", INTRIN_H, A
 TARGET_HEADER_BUILTIN(_InterlockedDecrement64_nf,  "LLiLLiD*", "nh", INTRIN_H, ALL_MS_LANGUAGES, "")
 TARGET_HEADER_BUILTIN(_InterlockedDecrement64_rel, "LLiLLiD*", "nh", INTRIN_H, ALL_MS_LANGUAGES, "")
 
-TARGET_HEADER_BUILTIN(_ReadWriteBarrier, "v", "nh", INTRIN_H, ALL_MS_LANGUAGES, "")
 TARGET_HEADER_BUILTIN(__getReg, "ULLii", "nh", INTRIN_H, ALL_MS_LANGUAGES, "")
 TARGET_HEADER_BUILTIN(_ReadStatusReg,  "LLii",  "nh", INTRIN_H, ALL_MS_LANGUAGES, "")
 TARGET_HEADER_BUILTIN(_WriteStatusReg, "viLLi", "nh", INTRIN_H, ALL_MS_LANGUAGES, "")

@@ -4494,9 +4494,6 @@ let Features = "raoint", Attributes = [NoThrow] in {
 let Header = "intrin.h", Languages = "ALL_MS_LANGUAGES", Attributes = [NoThrow, RequireDeclaration] in {
   def _BitScanForward : X86LibBuiltin<"unsigned char(msuint32_t *, msuint32_t)">;
   def _BitScanReverse : X86LibBuiltin<"unsigned char(msuint32_t *, msuint32_t)">;
-  def _ReadWriteBarrier : X86LibBuiltin<"void()">;
-  def _ReadBarrier : X86LibBuiltin<"void()">;
-  def _WriteBarrier : X86LibBuiltin<"void()">;
   def __cpuid : X86LibBuiltin<"void(int *, int)">;
   def __cpuidex : X86LibBuiltin<"void(int *, int, int)">;
 }

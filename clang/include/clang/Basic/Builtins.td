@@ -2369,6 +2369,18 @@ def WarnMemsetZeroLen : Builtin {
 }
 
 // Microsoft builtins. These are only active with -fms-extensions.
+let Attributes = [NoThrow, RequireDeclaration], Prototype = "void()" in {
+  def ReadBarrier : MSLangBuiltin {
+    let Spellings = ["_ReadBarrier"];
+  }
+  def WriteBarrier : MSLangBuiltin {
+    let Spellings = ["_WriteBarrier"];
+  }
+  def ReadWriteBarrier : MSLangBuiltin {
+    let Spellings = ["_ReadWriteBarrier"];
+  }
+}
+
 def Alloca : MSLangBuiltin {
   let Spellings = ["_alloca"];
   let Attributes = [NoThrow];
