@@ -2725,6 +2725,19 @@ implemented directly in terms of :ref:`extended vector support
 <langext-vectors>` instead of builtins, in order to reduce the number of
 builtins that we need to implement.
 
+Microsoft compiler barriers
+---------------------------
+
+With ``-fms-extensions``, Clang recognizes ``_ReadBarrier``, ``_WriteBarrier``,
+and ``_ReadWriteBarrier`` as target-independent compiler barriers. Each has the
+signature ``void name(void)`` and requires a declaration, normally provided by
+``<intrin.h>`` (or ``<intrin0.h>`` on Microsoft targets).
+
+Clang conservatively implements all three as full compiler memory barriers,
+preventing memory accesses from being optimized across the call. They do not
+emit hardware memory fences and do not provide inter-thread synchronization.
+Use C or C++ atomics for inter-thread communication.
+
 ``__builtin_alloca``
 --------------------
 

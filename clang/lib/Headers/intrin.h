@@ -150,7 +150,6 @@ long _InterlockedExchangeAdd_HLEAcquire(long volatile *, long);
 long _InterlockedExchangeAdd_HLERelease(long volatile *, long);
 __int64 _InterlockedExchangeAdd64_HLEAcquire(__int64 volatile *, __int64);
 __int64 _InterlockedExchangeAdd64_HLERelease(__int64 volatile *, __int64);
-void _ReadBarrier(void);
 unsigned int _rorx_u32(unsigned int, const unsigned int);
 int _sarx_i32(int, unsigned int);
 #if __STDC_HOSTED__
@@ -161,7 +160,6 @@ unsigned int _shrx_u32(unsigned int, unsigned int);
 void _Store_HLERelease(long volatile *, long);
 void _Store64_HLERelease(__int64 volatile *, __int64);
 void _StorePointer_HLERelease(void *volatile *, void *);
-void _WriteBarrier(void);
 unsigned __int32 xbegin(void);
 void _xend(void);
 

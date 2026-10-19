@@ -3719,6 +3719,12 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
                             AlignmentCI, OffsetValue);
     return RValue::get(PtrValue);
   }
+  case Builtin::BI_ReadBarrier:
+  case Builtin::BI_WriteBarrier:
+  case Builtin::BI_ReadWriteBarrier:
+    return RValue::get(
+        Builder.CreateFence(llvm::AtomicOrdering::SequentiallyConsistent,
+                            llvm::SyncScope::SingleThread));
   case Builtin::BI__assume:
   case Builtin::BI__builtin_assume: {
     if (E->getArg(0)->HasSideEffects(getContext()))
@@ -11559,10 +11565,6 @@ Value *CodeGenFunction::EmitAArch64BuiltinExpr(unsigned BuiltinID,
     return Builder.CreateCall(F);
   }
 
-  if (BuiltinID == clang::AArch64::BI_ReadWriteBarrier)
-    return Builder.CreateFence(llvm::AtomicOrdering::SequentiallyConsistent,
-                               llvm::SyncScope::SingleThread);
-
   // CRC32
   Intrinsic::ID CRCIntrinsicID = Intrinsic::not_intrinsic;
   switch (BuiltinID) {
@@ -17266,13 +17268,6 @@ Value *CodeGenFunction::EmitX86BuiltinExpr(unsigned BuiltinID,
     Ops[2] = Builder.CreateZExt(Ops[2], Int64Ty);
     return Builder.CreateCall(F, Ops);
   }
-  case X86::BI_ReadWriteBarrier:
-  case X86::BI_ReadBarrier:
-  case X86::BI_WriteBarrier: {
-    return Builder.CreateFence(llvm::AtomicOrdering::SequentiallyConsistent,
-                               llvm::SyncScope::SingleThread);
-  }
-
   case X86::BI_AddressOfReturnAddress: {
     Function *F =
         CGM.getIntrinsic(Intrinsic::addressofreturnaddress, AllocaInt8PtrTy);
