@@ -772,11 +772,12 @@ void Parser::HandlePragmaMSStruct() {
   ConsumeAnnotationToken();
 }
 
-void Parser::HandlePragmaBitfieldOrder() {
+Decl *Parser::HandlePragmaBitfieldOrder() {
   auto *Info = static_cast<Sema::PragmaBitfieldOrderInfo *>(
       Tok.getAnnotationValue());
-  Actions.ActOnPragmaBitfieldOrder(Tok.getLocation(), *Info);
+  Decl *D = Actions.ActOnPragmaBitfieldOrder(Tok.getLocation(), *Info);
   ConsumeAnnotationToken();
+  return D;
 }
 
 void Parser::HandlePragmaAlign() {

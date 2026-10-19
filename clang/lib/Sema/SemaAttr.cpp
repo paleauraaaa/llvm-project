@@ -614,8 +614,85 @@ void Sema::ActOnPragmaMSStruct(PragmaMSStructKind Kind) {
   MSStructPragmaOn = (Kind == PMSST_ON);
 }
 
-void Sema::ActOnPragmaBitfieldOrder(SourceLocation Loc,
-                                  const PragmaBitfieldOrderInfo &Info) {
+Decl *Sema::ActOnPragmaBitfieldOrder(SourceLocation Loc,
+                                   const PragmaBitfieldOrderInfo &Info) {
+  PragmaBitfieldOrderDecl *D = nullptr;
+  if (CurContext->isDependentContext()) {
+    PragmaBitfieldOrderDecl::ActionKind Action;
+    switch (Info.Action) {
+    case PSK_Reset:
+      Action = PragmaBitfieldOrderDecl::Reset;
+      break;
+    case PSK_Set:
+      Action = PragmaBitfieldOrderDecl::Set;
+      break;
+    case PSK_Push:
+      Action = PragmaBitfieldOrderDecl::Push;
+      break;
+    case PSK_Pop:
+      Action = PragmaBitfieldOrderDecl::Pop;
+      break;
+    case PSK_Show:
+      Action = PragmaBitfieldOrderDecl::Show;
+      break;
+    case PSK_Push_Set:
+      Action = PragmaBitfieldOrderDecl::PushSet;
+      break;
+    case PSK_Pop_Set:
+      Action = PragmaBitfieldOrderDecl::PopSet;
+      break;
+    }
+    IdentifierInfo *Label =
+        Info.SlotLabel.empty() ? nullptr : &Context.Idents.get(Info.SlotLabel);
+    D = PragmaBitfieldOrderDecl::Create(
+        Context, CurContext, Loc, Action,
+        Info.Order == BitfieldOrder::LSBToMSB, Label);
+    CurContext->addDecl(D);
+
+    // bitfield_order defers free-function template bodies. Member bodies also have an
+    // initial processing pass when their containing class is defined.
+    for (DeclContext *DC = CurContext; DC; DC = DC->getParent())
+      if (DC->isFunctionOrMethod() && DC->isDependentContext() &&
+          !isa<CXXMethodDecl>(DC))
+        return D;
+  }
+  ApplyPragmaBitfieldOrder(Loc, Info);
+  return D;
+}
+
+void Sema::ReplayPragmaBitfieldOrder(const PragmaBitfieldOrderDecl *D) {
+  PragmaMsStackAction Action;
+  switch (D->getAction()) {
+  case PragmaBitfieldOrderDecl::Reset:
+    Action = PSK_Reset;
+    break;
+  case PragmaBitfieldOrderDecl::Set:
+    Action = PSK_Set;
+    break;
+  case PragmaBitfieldOrderDecl::Push:
+    Action = PSK_Push;
+    break;
+  case PragmaBitfieldOrderDecl::Pop:
+    Action = PSK_Pop;
+    break;
+  case PragmaBitfieldOrderDecl::Show:
+    Action = PSK_Show;
+    break;
+  case PragmaBitfieldOrderDecl::PushSet:
+    Action = PSK_Push_Set;
+    break;
+  case PragmaBitfieldOrderDecl::PopSet:
+    Action = PSK_Pop_Set;
+    break;
+  }
+  ApplyPragmaBitfieldOrder(
+      D->getLocation(),
+      {Action, D->getLabel() ? D->getLabel()->getName() : StringRef(),
+       D->isLSBFirst() ? BitfieldOrder::LSBToMSB : BitfieldOrder::MSBToLSB});
+}
+
+void Sema::ApplyPragmaBitfieldOrder(SourceLocation Loc,
+                                   const PragmaBitfieldOrderInfo &Info) {
   if (Info.Action == PSK_Show) {
     Diag(Loc, diag::warn_pragma_bitfield_order_show)
         << (BitfieldOrderStack.CurrentValue == BitfieldOrder::LSBToMSB

@@ -1830,8 +1830,11 @@ public:
 
   /// ActOnPragmaMSStruct - Called on well formed \#pragma ms_struct [on|off].
   void ActOnPragmaMSStruct(PragmaMSStructKind Kind);
-  void ActOnPragmaBitfieldOrder(SourceLocation Loc,
+  Decl *ActOnPragmaBitfieldOrder(SourceLocation Loc,
+                                const PragmaBitfieldOrderInfo &Info);
+  void ApplyPragmaBitfieldOrder(SourceLocation Loc,
                                const PragmaBitfieldOrderInfo &Info);
+  void ReplayPragmaBitfieldOrder(const PragmaBitfieldOrderDecl *D);
 
   /// ActOnPragmaMSComment - Called on well formed
   /// \#pragma comment(kind, "arg").

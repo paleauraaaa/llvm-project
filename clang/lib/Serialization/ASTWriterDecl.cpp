@@ -74,6 +74,7 @@ namespace clang {
     void VisitDecl(Decl *D);
     void VisitPragmaCommentDecl(PragmaCommentDecl *D);
     void VisitPragmaDetectMismatchDecl(PragmaDetectMismatchDecl *D);
+    void VisitPragmaBitfieldOrderDecl(PragmaBitfieldOrderDecl *D);
     void VisitTranslationUnitDecl(TranslationUnitDecl *D);
     void VisitNamedDecl(NamedDecl *D);
     void VisitLabelDecl(LabelDecl *LD);
@@ -461,6 +462,15 @@ void ASTDeclWriter::VisitDecl(Decl *D) {
       DC = NS->getParent();
     }
   }
+}
+
+void ASTDeclWriter::VisitPragmaBitfieldOrderDecl(PragmaBitfieldOrderDecl *D) {
+  VisitDecl(D);
+  Record.AddSourceLocation(D->getLocation());
+  Record.push_back(D->getAction());
+  Record.push_back(D->isLSBFirst());
+  Record.AddIdentifierRef(D->getLabel());
+  Code = serialization::DECL_PRAGMA_BITFIELD_ORDER;
 }
 
 void ASTDeclWriter::VisitPragmaCommentDecl(PragmaCommentDecl *D) {

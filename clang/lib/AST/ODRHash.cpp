@@ -306,6 +306,12 @@ public:
     Inherited::VisitNamedDecl(D);
   }
 
+  void VisitPragmaBitfieldOrderDecl(const PragmaBitfieldOrderDecl *D) {
+    ID.AddInteger(D->getAction());
+    Hash.AddBoolean(D->isLSBFirst());
+    AddIdentifierInfo(D->getLabel());
+  }
+
   void VisitValueDecl(const ValueDecl *D) {
     if (auto *DD = dyn_cast<DeclaratorDecl>(D); DD && DD->getTypeSourceInfo())
       AddQualType(DD->getTypeSourceInfo()->getType());
@@ -551,6 +557,7 @@ bool ODRHash::isSubDeclToBeProcessed(const Decl *D, const DeclContext *Parent) {
     case Decl::Friend:
     case Decl::FunctionTemplate:
     case Decl::StaticAssert:
+    case Decl::PragmaBitfieldOrder:
     case Decl::TypeAlias:
     case Decl::Typedef:
     case Decl::Var:

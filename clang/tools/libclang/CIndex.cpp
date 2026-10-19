@@ -7217,6 +7217,7 @@ CXCursor clang_getCursorDefinition(CXCursor C) {
   case Decl::BuiltinTemplate:
   case Decl::PragmaComment:
   case Decl::PragmaDetectMismatch:
+  case Decl::PragmaBitfieldOrder:
   case Decl::UsingPack:
   case Decl::Concept:
   case Decl::ImplicitConceptSpecialization:

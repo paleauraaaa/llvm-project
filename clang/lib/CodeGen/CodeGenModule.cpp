@@ -7064,6 +7064,7 @@ void CodeGenModule::EmitTopLevelDecl(Decl *D) {
   case Decl::TypeAliasTemplate:
   case Decl::Block:
   case Decl::Empty:
+  case Decl::PragmaBitfieldOrder:
   case Decl::Binding:
     break;
   case Decl::Using:          // using X; [C++]
