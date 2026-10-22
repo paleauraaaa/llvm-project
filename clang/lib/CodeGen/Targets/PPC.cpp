@@ -1114,6 +1114,50 @@ public:
     // Unprototyped Xbox calls duplicate floating-point arguments into GPRs.
     return true;
   }
+  void addReturnRegisterOutputs(CodeGenFunction &CGF, LValue ReturnSlot,
+                                std::string &Constraints,
+                                std::vector<llvm::Type *> &ResultRegTypes,
+                                std::vector<llvm::Type *> &ResultTruncRegTypes,
+                                std::vector<LValue> &ResultRegDests,
+                                std::string &AsmString,
+                                unsigned NumOutputs) const override {
+    QualType Ty = ReturnSlot.getType();
+    if (const RecordDecl *RD = Ty->getAsRecordDecl()) {
+      if (RD->hasAttr<IntrinTypeAttr>()) {
+        if (!CGF.MSAsmReturnValue.isValid())
+          CGF.MSAsmReturnValue = CGF.CreateMemTemp(Ty, "msasm.retval");
+        Ty = CGF.getContext().getVectorType(CGF.getContext().FloatTy, 4,
+                                            VectorKind::Generic);
+        ReturnSlot = CGF.MakeAddrLValueWithoutTBAA(
+            CGF.MSAsmReturnValue.withElementType(CGF.ConvertType(Ty)), Ty);
+      }
+    }
+    if (!Ty->isScalarType() && !Ty->isVectorType())
+      return;
+    llvm::Type *ResultTy = CGF.ConvertType(Ty);
+    llvm::Type *TruncTy = ResultTy;
+    StringRef Reg;
+    if (Ty->isRealFloatingType())
+      Reg = "f1";
+    else if (Ty->isVectorType())
+      Reg = "v1";
+    else if (Ty->isIntegerType() || Ty->isEnumeralType() ||
+             Ty->isPointerType()) {
+      Reg = "r3";
+      ResultTy = CGF.Int64Ty;
+      TruncTy = llvm::IntegerType::get(CGF.getLLVMContext(),
+                                       CGF.getContext().getTypeSize(Ty));
+      ReturnSlot.setAddress(ReturnSlot.getAddress().withElementType(TruncTy));
+    } else
+      return;
+    if (!Constraints.empty())
+      Constraints += ',';
+    Constraints += "=&{" + Reg.str() + "}";
+    ResultRegTypes.push_back(ResultTy);
+    ResultTruncRegTypes.push_back(TruncTy);
+    ResultRegDests.push_back(ReturnSlot);
+    rewriteInputConstraintReferences(NumOutputs, 1, AsmString);
+  }
 };
 
 } // namespace

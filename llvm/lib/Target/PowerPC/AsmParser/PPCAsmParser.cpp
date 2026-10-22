@@ -11,15 +11,21 @@
 #include "PPCInstrInfo.h"
 #include "PPCTargetStreamer.h"
 #include "TargetInfo/PowerPCTargetInfo.h"
+#include "llvm/ADT/SmallSet.h"
+#include "llvm/ADT/StringExtras.h"
+#include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/MC/MCContext.h"
+#include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCInst.h"
+#include "llvm/MC/MCInstPrinter.h"
 #include "llvm/MC/MCInstrInfo.h"
 #include "llvm/MC/MCParser/MCAsmLexer.h"
 #include "llvm/MC/MCParser/MCAsmParser.h"
 #include "llvm/MC/MCParser/MCParsedAsmOperand.h"
 #include "llvm/MC/MCParser/MCTargetAsmParser.h"
+#include "llvm/MC/MCRegisterInfo.h"
 #include "llvm/MC/MCStreamer.h"
 #include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/MC/MCSymbolELF.h"
@@ -98,6 +104,14 @@ struct PPCOperand;
 
 class PPCAsmParser : public MCTargetAsmParser {
   const bool IsPPC64;
+  struct MSOperand {
+    StringRef Name;
+    void *Decl = nullptr;
+    unsigned Size = 0;
+    bool IsFunction = false;
+  };
+  DenseMap<const MCParsedAsmOperand *, MSOperand> MSOperands;
+  DenseMap<const MCParsedAsmOperand *, MCRegister> MSRegisters;
 
   void Warning(SMLoc L, const Twine &Msg) { getParser().Warning(L, Msg); }
 
@@ -140,6 +154,12 @@ class PPCAsmParser : public MCTargetAsmParser {
 
 
 public:
+  std::optional<bool> parseMSInlineAsm(
+      std::string &AsmString, unsigned &NumOutputs, unsigned &NumInputs,
+      SmallVectorImpl<std::pair<void *, bool>> &OpDecls,
+      SmallVectorImpl<std::string> &Constraints,
+      SmallVectorImpl<std::string> &Clobbers, const MCInstrInfo *MII,
+      MCInstPrinter *IP, MCAsmParserSemaCallback &SI) override;
   bool areEqualRegs(const MCParsedAsmOperand &Op1,
                     const MCParsedAsmOperand &Op2) const override;
 
@@ -1331,17 +1351,625 @@ bool PPCAsmParser::matchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
   llvm_unreachable("Implement any new match types added!");
 }
 
+std::optional<bool> PPCAsmParser::parseMSInlineAsm(
+    std::string &AsmString, unsigned &NumOutputs, unsigned &NumInputs,
+    SmallVectorImpl<std::pair<void *, bool>> &OpDecls,
+    SmallVectorImpl<std::string> &Constraints,
+    SmallVectorImpl<std::string> &Clobbers, const MCInstrInfo *InstrInfo,
+    MCInstPrinter *IP, MCAsmParserSemaCallback &SI) {
+  if (!getSTI().getTargetTriple().isXbox360())
+    return std::nullopt;
+
+  struct Instruction {
+    MCInst Inst;
+    SmallVector<std::unique_ptr<MCParsedAsmOperand>, 8> Operands;
+    std::string Label;
+    SMLoc Loc;
+    const MCParsedAsmOperand *Memory = nullptr;
+    MCParsedAsmOperand *CallTarget = nullptr;
+    SmallSet<unsigned, 32> Uses, Defs, Live;
+  };
+  SmallVector<Instruction, 16> Instructions;
+  SmallSet<unsigned, 32> UsedRegs, ClobberRegs;
+  const MCRegisterInfo &MRI = *getContext().getRegisterInfo();
+  auto MarkUsed = [&](MCRegister Reg) {
+    for (MCRegAliasIterator I(Reg, &MRI, true); I.isValid(); ++I)
+      UsedRegs.insert(*I);
+  };
+  NumOutputs = NumInputs = 0;
+  MSOperands.clear();
+  MSRegisters.clear();
+  getParser().Lex();
+  while (getTok().isNot(AsmToken::Eof)) {
+    if (getTok().is(AsmToken::EndOfStatement) ||
+        getTok().is(AsmToken::LCurly) || getTok().is(AsmToken::RCurly)) {
+      Lex();
+      continue;
+    }
+    if (getTok().isNot(AsmToken::Identifier))
+      return Error(getTok().getLoc(),
+                   "expected a PowerPC instruction or label");
+    StringRef Name = getTok().getString();
+    SMLoc Loc = getTok().getLoc();
+    Lex();
+    if (parseOptionalToken(AsmToken::Colon)) {
+      StringRef Label = SI.LookupInlineAsmLabel(
+          Name, getParser().getSourceManager(), Loc, true);
+      Instructions.emplace_back();
+      Instructions.back().Label =
+          (getContext().getAsmInfo()->getPrivateLabelPrefix() + Label).str();
+      continue;
+    }
+    std::string LowerName = Name.lower();
+    Name = LowerName;
+    if (Name == "mtfsfi" || Name == "mtfsfi." || Name == "mtfsb0" ||
+        Name == "mtfsb0." || Name == "mtfsb1" || Name == "mtfsb1.")
+      return Error(Loc, "opcode not supported by PPC inline asm");
+    Instructions.emplace_back();
+    Instruction &I = Instructions.back();
+    I.Loc = Loc;
+    auto MarkPhysical = [&](MCRegister Reg, bool IsDef) {
+      if (Reg == PPC::ZERO || Reg == PPC::ZERO8)
+        return;
+      for (MCRegAliasIterator A(Reg, &MRI, true); A.isValid(); ++A)
+        (IsDef ? I.Defs : I.Uses).insert(*A);
+      if (Reg != PPC::R1 && Reg != PPC::X1 && Reg != PPC::R2 &&
+          Reg != PPC::X2 && Reg != PPC::R13 && Reg != PPC::X13 &&
+          Reg != PPC::LR && Reg != PPC::LR8)
+        ClobberRegs.insert(Reg);
+    };
+    ParseInstructionInfo Info;
+    if (parseInstruction(Info, Name, Loc, I.Operands))
+      return true;
+    if (StringSwitch<bool>(Name)
+            .Cases("addi", "addis", "addic", "addic.", "mulli", true)
+            .Cases("subfic", "cmpwi", "cmpdi", true)
+            .Default(false) &&
+        !I.Operands.empty()) {
+      auto &Imm = static_cast<PPCOperand &>(*I.Operands.back());
+      if (Imm.Kind == PPCOperand::Immediate && !MSOperands.count(&Imm) &&
+          !MSRegisters.count(&Imm)) {
+        uint64_t Magnitude =
+            Imm.Imm.Val < 0 ? -uint64_t(Imm.Imm.Val) : uint64_t(Imm.Imm.Val);
+        if (Magnitude > 0x7fff)
+          Warning(Imm.getStartLoc(),
+                  "signed immediate value out of range in PPC inline asm");
+        // Retain the sign and the low fifteen magnitude bits.
+        Imm.Imm.Val = Imm.Imm.Val < 0 ? -int64_t(Magnitude & 0x7fff)
+                                      : int64_t(Magnitude & 0x7fff);
+      }
+    }
+    if ((Name == "li" || Name == "lis") && !I.Operands.empty()) {
+      auto &Imm = static_cast<PPCOperand &>(*I.Operands.back());
+      if (Imm.Kind == PPCOperand::Immediate && !MSOperands.count(&Imm) &&
+          !MSRegisters.count(&Imm)) {
+        if (!isInt<16>(Imm.Imm.Val) && !isUInt<16>(Imm.Imm.Val))
+          Warning(Imm.getStartLoc(),
+                  "signed immediate value out of range in PPC inline asm");
+        Imm.Imm.Val = SignExtend64<16>(Imm.Imm.Val);
+      }
+    }
+    uint64_t ErrorInfo = ~0ULL;
+    unsigned Match = MatchInstructionImpl(I.Operands, I.Inst, ErrorInfo, false);
+    // Permit a C lvalue in place of a complete D-form memory operand.
+    if (Match != Match_Success && !I.Operands.empty() &&
+        MSOperands.count(I.Operands.back().get()) &&
+        MSOperands.lookup(I.Operands.back().get()).Decl) {
+      I.Memory = I.Operands.back().get();
+      auto &Disp = static_cast<PPCOperand &>(*I.Operands.back());
+      Disp.Imm.Val = 0;
+      I.Operands.push_back(PPCOperand::CreateImm(4, Loc, Loc, isPPC64(), true));
+      I.Inst.clear();
+      Match = MatchInstructionImpl(I.Operands, I.Inst, ErrorInfo, false);
+    }
+    if (Match != Match_Success) {
+      unsigned Opcode;
+      matchAndEmitInstruction(Loc, Opcode, I.Operands,
+                              getParser().getStreamer(), ErrorInfo, false);
+      return true;
+    }
+    MCInst Mapping;
+    MatchInstructionImpl(I.Operands, Mapping, ErrorInfo, true);
+    const MCInstrDesc &Desc = InstrInfo->get(I.Inst.getOpcode());
+    if (Desc.isCall()) {
+      // These are raw calls: LR and the outgoing frame are managed by the asm.
+      // Still protect compiler-owned values and the operand table from callees.
+      for (unsigned N = 0; N != 13; ++N)
+        if (N != 1 && N != 2)
+          ClobberRegs.insert(RRegs[N]);
+      for (unsigned N = 0; N != 14; ++N)
+        ClobberRegs.insert(FRegs[N]);
+      for (unsigned N = 0; N != 64; ++N)
+        ClobberRegs.insert(V128Regs[N]);
+      for (unsigned N : {0u, 1u, 6u, 7u})
+        ClobberRegs.insert(CRRegs[N]);
+      ClobberRegs.insert(PPC::CTR);
+      ClobberRegs.insert(PPC::XER);
+      ClobberRegs.insert(PPC::RM);
+    }
+    for (auto &Op : I.Operands) {
+      auto Reg = MSRegisters.find(Op.get());
+      if (Reg == MSRegisters.end())
+        continue;
+      for (unsigned N : Op->getMCOperandNums()) {
+        int TiedTo = Desc.getOperandConstraint(N, MCOI::TIED_TO);
+        if (TiedTo >= 0) {
+          I.Inst.getOperand(N) = MCOperand::createReg(Reg->second);
+          I.Inst.getOperand(TiedTo) = MCOperand::createReg(Reg->second);
+        }
+        const MCOperand &Matched = I.Inst.getOperand(N);
+        if (!Matched.isReg()) {
+          bool IsSPR = (I.Inst.getOpcode() == PPC::MFSPR ||
+                        I.Inst.getOpcode() == PPC::MFSPR8) &&
+                       N == 1;
+          IsSPR |= (I.Inst.getOpcode() == PPC::MTSPR ||
+                    I.Inst.getOpcode() == PPC::MTSPR8) &&
+                   N == 0;
+          if (IsSPR && (Reg->second == PPC::LR || Reg->second == PPC::LR8 ||
+                        Reg->second == PPC::CTR || Reg->second == PPC::CTR8 ||
+                        Reg->second == PPC::XER || Reg->second == PPC::VRSAVE))
+            continue;
+          return Error(Op->getStartLoc(),
+                       "register is not valid in an immediate operand");
+        }
+        if (Matched.getReg() == PPC::ZERO || Matched.getReg() == PPC::ZERO8)
+          continue;
+        bool Matches = false;
+        for (MCRegAliasIterator A(Reg->second, &MRI, true); A.isValid(); ++A)
+          Matches |= *A == Matched.getReg();
+        if (!Matches)
+          return Error(Op->getStartLoc(), "invalid register class for operand");
+      }
+    }
+    if (I.Memory && !Desc.mayLoad() && !Desc.mayStore())
+      return Error(Loc,
+                   "C memory operand requires a load or store instruction");
+    SmallSet<unsigned, 8> VariableOperands;
+    for (auto &Op : I.Operands) {
+      if (!MSOperands.count(Op.get()))
+        continue;
+      unsigned N = Op->getMCOperandNum();
+      if (N >= I.Inst.getNumOperands())
+        return Error(Op->getStartLoc(), "unsupported C operand in PowerPC asm");
+      if (Desc.operands()[N].OperandType == MCOI::OPERAND_PCREL ||
+          (Desc.isBranch() && !Desc.isIndirectBranch() &&
+           N + 1 == I.Inst.getNumOperands())) {
+        if (Desc.isCall()) {
+          if (!MSOperands.lookup(Op.get()).IsFunction)
+            return Error(Op->getStartLoc(),
+                         "direct asm call requires a C function name");
+          I.CallTarget = Op.get();
+          continue;
+        }
+        StringRef Label = SI.LookupInlineAsmLabel(
+            MSOperands.lookup(Op.get()).Name, getParser().getSourceManager(),
+            Op->getStartLoc(), false);
+        auto *Symbol = getContext().getOrCreateSymbol(
+            (getContext().getAsmInfo()->getPrivateLabelPrefix() + Label).str());
+        I.Inst.getOperand(N) = MCOperand::createExpr(
+            MCSymbolRefExpr::create(Symbol, getContext()));
+        MSOperands.erase(Op.get());
+        continue;
+      }
+      if (!MSOperands.lookup(Op.get()).Decl)
+        return Error(Op->getStartLoc(), "expected a register or C variable");
+      for (unsigned M : Op->getMCOperandNums())
+        VariableOperands.insert(M);
+      for (unsigned J = 0; J != I.Inst.getNumOperands(); ++J)
+        if (Desc.getOperandConstraint(J, MCOI::TIED_TO) == int(N)) {
+          bool ExplicitSource = false;
+          for (auto &Source : I.Operands)
+            ExplicitSource |= llvm::is_contained(Source->getMCOperandNums(), J);
+          if (!ExplicitSource)
+            VariableOperands.insert(J);
+        }
+      if (Op.get() == I.Memory)
+        VariableOperands.insert(N + 1);
+      else if (!I.Inst.getOperand(N).isReg())
+        return Error(Op->getStartLoc(),
+                     "C variable requires a register operand");
+    }
+    for (unsigned N = 0; N != I.Inst.getNumOperands(); ++N) {
+      const MCOperand &Op = I.Inst.getOperand(N);
+      if (!Op.isReg() || VariableOperands.count(N))
+        continue;
+      bool IsDef = N < Desc.getNumDefs();
+      MarkPhysical(Op.getReg(), IsDef);
+    }
+    for (MCRegister Reg : Desc.implicit_uses()) {
+      MarkUsed(Reg);
+      for (MCRegAliasIterator A(Reg, &MRI, true); A.isValid(); ++A)
+        I.Uses.insert(*A);
+    }
+    for (MCRegister Reg : Desc.implicit_defs()) {
+      MarkPhysical(Reg, true);
+    }
+    // These instructions have register effects not enumerated by MCInstrDesc.
+    switch (I.Inst.getOpcode()) {
+    case PPC::LMW:
+    case PPC::STMW:
+    case PPC::LSWI:
+    case PPC::STSWI: {
+      if (VariableOperands.count(0))
+        return Error(Loc,
+                     "multiple-register transfer requires a physical register");
+      unsigned First = MRI.getEncodingValue(I.Inst.getOperand(0).getReg());
+      bool IsLoad =
+          I.Inst.getOpcode() == PPC::LMW || I.Inst.getOpcode() == PPC::LSWI;
+      unsigned Count = 32 - First;
+      if (I.Inst.getOpcode() == PPC::LSWI || I.Inst.getOpcode() == PPC::STSWI) {
+        unsigned Bytes = I.Inst.getOperand(2).getImm();
+        Count = ((Bytes ? Bytes : 32) + 3) / 4;
+      }
+      for (unsigned N = 0; N != Count; ++N)
+        MarkPhysical(RRegs[(First + N) % 32], IsLoad);
+      break;
+    }
+    case PPC::MTCRF:
+    case PPC::MTCRF8:
+    case PPC::MFCR:
+    case PPC::MFCR8: {
+      unsigned Mask = Desc.getNumDefs() ? 255 : I.Inst.getOperand(0).getImm();
+      for (unsigned N = 0; N != 8; ++N)
+        if (Mask & (128 >> N))
+          MarkPhysical(CRRegs[N], !Desc.getNumDefs());
+      break;
+    }
+    case PPC::MFSPR:
+    case PPC::MFSPR8:
+    case PPC::MTSPR:
+    case PPC::MTSPR8: {
+      bool IsDef = !Desc.getNumDefs();
+      unsigned SPR = I.Inst.getOperand(IsDef ? 0 : 1).getImm();
+      MCRegister Reg;
+      switch (SPR) {
+      case 1:
+        Reg = PPC::XER;
+        break;
+      case 8:
+        Reg = isPPC64() ? PPC::LR8 : PPC::LR;
+        break;
+      case 9:
+        Reg = isPPC64() ? PPC::CTR8 : PPC::CTR;
+        break;
+      case 256:
+        Reg = PPC::VRSAVE;
+        break;
+      }
+      if (Reg)
+        MarkPhysical(Reg, IsDef);
+      break;
+    }
+    }
+  }
+
+  StringMap<unsigned> Labels;
+  for (unsigned N = 0; N != Instructions.size(); ++N)
+    if (!Instructions[N].Label.empty())
+      Labels[Instructions[N].Label] = N;
+  bool Changed;
+  do {
+    Changed = false;
+    for (unsigned N = Instructions.size(); N != 0;) {
+      Instruction &I = Instructions[--N];
+      SmallSet<unsigned, 32> Live = I.Uses;
+      if (N + 1 == Instructions.size())
+        for (MCRegister Reg : {PPC::R3, PPC::F1, PPC::V1})
+          for (MCRegAliasIterator A(Reg, &MRI, true); A.isValid(); ++A)
+            if (!I.Defs.count(*A))
+              Live.insert(*A);
+      auto MergeSuccessor = [&](unsigned Successor) {
+        for (unsigned Reg : Instructions[Successor].Live)
+          if (!I.Defs.count(Reg))
+            Live.insert(Reg);
+      };
+      bool Fallthrough = true;
+      if (I.Label.empty()) {
+        const MCInstrDesc &Desc = InstrInfo->get(I.Inst.getOpcode());
+        Fallthrough = !Desc.isUnconditionalBranch() && !Desc.isReturn();
+        if (Desc.isBranch())
+          for (const MCOperand &Op : I.Inst)
+            if (Op.isExpr())
+              if (auto *Ref = dyn_cast<MCSymbolRefExpr>(Op.getExpr())) {
+                auto Target = Labels.find(Ref->getSymbol().getName());
+                if (Target != Labels.end())
+                  MergeSuccessor(Target->second);
+              }
+      }
+      if (Fallthrough && N + 1 < Instructions.size())
+        MergeSuccessor(N + 1);
+      if (I.Live != Live) {
+        I.Live = Live;
+        Changed = true;
+      }
+    }
+  } while (Changed);
+
+  auto AllocateScratch = [&](MCRegister Model, int RegClass = -1,
+                             bool PairedFPR = false) -> MCRegister {
+    ArrayRef<MCPhysReg> Candidates;
+    if (RegClass == PPC::VRPermRCRegClassID)
+      Candidates = ArrayRef(VRegs).take_front(8);
+    else if (RegClass == PPC::VR128RCRegClassID)
+      Candidates = V128Regs;
+    else if (MRI.getRegClass(PPC::GPRCRegClassID).contains(Model))
+      Candidates = RRegs;
+    else if (MRI.getRegClass(PPC::G8RCRegClassID).contains(Model))
+      Candidates = XRegs;
+    else if (MRI.getRegClass(PPC::F8RCRegClassID).contains(Model) ||
+             MRI.getRegClass(PPC::F4RCRegClassID).contains(Model))
+      Candidates = FRegs;
+    else if (MRI.getRegClass(PPC::VRRCRegClassID).contains(Model))
+      Candidates = VRegs;
+    else if (MRI.getRegClass(PPC::VR128RCRegClassID).contains(Model))
+      Candidates = V128Regs;
+    else
+      return MCRegister();
+    SmallVector<MCPhysReg, 128> Ordered;
+    unsigned VolatileEnd = std::min<unsigned>(
+        Candidates.size(),
+        Candidates.data() == FRegs                                    ? 14
+        : Candidates.data() == V128Regs || Candidates.data() == VRegs ? 20
+                                                                      : 13);
+    for (unsigned N = VolatileEnd; N != 0; --N)
+      Ordered.push_back(Candidates[N - 1]);
+    append_range(Ordered, Candidates.drop_front(VolatileEnd));
+    for (MCPhysReg Reg : Ordered) {
+      unsigned Encoding = MRI.getEncodingValue(Reg);
+      if ((Candidates.data() == RRegs || Candidates.data() == XRegs) &&
+          (Encoding < 4 || Encoding == 13 || Encoding >= 30))
+        continue;
+      if ((Candidates.data() == FRegs && Encoding == 1) ||
+          ((Candidates.data() == V128Regs || Candidates.data() == VRegs) &&
+           Encoding == 1))
+        continue;
+      MCRegister FPReg = PairedFPR ? MCRegister(FRegs[Encoding]) : MCRegister();
+      if (!UsedRegs.count(Reg) && (!FPReg || !UsedRegs.count(FPReg))) {
+        MarkUsed(Reg);
+        ClobberRegs.insert(Reg);
+        if (FPReg) {
+          MarkUsed(FPReg);
+          ClobberRegs.insert(FPReg);
+        }
+        return Reg;
+      }
+    }
+    return MCRegister();
+  };
+  auto RegisterName = [&](MCRegister Reg) {
+    std::string Name;
+    raw_string_ostream OS(Name);
+    IP->printRegName(OS, Reg);
+    return Name;
+  };
+  StringMap<unsigned> Addresses;
+  auto AddAddress = [&](const MSOperand &Var) {
+    auto Insert = Addresses.try_emplace(Var.Name, NumInputs);
+    if (Insert.second) {
+      ++NumInputs;
+      OpDecls.emplace_back(Var.Decl, true);
+      Constraints.emplace_back("b");
+    }
+  };
+  for (Instruction &I : Instructions)
+    for (auto &Op : I.Operands)
+      if (MSOperands.count(Op.get()) && Op.get() != I.CallTarget)
+        AddAddress(MSOperands.lookup(Op.get()));
+  StringMap<unsigned> Functions;
+  for (Instruction &I : Instructions)
+    if (I.CallTarget) {
+      const MSOperand &Target = MSOperands.find(I.CallTarget)->second;
+      auto Insert = Functions.try_emplace(Target.Name, Functions.size() +
+                                                           !Addresses.empty());
+      if (Insert.second) {
+        ++NumInputs;
+        OpDecls.emplace_back(Target.Decl, true);
+        Constraints.emplace_back("i");
+      }
+    }
+
+  raw_string_ostream OS(AsmString);
+  for (Instruction &I : Instructions) {
+    if (!I.Label.empty()) {
+      OS << I.Label << ":\n\t";
+      continue;
+    }
+    if (I.CallTarget) {
+      MCSymbol *Target = getContext().createNamedTempSymbol("msasm.callee");
+      I.Inst.getOperand(I.CallTarget->getMCOperandNum()) =
+          MCOperand::createExpr(MCSymbolRefExpr::create(Target, getContext()));
+      std::string Text;
+      raw_string_ostream CallOS(Text);
+      IP->printInst(&I.Inst, 0, "", getSTI(), CallOS);
+      size_t TargetPos = Text.find(Target->getName());
+      assert(TargetPos != std::string::npos && "missing asm call target");
+      Text.replace(
+          TargetPos, Target->getName().size(),
+          "${" +
+              utostr(Functions.lookup(MSOperands.lookup(I.CallTarget).Name)) +
+              ":c}");
+      OS << Text << "\n\t";
+      continue;
+    }
+    UsedRegs = I.Live;
+    for (unsigned Reg : I.Defs)
+      UsedRegs.insert(Reg);
+    std::string Stores;
+    raw_string_ostream StoreOS(Stores);
+    const MCInstrDesc &Desc = InstrInfo->get(I.Inst.getOpcode());
+    bool SmallFPMove =
+        I.Inst.getOpcode() == PPC::FMR &&
+        llvm::any_of(I.Operands, [&](const auto &Op) {
+          auto Var = MSOperands.find(Op.get());
+          return Var != MSOperands.end() &&
+                 (Var->second.Size == 1 || Var->second.Size == 2);
+        });
+    SmallFPMove &= llvm::any_of(I.Operands, [&](const auto &Op) {
+      return MSOperands.count(Op.get()) && Op->getMCOperandNum() == 0;
+    });
+    StringRef MoveStore;
+    std::string MoveMemory;
+    bool MoveDestSmall = false, MoveSourceSmall = false;
+    // Small-object FP operands use GPR loads/stores but the same numeric
+    // register fields in the FP instruction. Plain fmr is a typed copy instead.
+    SmallVector<MCRegister, 8> Assigned(I.Inst.getNumOperands());
+    SmallSet<unsigned, 8> Mapped;
+    for (auto &Op : I.Operands)
+      for (unsigned N : Op->getMCOperandNums())
+        Mapped.insert(N);
+    for (auto &Op : I.Operands)
+      if (!MSOperands.count(Op.get()))
+        for (unsigned N : Op->getMCOperandNums())
+          if (I.Inst.getOperand(N).isReg())
+            Assigned[N] = I.Inst.getOperand(N).getReg();
+    for (auto &Op : I.Operands) {
+      auto It = MSOperands.find(Op.get());
+      if (It == MSOperands.end())
+        continue;
+      const MSOperand &Var = It->second;
+      unsigned N = Op->getMCOperandNum();
+      AddAddress(Var);
+      MCRegister AddressReg = AllocateScratch(isPPC64() ? PPC::X4 : PPC::R4);
+      if (!AddressReg)
+        return Error(I.Loc,
+                     "no scratch register available for C operand address");
+      std::string Address = utostr(MRI.getEncodingValue(AddressReg));
+      OS << "lwz " << Address << ", " << 4 * Addresses.lookup(Var.Name)
+         << "($0)\n\t";
+      if (Op.get() == I.Memory) {
+        I.Inst.getOperand(N + 1) = MCOperand::createReg(AddressReg);
+        continue;
+      }
+      MCRegister Model = I.Inst.getOperand(N).getReg();
+      bool IsFP = MRI.getRegClass(PPC::F4RCRegClassID).contains(Model) ||
+                  MRI.getRegClass(PPC::F8RCRegClassID).contains(Model);
+      bool SmallFP = IsFP && (Var.Size == 1 || Var.Size == 2);
+      int TiedTo = Desc.getOperandConstraint(N, MCOI::TIED_TO);
+      MCRegister Scratch = TiedTo >= 0 ? Assigned[TiedTo] : MCRegister();
+      for (unsigned J = 0; J != I.Inst.getNumOperands(); ++J)
+        if (Desc.getOperandConstraint(J, MCOI::TIED_TO) == int(N) &&
+            Assigned[J])
+          Scratch = Assigned[J];
+      if (!Scratch)
+        Scratch = SmallFP ? AllocateScratch(PPC::R4, -1, !SmallFPMove)
+                          : AllocateScratch(Model, Desc.operands()[N].RegClass);
+      if (!Scratch)
+        return Error(Op->getStartLoc(),
+                     "no scratch register available for C operand");
+      StringRef Load, Store;
+      bool Indexed = false;
+      if (SmallFP || MRI.getRegClass(PPC::GPRCRegClassID).contains(Model) ||
+          MRI.getRegClass(PPC::G8RCRegClassID).contains(Model)) {
+        switch (Var.Size) {
+        case 1:
+          Load = "lbz";
+          Store = "stb";
+          break;
+        case 2:
+          Load = "lhz";
+          Store = "sth";
+          break;
+        case 4:
+          Load = "lwz";
+          Store = "stw";
+          break;
+        case 8:
+          Load = "ld";
+          Store = "std";
+          break;
+        default:
+          return Error(Op->getStartLoc(), "invalid C operand size for GPR");
+        }
+      } else if (MRI.getRegClass(PPC::F4RCRegClassID).contains(Model) ||
+                 MRI.getRegClass(PPC::F8RCRegClassID).contains(Model)) {
+        if (Var.Size != 4 && Var.Size != 8)
+          return Error(Op->getStartLoc(), "invalid C operand size for FPR");
+        Load = Var.Size == 4 ? "lfs" : "lfd";
+        Store = Var.Size == 4 ? "stfs" : "stfd";
+      } else {
+        if (Var.Size != 16)
+          return Error(Op->getStartLoc(), "invalid C operand size for vector");
+        Load = "lvx128";
+        Store = "stvx128";
+        Indexed = true;
+      }
+      bool IsDef = false, IsUse = false;
+      MCRegister InstructionReg =
+          SmallFP ? MCRegister(FRegs[MRI.getEncodingValue(Scratch)]) : Scratch;
+      for (unsigned M : Op->getMCOperandNums()) {
+        IsDef |= M < Desc.getNumDefs();
+        IsUse |= M >= Desc.getNumDefs();
+        I.Inst.getOperand(M) = MCOperand::createReg(InstructionReg);
+        Assigned[M] = InstructionReg;
+      }
+      for (unsigned J = 0; J != I.Inst.getNumOperands(); ++J)
+        if (Desc.getOperandConstraint(J, MCOI::TIED_TO) == int(N) &&
+            !Mapped.count(J)) {
+          I.Inst.getOperand(J) = MCOperand::createReg(Scratch);
+          IsUse = true;
+        }
+      std::string Memory = Indexed ? ", 0, " + Address : ", 0(" + Address + ")";
+      // Load duplicated alias sources separately, including volatile ones.
+      if (!IsDef && Op->getMCOperandNums().size() > 1) {
+        bool First = true;
+        for (unsigned M : Op->getMCOperandNums()) {
+          MCRegister Source = First ? Scratch : AllocateScratch(Model);
+          if (!Source)
+            return Error(Op->getStartLoc(),
+                         "no scratch register available for C operand");
+          OS << Load << " " << MRI.getEncodingValue(Source) << Memory << "\n\t";
+          I.Inst.getOperand(M) = MCOperand::createReg(Source);
+          First = false;
+        }
+        continue;
+      }
+      if (IsUse)
+        OS << Load << " " << MRI.getEncodingValue(Scratch) << Memory << "\n\t";
+      I.Inst.getOperand(N) = MCOperand::createReg(InstructionReg);
+      if (IsDef) {
+        if (SmallFPMove) {
+          MoveStore = Store;
+          MoveMemory = Memory;
+          MoveDestSmall = SmallFP;
+        } else
+          StoreOS << Store << " " << MRI.getEncodingValue(Scratch) << Memory
+                  << "\n\t";
+      } else if (SmallFPMove && IsUse) {
+        MoveSourceSmall = SmallFP;
+      }
+    }
+    if (SmallFPMove) {
+      unsigned SourceReg =
+          MoveDestSmall == MoveSourceSmall
+              ? MRI.getEncodingValue(I.Inst.getOperand(1).getReg())
+              : 0;
+      OS << MoveStore << " " << SourceReg << MoveMemory << "\n\t";
+      continue;
+    }
+    processInstruction(I.Inst, I.Operands);
+    IP->printInst(&I.Inst, 0, "", getSTI(), OS);
+    OS << "\n\t" << Stores;
+  }
+  for (unsigned Reg : ClobberRegs)
+    Clobbers.push_back(Reg == PPC::RM ? "fpscr" : RegisterName(Reg));
+  Clobbers.emplace_back("memory");
+  MSOperands.clear();
+  MSRegisters.clear();
+  return false;
+}
+
 bool PPCAsmParser::areEqualRegs(const MCParsedAsmOperand &Op1,
-                               const MCParsedAsmOperand &Op2) const {
+                                const MCParsedAsmOperand &Op2) const {
+  if (MSOperands.count(&Op1) || MSOperands.count(&Op2))
+    return true;
   if (MCTargetAsmParser::areEqualRegs(Op1, Op2))
     return true;
 
   const auto &PPCOp1 = static_cast<const PPCOperand &>(Op1);
   const auto &PPCOp2 = static_cast<const PPCOperand &>(Op2);
   return PPCOp1.Kind == PPCOperand::Immediate &&
-         PPCOp2.Kind == PPCOperand::Immediate &&
-         isUInt<7>(PPCOp1.getImm()) && isUInt<7>(PPCOp2.getImm()) &&
-         PPCOp1.getImm() == PPCOp2.getImm();
+         PPCOp2.Kind == PPCOperand::Immediate && isUInt<7>(PPCOp1.getImm()) &&
+         isUInt<7>(PPCOp2.getImm()) && PPCOp1.getImm() == PPCOp2.getImm();
 }
 
 #define GET_REGISTER_MATCHER
@@ -1355,10 +1983,20 @@ MCRegister PPCAsmParser::matchRegisterName(int64_t &IntVal) {
     return MCRegister();
 
   StringRef Name = getParser().getTok().getString();
+  std::string MSName;
+  if (isParsingMSInlineAsm()) {
+    MSName = Name.lower();
+    if (MSName.size() > 2 && isDigit(MSName[2]) &&
+        (StringRef(MSName).starts_with("fr") ||
+         StringRef(MSName).starts_with("vr")))
+      MSName.erase(1, 1);
+    Name = MSName;
+  }
   MCRegister RegNo = MatchRegisterName(Name);
   if (!RegNo)
     return RegNo;
 
+  IntVal = getContext().getRegisterInfo()->getEncodingValue(RegNo);
   Name.substr(Name.find_first_of("1234567890")).getAsInteger(10, IntVal);
 
   // MatchRegisterName doesn't seem to have special handling for 64bit vs 32bit
@@ -1369,7 +2007,9 @@ MCRegister PPCAsmParser::matchRegisterName(int64_t &IntVal) {
   } else if (Name.equals_insensitive("ctr")) {
     RegNo = isPPC64() ? PPC::CTR8 : PPC::CTR;
     IntVal = 9;
-  } else if (Name.equals_insensitive("vrsave"))
+  } else if (Name.equals_insensitive("xer"))
+    IntVal = 1;
+  else if (Name.equals_insensitive("vrsave"))
     IntVal = 256;
   else if (Name.starts_with_insensitive("r"))
     RegNo = isPPC64() ? XRegs[IntVal] : RRegs[IntVal];
@@ -1562,6 +2202,40 @@ bool PPCAsmParser::parseOperand(OperandVector &Operands) {
   SMLoc E = SMLoc::getFromPointer(Parser.getTok().getLoc().getPointer() - 1);
   const MCExpr *EVal;
 
+  if (isParsingMSInlineAsm() && Parser.getTok().is(AsmToken::Identifier)) {
+    int64_t RegNum;
+    if (MCRegister Reg = matchRegisterName(RegNum)) {
+      Operands.push_back(PPCOperand::CreateImm(RegNum, S, S, isPPC64()));
+      MSRegisters[Operands.back().get()] = Reg;
+      return false;
+    }
+    StringRef Name(S.getPointer());
+    InlineAsmIdentifierInfo Info;
+    SemaCallback->LookupInlineAsmIdentifier(Name, Info, false);
+    if (Info.isKind(InlineAsmIdentifierInfo::IK_Var) ||
+        Info.isKind(InlineAsmIdentifierInfo::IK_Label)) {
+      const char *End = Name.end();
+      while (Parser.getTok().getLoc().getPointer() < End)
+        Parser.Lex();
+    } else {
+      Name = Parser.getTok().getString();
+      Parser.Lex();
+    }
+    // Four is both a legal register and an aligned branch displacement.
+    // The matched operand metadata distinguishes C operands from labels.
+    Operands.push_back(PPCOperand::CreateImm(4, S, S, isPPC64()));
+    MSOperand &Operand = MSOperands[Operands.back().get()];
+    Operand.Name = Name;
+    if (Info.isKind(InlineAsmIdentifierInfo::IK_Var)) {
+      Operand.Decl = Info.Var.Decl;
+      Operand.Size = Info.Var.Type;
+    } else if (Info.isKind(InlineAsmIdentifierInfo::IK_Label)) {
+      Operand.Decl = Info.Label.Decl;
+      Operand.IsFunction = Info.Label.IsFunction;
+    }
+    return false;
+  }
+
   // Attempt to parse the next token as an immediate
   switch (getLexer().getKind()) {
   // Special handling for register names.  These are interpreted
@@ -1663,6 +2337,17 @@ bool PPCAsmParser::parseOperand(OperandVector &Operands) {
         return Error(S, "invalid register number");
       break;
     case AsmToken::Identifier:
+      if (isParsingMSInlineAsm()) {
+        MCRegister Reg = matchRegisterName(IntVal);
+        const MCRegisterInfo &MRI = *getContext().getRegisterInfo();
+        if (Reg && (MRI.getRegClass(PPC::GPRCRegClassID).contains(Reg) ||
+                    MRI.getRegClass(PPC::G8RCRegClassID).contains(Reg) ||
+                    MRI.getRegClass(PPC::F8RCRegClassID).contains(Reg) ||
+                    MRI.getRegClass(PPC::VR128RCRegClassID).contains(Reg)) &&
+            IntVal < 32)
+          break;
+      }
+      [[fallthrough]];
     default:
       return Error(S, "invalid memory operand");
     }
@@ -1684,6 +2369,10 @@ bool PPCAsmParser::parseInstruction(ParseInstructionInfo &Info, StringRef Name,
   // If the next character is a '+' or '-', we need to add it to the
   // instruction name, to match what TableGen is doing.
   std::string NewOpcode;
+  if (isParsingMSInlineAsm()) {
+    NewOpcode = Name.lower();
+    Name = NewOpcode;
+  }
   if (parseOptionalToken(AsmToken::Plus)) {
     NewOpcode = std::string(Name);
     NewOpcode += '+';

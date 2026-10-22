@@ -1360,6 +1360,10 @@ void CodeGenFunction::EmitFunctionBody(const Stmt *Body) {
     EmitCompoundStmtWithoutScope(*S);
   else
     EmitStmt(Body);
+  if (HaveInsertPoint() && MSAsmReturnValue.isValid())
+    EmitAggregateCopy(MakeAddrLValueWithoutTBAA(ReturnValue, FnRetTy),
+                      MakeAddrLValueWithoutTBAA(MSAsmReturnValue, FnRetTy),
+                      FnRetTy, AggValueSlot::DoesNotOverlap);
 }
 
 /// When instrumenting to collect profile data, the counts for some blocks

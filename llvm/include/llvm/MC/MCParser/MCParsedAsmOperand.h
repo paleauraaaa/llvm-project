@@ -9,6 +9,8 @@
 #ifndef LLVM_MC_MCPARSER_MCPARSEDASMOPERAND_H
 #define LLVM_MC_MCPARSER_MCPARSEDASMOPERAND_H
 
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/SMLoc.h"
 #include <string>
@@ -26,6 +28,8 @@ class MCParsedAsmOperand {
   /// MCOperandNum - The corresponding MCInst operand number.  Only valid when
   /// parsing MS-style inline assembly.
   unsigned MCOperandNum = ~0u;
+  // Aliases may expand one parsed operand into several MC operands.
+  SmallVector<unsigned, 2> MCOperandNums;
 
   /// Constraint - The constraint on this operand.  Only valid when parsing
   /// MS-style inline assembly.
@@ -46,8 +50,12 @@ public:
   void setConstraint(StringRef C) { Constraint = C.str(); }
   StringRef getConstraint() { return Constraint; }
 
-  void setMCOperandNum (unsigned OpNum) { MCOperandNum = OpNum; }
+  void setMCOperandNum(unsigned OpNum) {
+    MCOperandNum = OpNum;
+    MCOperandNums.push_back(OpNum);
+  }
   unsigned getMCOperandNum() { return MCOperandNum; }
+  ArrayRef<unsigned> getMCOperandNums() const { return MCOperandNums; }
 
   virtual StringRef getSymName() { return StringRef(); }
   virtual void *getOpDecl() { return nullptr; }

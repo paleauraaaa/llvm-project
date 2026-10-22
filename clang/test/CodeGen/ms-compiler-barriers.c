@@ -2,6 +2,7 @@
 // RUN: %clang_cc1 -triple aarch64-pc-windows-msvc -fms-extensions -fms-compatibility -fms-compatibility-version=19.30 -ffreestanding -emit-llvm -o - %s | FileCheck %s
 // RUN: %clang_cc1 -triple thumbv7-pc-windows-msvc -fms-extensions -fms-compatibility -fms-compatibility-version=19.30 -ffreestanding -emit-llvm -o - %s | FileCheck %s
 // RUN: %clang_cc1 -triple riscv64-unknown-linux-gnu -fms-extensions -DEXPLICIT_DECLS -emit-llvm -o - %s | FileCheck %s
+// RUN: %clang_cc1 -triple powerpc64-unknown-linux-gnu -fms-extensions -DEXPLICIT_DECLS -emit-llvm -o - %s | FileCheck %s
 // RUN: %clang_cc1 -triple riscv64-unknown-linux-gnu -fms-extensions -ffreestanding -fno-builtin -DEXPLICIT_DECLS -emit-llvm -o - %s | FileCheck %s
 // RUN: %clang_cc1 -triple x86_64-pc-windows-msvc -fms-extensions -fms-compatibility -fms-compatibility-version=19.30 -ffreestanding -O2 -emit-llvm -o - %s | FileCheck %s --check-prefix=OPT
 // RUN: %clang_cc1 -triple aarch64-pc-windows-msvc -fms-extensions -fms-compatibility -fms-compatibility-version=19.30 -ffreestanding -O2 -emit-llvm -o - %s | FileCheck %s --check-prefix=OPT

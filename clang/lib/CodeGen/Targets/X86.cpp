@@ -238,55 +238,6 @@ public:
 
 }
 
-/// Rewrite input constraint references after adding some output constraints.
-/// In the case where there is one output and one input and we add one output,
-/// we need to replace all operand references greater than or equal to 1:
-///     mov $0, $1
-///     mov eax, $1
-/// The result will be:
-///     mov $0, $2
-///     mov eax, $2
-static void rewriteInputConstraintReferences(unsigned FirstIn,
-                                             unsigned NumNewOuts,
-                                             std::string &AsmString) {
-  std::string Buf;
-  llvm::raw_string_ostream OS(Buf);
-  size_t Pos = 0;
-  while (Pos < AsmString.size()) {
-    size_t DollarStart = AsmString.find('$', Pos);
-    if (DollarStart == std::string::npos)
-      DollarStart = AsmString.size();
-    size_t DollarEnd = AsmString.find_first_not_of('$', DollarStart);
-    if (DollarEnd == std::string::npos)
-      DollarEnd = AsmString.size();
-    OS << StringRef(&AsmString[Pos], DollarEnd - Pos);
-    Pos = DollarEnd;
-    size_t NumDollars = DollarEnd - DollarStart;
-    if (NumDollars % 2 != 0 && Pos < AsmString.size()) {
-      // We have an operand reference.
-      size_t DigitStart = Pos;
-      if (AsmString[DigitStart] == '{') {
-        OS << '{';
-        ++DigitStart;
-      }
-      size_t DigitEnd = AsmString.find_first_not_of("0123456789", DigitStart);
-      if (DigitEnd == std::string::npos)
-        DigitEnd = AsmString.size();
-      StringRef OperandStr(&AsmString[DigitStart], DigitEnd - DigitStart);
-      unsigned OperandIndex;
-      if (!OperandStr.getAsInteger(10, OperandIndex)) {
-        if (OperandIndex >= FirstIn)
-          OperandIndex += NumNewOuts;
-        OS << OperandIndex;
-      } else {
-        OS << OperandStr;
-      }
-      Pos = DigitEnd;
-    }
-  }
-  AsmString = std::move(Buf);
-}
-
 /// Add output constraints for EAX:EDX because they are return registers.
 void X86_32TargetCodeGenInfo::addReturnRegisterOutputs(
     CodeGenFunction &CGF, LValue ReturnSlot, std::string &Constraints,

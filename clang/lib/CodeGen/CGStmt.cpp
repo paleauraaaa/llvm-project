@@ -2925,6 +2925,7 @@ void CodeGenFunction::EmitAsmStmt(const AsmStmt &S) {
     }
   }
 
+  size_t InputConstraintStart = Constraints.size();
   for (unsigned i = 0, e = S.getNumInputs(); i != e; i++) {
     const Expr *InputExpr = S.getInputExpr(i);
 
@@ -2996,6 +2997,41 @@ void CodeGenFunction::EmitAsmStmt(const AsmStmt &S) {
     Constraints += InputConstraint;
   }
 
+  if (isa<MSAsmStmt>(&S) && getTarget().getTriple().isXbox360() &&
+      !Args.empty()) {
+    // PPC MS asm reloads operand addresses from a table so long blocks do not
+    // require all C lvalue addresses to remain in registers simultaneously.
+    unsigned NumAddresses = 0;
+    while (NumAddresses != S.getNumInputs() &&
+           S.getInputConstraint(NumAddresses) == "b")
+      ++NumAddresses;
+    if (NumAddresses) {
+      auto *TableTy = llvm::ArrayType::get(VoidPtrTy, NumAddresses);
+      Address Table =
+          CreateTempAlloca(TableTy, getPointerAlign(), "msasm.operands");
+      for (unsigned I = 0; I != NumAddresses; ++I)
+        Builder.CreateStore(Args[I], Builder.CreateConstArrayGEP(Table, I));
+      Args.erase(Args.begin(), Args.begin() + NumAddresses);
+      Args.insert(Args.begin(), Table.emitRawPointer(*this));
+      ArgTypes.erase(ArgTypes.begin(), ArgTypes.begin() + NumAddresses);
+      ArgTypes.insert(ArgTypes.begin(), VoidPtrTy);
+      ArgElemTypes.erase(ArgElemTypes.begin(),
+                         ArgElemTypes.begin() + NumAddresses);
+      ArgElemTypes.insert(ArgElemTypes.begin(), nullptr);
+    }
+    Constraints.resize(InputConstraintStart);
+    if (NumAddresses) {
+      if (!Constraints.empty())
+        Constraints += ',';
+      Constraints += 'b';
+    }
+    for (unsigned I = NumAddresses; I != S.getNumInputs(); ++I) {
+      if (!Constraints.empty())
+        Constraints += ',';
+      Constraints += S.getInputConstraint(I);
+    }
+  }
+
   // Append the "input" part of inout constraints.
   for (unsigned i = 0, e = InOutArgs.size(); i != e; i++) {
     ArgTypes.push_back(InOutArgTypes[i]);
@@ -3043,6 +3079,9 @@ void CodeGenFunction::EmitAsmStmt(const AsmStmt &S) {
     }
 
     if (isa<MSAsmStmt>(&S)) {
+      if (getTarget().getTriple().isXbox360() &&
+          Constraints.find("=&{" + Clobber.str() + "}") != std::string::npos)
+        continue;
       if (Clobber == "eax" || Clobber == "edx") {
         if (Constraints.find("=&A") != std::string::npos)
           continue;
@@ -3095,8 +3134,10 @@ void CodeGenFunction::EmitAsmStmt(const AsmStmt &S) {
       CGM.getCodeGenOpts().getInlineAsmDialect() == CodeGenOptions::IAD_ATT
           ? llvm::InlineAsm::AD_ATT
           : llvm::InlineAsm::AD_Intel;
-  llvm::InlineAsm::AsmDialect AsmDialect = isa<MSAsmStmt>(&S) ?
-    llvm::InlineAsm::AD_Intel : GnuAsmDialect;
+  llvm::InlineAsm::AsmDialect AsmDialect =
+      isa<MSAsmStmt>(&S) && getTarget().getTriple().isX86()
+          ? llvm::InlineAsm::AD_Intel
+          : GnuAsmDialect;
 
   llvm::InlineAsm *IA = llvm::InlineAsm::get(
       FTy, AsmString, Constraints, HasSideEffect,

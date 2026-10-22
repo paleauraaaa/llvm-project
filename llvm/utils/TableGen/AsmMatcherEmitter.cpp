@@ -2047,6 +2047,10 @@ emitConvertFuncs(CodeGenTarget &Target, StringRef ClassName,
        << "      ++NumMCOperands;\n"
        << "      break;\n"
        << "    case CVT_Tied:\n"
+       << "      if (TiedAsmOperandTable[*(p + 1)][1] !=\n"
+       << "          TiedAsmOperandTable[*(p + 1)][2])\n"
+       << "        Operands[TiedAsmOperandTable[*(p + 1)][2]]->\n"
+       << "            setMCOperandNum(NumMCOperands);\n"
        << "      ++NumMCOperands;\n"
        << "      break;\n";
 

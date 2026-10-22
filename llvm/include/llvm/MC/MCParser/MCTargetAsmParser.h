@@ -19,11 +19,14 @@
 #include "llvm/TargetParser/SubtargetFeature.h"
 #include <cstdint>
 #include <memory>
+#include <optional>
 
 namespace llvm {
 
 class MCContext;
+class MCAsmParserSemaCallback;
 class MCInst;
+class MCInstPrinter;
 class MCInstrInfo;
 class MCStreamer;
 class MCSubtargetInfo;
@@ -484,6 +487,18 @@ public:
 
   /// Allows targets to let registers opt out of clobber lists.
   virtual bool omitRegisterFromClobberLists(MCRegister Reg) { return false; }
+
+  /// Override the x86-style MS asm operand model when a target needs to expand
+  /// source operands into multiple instructions. Return nullopt to use the
+  /// generic parser, otherwise false on success or true on error.
+  virtual std::optional<bool> parseMSInlineAsm(
+      std::string &AsmString, unsigned &NumOutputs, unsigned &NumInputs,
+      SmallVectorImpl<std::pair<void *, bool>> &OpDecls,
+      SmallVectorImpl<std::string> &Constraints,
+      SmallVectorImpl<std::string> &Clobbers, const MCInstrInfo *MII,
+      MCInstPrinter *IP, MCAsmParserSemaCallback &SI) {
+    return std::nullopt;
+  }
 
   /// Allow a target to add special case operand matching for things that
   /// tblgen doesn't/can't handle effectively. For example, literal
