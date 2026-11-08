@@ -47,6 +47,7 @@ struct InlineAsmIdentifierInfo {
   // Represents a label/function reference
   struct LabelIdentifier {
     void *Decl;
+    bool IsFunction;
   };
   // Represents a variable
   struct VariableIdentifier {
@@ -69,10 +70,11 @@ struct InlineAsmIdentifierInfo {
     Kind = IK_EnumVal;
     Enum.EnumVal = enumVal;
   }
-  void setLabel(void *decl) {
+  void setLabel(void *decl, bool isFunction = false) {
     assert(isKind(IK_Invalid) && "should be initialized only once");
     Kind = IK_Label;
     Label.Decl = decl;
+    Label.IsFunction = isFunction;
   }
   void setVar(void *decl, bool isGlobalLV, unsigned size, unsigned type) {
     assert(isKind(IK_Invalid) && "should be initialized only once");

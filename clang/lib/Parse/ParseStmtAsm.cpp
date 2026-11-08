@@ -12,6 +12,7 @@
 
 #include "clang/AST/ASTContext.h"
 #include "clang/Basic/Diagnostic.h"
+#include "clang/Basic/DiagnosticFrontend.h"
 #include "clang/Basic/TargetInfo.h"
 #include "clang/Parse/Parser.h"
 #include "clang/Parse/RAIIObjectsForParser.h"
@@ -193,7 +194,10 @@ ClangAsmParserCallback::translateLocation(const llvm::SourceMgr &LSM,
 void ClangAsmParserCallback::handleDiagnostic(const llvm::SMDiagnostic &D) {
   const llvm::SourceMgr &LSM = *D.getSourceMgr();
   SourceLocation Loc = translateLocation(LSM, D.getLoc());
-  TheParser.Diag(Loc, diag::err_inline_ms_asm_parsing) << D.getMessage();
+  unsigned DiagID = D.getKind() == llvm::SourceMgr::DK_Warning
+                        ? diag::warn_fe_inline_asm
+                        : diag::err_inline_ms_asm_parsing;
+  TheParser.Diag(Loc, DiagID) << D.getMessage();
 }
 
 /// Parse an identifier in an MS-style inline assembly block.
@@ -533,7 +537,7 @@ StmtResult Parser::ParseMicrosoftAsmStatement(SourceLocation AsmLoc) {
   const llvm::Triple &TheTriple = Actions.Context.getTargetInfo().getTriple();
   const std::string &TT = TheTriple.getTriple();
   const llvm::Target *TheTarget = nullptr;
-  if (!TheTriple.isX86()) {
+  if (!TheTriple.isX86() && !TheTriple.isXbox360()) {
     Diag(AsmLoc, diag::err_msasm_unsupported_arch) << TheTriple.getArchName();
   } else {
     std::string Error;
@@ -613,10 +617,11 @@ StmtResult Parser::ParseMicrosoftAsmStatement(SourceLocation AsmLoc) {
   }
 
   std::unique_ptr<llvm::MCInstPrinter> IP(
-      TheTarget->createMCInstPrinter(llvm::Triple(TT), 1, *MAI, *MII, *MRI));
+      TheTarget->createMCInstPrinter(llvm::Triple(TT), TheTriple.isX86() ? 1 : 0,
+                                    *MAI, *MII, *MRI));
 
-  // Change to the Intel dialect.
-  Parser->setAssemblerDialect(1);
+  if (TheTriple.isX86())
+    Parser->setAssemblerDialect(1);
   Parser->setTargetParser(*TargetParser.get());
   Parser->setParsingMSInlineAsm(true);
   TargetParser->setParsingMSInlineAsm(true);

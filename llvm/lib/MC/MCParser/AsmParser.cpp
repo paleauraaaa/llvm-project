@@ -6032,6 +6032,14 @@ bool AsmParser::parseMSInlineAsm(
     SmallVectorImpl<std::string> &Constraints,
     SmallVectorImpl<std::string> &Clobbers, const MCInstrInfo *MII,
     MCInstPrinter *IP, MCAsmParserSemaCallback &SI) {
+  if (auto Result = getTargetParser().parseMSInlineAsm(
+          AsmString, NumOutputs, NumInputs, OpDecls, Constraints, Clobbers, MII,
+          IP, SI)) {
+    if (*Result)
+      printPendingErrors();
+    return *Result;
+  }
+
   SmallVector<void *, 4> InputDecls;
   SmallVector<void *, 4> OutputDecls;
   SmallVector<bool, 4> InputDeclsAddressOf;

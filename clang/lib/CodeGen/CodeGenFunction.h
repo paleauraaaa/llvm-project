@@ -410,6 +410,9 @@ public:
   /// value. This is invalid iff the function has no return value.
   Address ReturnValue = Address::invalid();
 
+  // Keep implicit MS asm returns separate from NRVO return objects.
+  Address MSAsmReturnValue = Address::invalid();
+
   /// ReturnValuePointer - The temporary alloca to hold a pointer to sret.
   /// This is invalid if sret is not in use.
   Address ReturnValuePointer = Address::invalid();

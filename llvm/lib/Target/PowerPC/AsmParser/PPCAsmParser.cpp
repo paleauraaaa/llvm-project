@@ -11,15 +11,21 @@
 #include "PPCInstrInfo.h"
 #include "PPCTargetStreamer.h"
 #include "TargetInfo/PowerPCTargetInfo.h"
+#include "llvm/ADT/SmallSet.h"
+#include "llvm/ADT/StringExtras.h"
+#include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/MC/MCContext.h"
+#include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCInst.h"
+#include "llvm/MC/MCInstPrinter.h"
 #include "llvm/MC/MCInstrInfo.h"
 #include "llvm/MC/MCParser/MCAsmLexer.h"
 #include "llvm/MC/MCParser/MCAsmParser.h"
 #include "llvm/MC/MCParser/MCParsedAsmOperand.h"
 #include "llvm/MC/MCParser/MCTargetAsmParser.h"
+#include "llvm/MC/MCRegisterInfo.h"
 #include "llvm/MC/MCStreamer.h"
 #include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/MC/MCSymbolELF.h"
@@ -98,6 +104,14 @@ struct PPCOperand;
 
 class PPCAsmParser : public MCTargetAsmParser {
   const bool IsPPC64;
+  struct MSOperand {
+    StringRef Name;
+    void *Decl = nullptr;
+    unsigned Size = 0;
+    bool IsFunction = false;
+  };
+  DenseMap<const MCParsedAsmOperand *, MSOperand> MSOperands;
+  DenseMap<const MCParsedAsmOperand *, MCRegister> MSRegisters;
 
   void Warning(SMLoc L, const Twine &Msg) { getParser().Warning(L, Msg); }
 
@@ -140,6 +154,12 @@ class PPCAsmParser : public MCTargetAsmParser {
 
 
 public:
+  std::optional<bool> parseMSInlineAsm(
+      std::string &AsmString, unsigned &NumOutputs, unsigned &NumInputs,
+      SmallVectorImpl<std::pair<void *, bool>> &OpDecls,
+      SmallVectorImpl<std::string> &Constraints,
+      SmallVectorImpl<std::string> &Clobbers, const MCInstrInfo *MII,
+      MCInstPrinter *IP, MCAsmParserSemaCallback &SI) override;
   bool areEqualRegs(const MCParsedAsmOperand &Op1,
                     const MCParsedAsmOperand &Op2) const override;
 
@@ -1331,17 +1351,31 @@ bool PPCAsmParser::matchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
   llvm_unreachable("Implement any new match types added!");
 }
 
+std::optional<bool> PPCAsmParser::parseMSInlineAsm(
+    std::string &AsmString, unsigned &NumOutputs, unsigned &NumInputs,
+    SmallVectorImpl<std::pair<void *, bool>> &OpDecls,
+    SmallVectorImpl<std::string> &Constraints,
+    SmallVectorImpl<std::string> &Clobbers, const MCInstrInfo *InstrInfo,
+    MCInstPrinter *IP, MCAsmParserSemaCallback &SI) {
+  if (!getSTI().getTargetTriple().isXbox360())
+    return std::nullopt;
+
+  // TODO: implement
+  return false;
+}
+
 bool PPCAsmParser::areEqualRegs(const MCParsedAsmOperand &Op1,
-                               const MCParsedAsmOperand &Op2) const {
+                                const MCParsedAsmOperand &Op2) const {
+  if (MSOperands.count(&Op1) || MSOperands.count(&Op2))
+    return true;
   if (MCTargetAsmParser::areEqualRegs(Op1, Op2))
     return true;
 
   const auto &PPCOp1 = static_cast<const PPCOperand &>(Op1);
   const auto &PPCOp2 = static_cast<const PPCOperand &>(Op2);
   return PPCOp1.Kind == PPCOperand::Immediate &&
-         PPCOp2.Kind == PPCOperand::Immediate &&
-         isUInt<7>(PPCOp1.getImm()) && isUInt<7>(PPCOp2.getImm()) &&
-         PPCOp1.getImm() == PPCOp2.getImm();
+         PPCOp2.Kind == PPCOperand::Immediate && isUInt<7>(PPCOp1.getImm()) &&
+         isUInt<7>(PPCOp2.getImm()) && PPCOp1.getImm() == PPCOp2.getImm();
 }
 
 #define GET_REGISTER_MATCHER
@@ -1355,10 +1389,20 @@ MCRegister PPCAsmParser::matchRegisterName(int64_t &IntVal) {
     return MCRegister();
 
   StringRef Name = getParser().getTok().getString();
+  std::string MSName;
+  if (isParsingMSInlineAsm()) {
+    MSName = Name.lower();
+    if (MSName.size() > 2 && isDigit(MSName[2]) &&
+        (StringRef(MSName).starts_with("fr") ||
+         StringRef(MSName).starts_with("vr")))
+      MSName.erase(1, 1);
+    Name = MSName;
+  }
   MCRegister RegNo = MatchRegisterName(Name);
   if (!RegNo)
     return RegNo;
 
+  IntVal = getContext().getRegisterInfo()->getEncodingValue(RegNo);
   Name.substr(Name.find_first_of("1234567890")).getAsInteger(10, IntVal);
 
   // MatchRegisterName doesn't seem to have special handling for 64bit vs 32bit
@@ -1369,7 +1413,9 @@ MCRegister PPCAsmParser::matchRegisterName(int64_t &IntVal) {
   } else if (Name.equals_insensitive("ctr")) {
     RegNo = isPPC64() ? PPC::CTR8 : PPC::CTR;
     IntVal = 9;
-  } else if (Name.equals_insensitive("vrsave"))
+  } else if (Name.equals_insensitive("xer"))
+    IntVal = 1;
+  else if (Name.equals_insensitive("vrsave"))
     IntVal = 256;
   else if (Name.starts_with_insensitive("r"))
     RegNo = isPPC64() ? XRegs[IntVal] : RRegs[IntVal];
@@ -1562,6 +1608,40 @@ bool PPCAsmParser::parseOperand(OperandVector &Operands) {
   SMLoc E = SMLoc::getFromPointer(Parser.getTok().getLoc().getPointer() - 1);
   const MCExpr *EVal;
 
+  if (isParsingMSInlineAsm() && Parser.getTok().is(AsmToken::Identifier)) {
+    int64_t RegNum;
+    if (MCRegister Reg = matchRegisterName(RegNum)) {
+      Operands.push_back(PPCOperand::CreateImm(RegNum, S, S, isPPC64()));
+      MSRegisters[Operands.back().get()] = Reg;
+      return false;
+    }
+    StringRef Name(S.getPointer());
+    InlineAsmIdentifierInfo Info;
+    SemaCallback->LookupInlineAsmIdentifier(Name, Info, false);
+    if (Info.isKind(InlineAsmIdentifierInfo::IK_Var) ||
+        Info.isKind(InlineAsmIdentifierInfo::IK_Label)) {
+      const char *End = Name.end();
+      while (Parser.getTok().getLoc().getPointer() < End)
+        Parser.Lex();
+    } else {
+      Name = Parser.getTok().getString();
+      Parser.Lex();
+    }
+    // Four is both a legal register and an aligned branch displacement.
+    // The matched operand metadata distinguishes C operands from labels.
+    Operands.push_back(PPCOperand::CreateImm(4, S, S, isPPC64()));
+    MSOperand &Operand = MSOperands[Operands.back().get()];
+    Operand.Name = Name;
+    if (Info.isKind(InlineAsmIdentifierInfo::IK_Var)) {
+      Operand.Decl = Info.Var.Decl;
+      Operand.Size = Info.Var.Type;
+    } else if (Info.isKind(InlineAsmIdentifierInfo::IK_Label)) {
+      Operand.Decl = Info.Label.Decl;
+      Operand.IsFunction = Info.Label.IsFunction;
+    }
+    return false;
+  }
+
   // Attempt to parse the next token as an immediate
   switch (getLexer().getKind()) {
   // Special handling for register names.  These are interpreted
@@ -1663,6 +1743,17 @@ bool PPCAsmParser::parseOperand(OperandVector &Operands) {
         return Error(S, "invalid register number");
       break;
     case AsmToken::Identifier:
+      if (isParsingMSInlineAsm()) {
+        MCRegister Reg = matchRegisterName(IntVal);
+        const MCRegisterInfo &MRI = *getContext().getRegisterInfo();
+        if (Reg && (MRI.getRegClass(PPC::GPRCRegClassID).contains(Reg) ||
+                    MRI.getRegClass(PPC::G8RCRegClassID).contains(Reg) ||
+                    MRI.getRegClass(PPC::F8RCRegClassID).contains(Reg) ||
+                    MRI.getRegClass(PPC::VR128RCRegClassID).contains(Reg)) &&
+            IntVal < 32)
+          break;
+      }
+      [[fallthrough]];
     default:
       return Error(S, "invalid memory operand");
     }
@@ -1684,6 +1775,10 @@ bool PPCAsmParser::parseInstruction(ParseInstructionInfo &Info, StringRef Name,
   // If the next character is a '+' or '-', we need to add it to the
   // instruction name, to match what TableGen is doing.
   std::string NewOpcode;
+  if (isParsingMSInlineAsm()) {
+    NewOpcode = Name.lower();
+    Name = NewOpcode;
+  }
   if (parseOptionalToken(AsmToken::Plus)) {
     NewOpcode = std::string(Name);
     NewOpcode += '+';

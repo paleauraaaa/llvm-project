@@ -750,7 +750,7 @@ void Sema::FillInlineAsmIdentifierInfo(Expr *Res,
   QualType T = Res->getType();
   Expr::EvalResult Eval;
   if (T->isFunctionType() || T->isDependentType())
-    return Info.setLabel(Res);
+    return Info.setLabel(Res, T->isFunctionType());
   if (Res->isPRValue()) {
     bool IsEnum = isa<clang::EnumType>(T);
     if (DeclRefExpr *DRE = dyn_cast<clang::DeclRefExpr>(Res))
