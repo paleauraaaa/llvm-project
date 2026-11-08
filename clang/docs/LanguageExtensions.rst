@@ -2725,19 +2725,6 @@ implemented directly in terms of :ref:`extended vector support
 <langext-vectors>` instead of builtins, in order to reduce the number of
 builtins that we need to implement.
 
-Microsoft compiler barriers
----------------------------
-
-With ``-fms-extensions``, Clang recognizes ``_ReadBarrier``, ``_WriteBarrier``,
-and ``_ReadWriteBarrier`` as target-independent compiler barriers. Each has the
-signature ``void name(void)`` and requires a declaration, normally provided by
-``<intrin.h>`` (or ``<intrin0.h>`` on Microsoft targets).
-
-Clang conservatively implements all three as full compiler memory barriers,
-preventing memory accesses from being optimized across the call. They do not
-emit hardware memory fences and do not provide inter-thread synchronization.
-Use C or C++ atomics for inter-thread communication.
-
 ``__builtin_alloca``
 --------------------
 
@@ -4816,6 +4803,27 @@ Note that these intrinsics are implemented as motion barriers that block
 reordering of memory accesses and side effect instructions. Other instructions
 like simple arithmetic may be reordered around the intrinsic. If you expect to
 have no reordering at all, use inline assembly instead.
+
+Microsoft compiler barriers
+---------------------------
+
+With ``-fms-extensions``, Clang recognizes ``_ReadBarrier``, ``_WriteBarrier``,
+and ``_ReadWriteBarrier`` as target-independent compiler barriers. Each has the
+signature ``void name(void)`` and requires a declaration, normally provided by
+``<intrin.h>`` (or ``<intrin0.h>`` on Microsoft targets).
+
+Except on Xbox 360, Clang conservatively implements all three as full compiler
+memory barriers, preventing memory accesses from being optimized across the
+call. They do not emit hardware memory fences and do not provide inter-thread
+synchronization. Use C or C++ atomics for inter-thread communication.
+
+On Xbox 360, ``_ReadBarrier`` prevents load reuse and store-to-load forwarding 
+across the barrier while allowing dead-store elimination; ``_WriteBarrier`` 
+preserves stores across the barrier while allowing load reuse and forwarding.
+``_ReadWriteBarrier`` restricts both. All three remain compiler-only barriers 
+and emit no hardware fence. For accesses based on ``__restrict``-qualified 
+parameters, all three act as full compiler memory barriers. This additional 
+restriction is lost when inlining into a caller without such parameters.
 
 Pointer Authentication
 ^^^^^^^^^^^^^^^^^^^^^^

@@ -24,6 +24,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/Analysis/AliasAnalysis.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/Analysis/BasicAliasAnalysis.h"
 #include "llvm/Analysis/CaptureTracking.h"
@@ -39,6 +40,7 @@
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/IntrinsicsPowerPC.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Value.h"
 #include "llvm/InitializePasses.h"
@@ -211,6 +213,33 @@ ModRefInfo AAResults::getModRefInfo(const Instruction *I, const CallBase *Call2,
 ModRefInfo AAResults::getModRefInfo(const CallBase *Call,
                                     const MemoryLocation &Loc,
                                     AAQueryInfo &AAQI) {
+  switch (Call->getIntrinsicID()) {
+  case Intrinsic::ppc_xbox_read_barrier:
+  case Intrinsic::ppc_xbox_write_barrier:
+  case Intrinsic::ppc_xbox_read_write_barrier: {
+    // Compiler barriers access memory independently of pointer escape and
+    // aliasing contracts. Accesses based on restricted parameters are treated
+    // as full barriers, but this extra strength is lost after inlining into a
+    // caller without restricted parameters.
+    if (!Loc.Ptr)
+      return ModRefInfo::ModRef;
+    SmallVector<const Value *, 4> Objects;
+    getUnderlyingObjects(Loc.Ptr, Objects, nullptr, /*MaxLookup=*/0);
+    for (const Value *Object : Objects)
+      if (const auto *Arg = dyn_cast<Argument>(Object))
+        if (Arg->hasNoAliasAttr())
+          return ModRefInfo::ModRef;
+    // Read barriers clobber cached loads; write barriers observe prior stores.
+    if (Call->getIntrinsicID() == Intrinsic::ppc_xbox_read_barrier)
+      return ModRefInfo::Mod;
+    if (Call->getIntrinsicID() == Intrinsic::ppc_xbox_write_barrier)
+      return ModRefInfo::Ref;
+    return ModRefInfo::ModRef;
+  }
+  default:
+    break;
+  }
+
   ModRefInfo Result = ModRefInfo::ModRef;
 
   for (const auto &AA : AAs) {
