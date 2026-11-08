@@ -1,0 +1,64 @@
+# RUN: split-file %s %t.dir
+# RUN: llvm-mc -filetype=obj -triple=ppc64-ibm-xbox360 %t.dir/branches.s -o %t.branches.obj
+# RUN: llvm-mc -filetype=obj -triple=ppc64-ibm-xbox360 %t.dir/calls.s -o %t.calls.obj
+# RUN: llvm-mc -filetype=obj -triple=ppc64-ibm-xbox360 %t.dir/target.s -o %t.target.obj
+# RUN: lld-link /machine:ppcbe /subsystem:xbox /entry:caller /nodefaultlib /fixed /base:0x82000000 /out:%t.exe %t.branches.obj %t.target.obj
+# RUN: llvm-objdump -d %t.exe | FileCheck %s
+# RUN: lld-link /machine:ppcbe /subsystem:xbox /entry:caller /nodefaultlib /fixed /base:0x82000000 /out:%t.calls.exe %t.calls.obj %t.target.obj
+# RUN: llvm-objdump -d %t.calls.exe | FileCheck %s --check-prefix=REL24
+
+# These are the linked targets expected from XDK LINK for the same COFF
+# relocations. In particular, repeated references must not drift with the
+# relocation's offset within its input section.
+# CHECK: 82001000: 40 82 00 24
+# CHECK: 82001004: 40 82 00 20
+# CHECK: 82001008: 40 82 00 24
+# CHECK: 8200100c: 41 82 00 15
+# CHECK: 82001010: 40 82 00 28
+# CHECK: 82001014: 40 82 00 24
+# CHECK: 82001018: 40 82 00 08
+# REL24: 82001000: 48 00 00 15
+# REL24: 82001004: 48 00 00 11
+# REL24: 82001008: 48 00 00 15
+# REL24: 8200100c: 48 00 00 04
+
+#--- branches.s
+.text
+.globl caller
+caller:
+  bne external
+  bne external
+  bne external+8
+  beql external-4
+  bne defined
+  bne 1f+4
+  bne .Llocal
+  nop
+.Llocal:
+  blr
+
+.section .text$callee,"xr"
+  nop
+1:
+  nop
+.globl defined
+defined:
+  blr
+
+#--- calls.s
+.text
+.globl caller
+caller:
+  bl external
+  bl external
+  bl external+8
+  b external-4
+  blr
+
+#--- target.s
+.text
+.globl external
+external:
+  nop
+  nop
+  blr
