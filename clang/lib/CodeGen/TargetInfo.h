@@ -617,6 +617,10 @@ createWinX86_64TargetCodeGenInfo(CodeGenModule &CGM, X86AVXABILevel AVXLevel);
 std::unique_ptr<TargetCodeGenInfo>
 createXCoreTargetCodeGenInfo(CodeGenModule &CGM);
 
+/// Adjust asm operand references after inserting implicit register outputs.
+void rewriteInputConstraintReferences(unsigned FirstIn, unsigned NumNewOuts,
+                                      std::string &AsmString);
+
 } // namespace CodeGen
 } // namespace clang
 
