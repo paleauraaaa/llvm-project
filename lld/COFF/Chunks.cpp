@@ -396,7 +396,8 @@ void SectionChunk::applyRelARM64(uint8_t *off, uint16_t type, OutputSection *os,
 
 void SectionChunk::applyRelPPC(uint8_t *off, uint16_t type, OutputSection *os,
                                uint64_t s, uint64_t p,
-                               uint64_t imageBase) const {
+                               uint64_t imageBase,
+                               uint32_t relocationOffset) const {
   constexpr uint32_t Branch14Mask = 0x0000fffc;
   constexpr uint32_t Branch24Mask = 0x03fffffc;
 
@@ -406,7 +407,10 @@ void SectionChunk::applyRelPPC(uint8_t *off, uint16_t type, OutputSection *os,
 
   case IMAGE_REL_PPC_REL24: {
     uint32_t Instr = read32be(off);
-    int64_t Addend = SignExtend64<26>(Instr & Branch24Mask);
+    // PPC COFF stores the addend relative to the input section, not the
+    // relocation site. Restore the site offset before applying S + A - P.
+    int64_t Addend =
+        SignExtend64<26>(Instr & Branch24Mask) + relocationOffset;
     int64_t Displacement = (int64_t)s + Addend - (int64_t)p;
     if ((Displacement & 3) != 0) {
       error("misaligned IMAGE_REL_PPC_REL24 relocation in " + toString(file));
@@ -424,7 +428,8 @@ void SectionChunk::applyRelPPC(uint8_t *off, uint16_t type, OutputSection *os,
 
   case IMAGE_REL_PPC_REL14: {
     uint32_t Instr = read32be(off);
-    int64_t Addend = SignExtend64<16>(Instr & Branch14Mask);
+    int64_t Addend =
+        SignExtend64<16>(Instr & Branch14Mask) + relocationOffset;
     int64_t Displacement = (int64_t)s + Addend - (int64_t)p;
     if ((Displacement & 3) != 0) {
       error("misaligned IMAGE_REL_PPC_REL14 relocation in " + toString(file));
@@ -681,7 +686,7 @@ void SectionChunk::applyRelocation(uint8_t *off,
     applyRelARM64(off, rel.Type, os, s, p, imageBase);
     break;
   case Triple::ppc64:
-    applyRelPPC(off, rel.Type, os, s, p, imageBase);
+    applyRelPPC(off, rel.Type, os, s, p, imageBase, rel.VirtualAddress);
     break;
   default:
     llvm_unreachable("unknown machine type");
