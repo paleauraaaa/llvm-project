@@ -3721,10 +3721,24 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
   }
   case Builtin::BI_ReadBarrier:
   case Builtin::BI_WriteBarrier:
-  case Builtin::BI_ReadWriteBarrier:
+  case Builtin::BI_ReadWriteBarrier: {
+    if (getTarget().getTriple().isXbox360()) {
+      Intrinsic::ID ID = BuiltinID == Builtin::BI_ReadBarrier
+                             ? Intrinsic::ppc_xbox_read_barrier
+                         : BuiltinID == Builtin::BI_WriteBarrier
+                             ? Intrinsic::ppc_xbox_write_barrier
+                             : Intrinsic::ppc_xbox_read_write_barrier;
+      SmallVector<Value *, 4> RestrictedPointers;
+      for (llvm::Argument &Arg : CurFn->args())
+        if (Arg.getType()->isPointerTy() && Arg.hasNoAliasAttr())
+          RestrictedPointers.push_back(&Arg);
+      return RValue::get(
+          Builder.CreateCall(CGM.getIntrinsic(ID), RestrictedPointers));
+    }
     return RValue::get(
         Builder.CreateFence(llvm::AtomicOrdering::SequentiallyConsistent,
                             llvm::SyncScope::SingleThread));
+  }
   case Builtin::BI__assume:
   case Builtin::BI__builtin_assume: {
     if (E->getArg(0)->HasSideEffects(getContext()))

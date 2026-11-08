@@ -16,6 +16,19 @@
 
 // Non-altivec intrinsics.
 let TargetPrefix = "ppc" in {  // All intrinsics start with "llvm.ppc.".
+  // Xbox compiler barriers emit no instructions. Keep general side effects so
+  // they survive instruction selection, including unused void calls at O0.
+  // AliasAnalysis models their directional effects on individual locations,
+  // without the escape and noalias assumptions of ordinary calls. Pass the
+  // enclosing function's noalias pointer parameters as variadic operands so
+  // attribute inference cannot treat their memory as inaccessible to the call.
+  def int_ppc_xbox_read_barrier
+      : Intrinsic<[], [llvm_vararg_ty], [IntrHasSideEffects]>;
+  def int_ppc_xbox_write_barrier
+      : Intrinsic<[], [llvm_vararg_ty], [IntrHasSideEffects]>;
+  def int_ppc_xbox_read_write_barrier
+      : Intrinsic<[], [llvm_vararg_ty], [IntrHasSideEffects]>;
+
   // dcba/dcbf/dcbi/dcbst/dcbt/dcbz/dcbzl(PPC970) instructions.
   def int_ppc_dcba  : Intrinsic<[], [llvm_ptr_ty], []>;
   def int_ppc_dcbf : ClangBuiltin<"__builtin_dcbf">,

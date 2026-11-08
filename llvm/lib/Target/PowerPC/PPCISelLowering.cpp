@@ -12626,6 +12626,10 @@ SDValue PPCTargetLowering::LowerINTRINSIC_VOID(SDValue Op,
   int ArgStart = isa<ConstantSDNode>(Op.getOperand(0)) ? 0 : 1;
   SDLoc DL(Op);
   switch (Op.getConstantOperandVal(ArgStart)) {
+  case Intrinsic::ppc_xbox_read_barrier:
+  case Intrinsic::ppc_xbox_write_barrier:
+  case Intrinsic::ppc_xbox_read_write_barrier:
+    return DAG.getNode(ISD::MEMBARRIER, DL, MVT::Other, Op.getOperand(0));
   case Intrinsic::seh_try_end:
     assert(Subtarget.isTargetXbox360() && "Expected Xbox SEH scope boundary");
     // A local-unwind continuation must have an address inside the remaining
@@ -18602,6 +18606,9 @@ PPCTargetLowering::getRegForInlineAsmConstraint(const TargetRegisterInfo *TRI,
 
   // Handle special cases of physical registers that are not properly handled
   // by the base class.
+  if (Constraint == "{fpscr}")
+    return std::make_pair(PPC::RM, nullptr);
+
   if (Constraint[0] == '{' && Constraint[Constraint.size() - 1] == '}') {
     // If we name a VSX register, we can't defer to the base class because it
     // will not recognize the correct register (their names will be VSL{0-31}
