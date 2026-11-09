@@ -482,7 +482,7 @@ void SectionChunk::applyRelPPC(uint8_t *off, uint16_t type, OutputSection *os,
   }
 
   case IMAGE_REL_PPC_ADDR16:
-    add16be(off, s + imageBase);
+    add16(off, s + imageBase);
     break;
   case IMAGE_REL_PPC_ADDR32:
     add32be(off, s + imageBase);
@@ -491,7 +491,7 @@ void SectionChunk::applyRelPPC(uint8_t *off, uint16_t type, OutputSection *os,
     write64be(off, read64be(off) + s + imageBase);
     break;
   case IMAGE_REL_PPC_ADDR32NB:
-    add32be(off, s);
+    add32(off, s);
     break;
 
   case IMAGE_REL_PPC_SECREL: {
@@ -503,7 +503,7 @@ void SectionChunk::applyRelPPC(uint8_t *off, uint16_t type, OutputSection *os,
             getSectionName());
       break;
     }
-    add32be(off, SecRel);
+    add32(off, SecRel);
     break;
   }
   case IMAGE_REL_PPC_SECREL16: {
@@ -540,7 +540,7 @@ void SectionChunk::applyRelPPC(uint8_t *off, uint16_t type, OutputSection *os,
             getSectionName());
       break;
     }
-    add16be(off, SectionIndex);
+    add16(off, SectionIndex);
     break;
   }
 

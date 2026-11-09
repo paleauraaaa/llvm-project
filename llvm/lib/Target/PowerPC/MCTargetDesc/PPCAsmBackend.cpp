@@ -200,11 +200,25 @@ public:
          Kind <= PPC::fixup_ppc_codeview_data_8) ||
         (TT.isOSXbox360() && isCodeViewSectionExpr(*Fixup.getValue()));
 
+    // These Xbox COFF relocation fields use little-endian addends even in
+    // otherwise big-endian sections. Instruction immediates use target order.
+    bool IsLittleEndianCOFFReloc = false;
+    if (TT.isOSXbox360() && !IsResolved && Target.getSymA()) {
+      auto Modifier = Target.getSymA()->getKind();
+      IsLittleEndianCOFFReloc =
+          Kind == FK_SecRel_2 || Kind == FK_SecRel_4 ||
+          (Kind == FK_Data_2 && Modifier != MCSymbolRefExpr::VK_SECREL) ||
+          (Kind == FK_Data_4 &&
+           (Modifier == MCSymbolRefExpr::VK_COFF_IMGREL32 ||
+            Modifier == MCSymbolRefExpr::VK_SECREL));
+    }
+
     // For each byte of the fragment that the fixup touches, mask in the bits
     // from the fixup value. The Value has been "split up" into the appropriate
     // bitfields above.
     for (unsigned i = 0; i != NumBytes; ++i) {
-      unsigned Idx = Endian == llvm::endianness::little || IsLittleEndianCodeView
+      unsigned Idx = Endian == llvm::endianness::little ||
+                             IsLittleEndianCodeView || IsLittleEndianCOFFReloc
                          ? i
                          : (NumBytes - 1 - i);
       Data[Offset + i] |= uint8_t((Value >> (Idx * 8)) & 0xff);
