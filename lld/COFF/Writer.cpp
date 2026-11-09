@@ -255,7 +255,8 @@ private:
   void writeBuildId();
   void writePEChecksum();
   void sortSections();
-  template <typename T> void sortExceptionTable(ChunkRange &exceptionTable);
+  template <typename T>
+  void sortExceptionTable(ChunkRange &exceptionTable, bool stable = false);
   void sortExceptionTables();
   void sortCRTSectionChunks(std::vector<Chunk *> &chunks);
   void addSyntheticIdata();
@@ -270,6 +271,7 @@ private:
   size_t addEntryToStringTable(StringRef str);
 
   OutputSection *findSection(StringRef name);
+  DenseMap<uint32_t, uint32_t> getPPCPDataRelocMap();
   void addBaserels();
   void addBaserelBlocks(std::vector<Baserel> &v);
   void createDynamicRelocs();
@@ -1556,6 +1558,15 @@ void Writer::createSymbolAndStringTable() {
 
 void Writer::mergeSections() {
   llvm::TimeTraceScope timeScope("Merge sections");
+  if (ctx.config.machine == PPCBE) {
+    for (Chunk *c : pdataSec->chunks) {
+      if (c->getSize() % 8 != 0)
+        Fatal(ctx) << "unexpected .pdata contribution size: " << c->getSize()
+                   << " is not a multiple of 8";
+      // The exception directory describes packed records, not alignment gaps.
+      c->setAlignment(4);
+    }
+  }
   if (!pdataSec->chunks.empty()) {
     if (isArm64EC(ctx.config.machine)) {
       // On ARM64EC .pdata may contain both ARM64 and X64 data. Split them by
@@ -2521,7 +2532,7 @@ void Writer::writeBuildId() {
 
 // Sort .pdata section contents according to PE/COFF spec 5.5.
 template <typename T>
-void Writer::sortExceptionTable(ChunkRange &exceptionTable) {
+void Writer::sortExceptionTable(ChunkRange &exceptionTable, bool stable) {
   if (!exceptionTable.first)
     return;
 
@@ -2538,9 +2549,13 @@ void Writer::sortExceptionTable(ChunkRange &exceptionTable) {
                << " is not a multiple of " << sizeof(T);
   }
 
-  parallelSort(MutableArrayRef<T>(reinterpret_cast<T *>(begin),
-                                  reinterpret_cast<T *>(end)),
-               [](const T &a, const T &b) { return a.begin < b.begin; });
+  MutableArrayRef<T> entries(reinterpret_cast<T *>(begin),
+                            reinterpret_cast<T *>(end));
+  auto less = [](const T &a, const T &b) { return a.begin < b.begin; };
+  if (stable)
+    llvm::stable_sort(entries, less);
+  else
+    parallelSort(entries, less);
 }
 
 // Sort .pdata section contents according to PE/COFF spec 5.5.
@@ -2552,6 +2567,9 @@ void Writer::sortExceptionTables() {
   };
   struct EntryArm {
     ulittle32_t begin, unwind;
+  };
+  struct EntryPPCBE {
+    ubig32_t begin, unwind;
   };
 
   switch (ctx.config.machine) {
@@ -2565,6 +2583,9 @@ void Writer::sortExceptionTables() {
   case ARMNT:
   case ARM64:
     sortExceptionTable<EntryArm>(pdata);
+    break;
+  case PPCBE:
+    sortExceptionTable<EntryPPCBE>(pdata, true);
     break;
   default:
     if (pdata.first)
@@ -2624,10 +2645,60 @@ uint32_t Writer::getSizeOfInitializedData() {
   return res;
 }
 
+// Match the final stable sort of PPC records before emitting base relocations.
+DenseMap<uint32_t, uint32_t> Writer::getPPCPDataRelocMap() {
+  DenseMap<uint32_t, uint32_t> result;
+  if (ctx.config.machine != PPCBE || !pdata.first)
+    return result;
+
+  std::vector<std::pair<uint32_t, uint32_t>> entries;
+  // Output section indices are not assigned yet during address layout.
+  auto os = llvm::find_if(ctx.outputSections, [&](OutputSection *sec) {
+    return llvm::is_contained(sec->chunks, pdata.first);
+  });
+  assert(os != ctx.outputSections.end());
+  auto first = llvm::find((*os)->chunks, pdata.first);
+  auto last = llvm::find((*os)->chunks, pdata.last);
+  for (auto it = first; it != last + 1; ++it) {
+    auto *c = cast<SectionChunk>(*it);
+    ArrayRef<uint8_t> contents = c->getContents();
+    size_t entryBegin = entries.size();
+    for (size_t off = 0; off < contents.size(); off += 8)
+      entries.emplace_back(read32be(contents.data() + off), c->getRVA() + off);
+    // Only the function address determines ordering. Relocate it without
+    // requiring the output section indices used by applyRelocation.
+    for (const coff_relocation &rel : c->getRelocs()) {
+      if (rel.Type == IMAGE_REL_PPC_ABSOLUTE)
+        continue;
+      if (rel.VirtualAddress >= contents.size())
+        Fatal(ctx) << "relocation points beyond the end of its parent section";
+      if (rel.VirtualAddress % 8 != 0)
+        continue;
+      if (rel.Type != IMAGE_REL_PPC_ADDR32)
+        Fatal(ctx) << "unsupported function address relocation in .pdata in "
+                   << toString(c->file);
+      auto *sym = cast<Defined>(c->file->getSymbol(rel.SymbolTableIndex));
+      entries[entryBegin + rel.VirtualAddress / 8].first +=
+          sym->getRVA() + ctx.config.imageBase;
+    }
+  }
+  llvm::stable_sort(entries, [](const auto &a, const auto &b) {
+    return a.first < b.first;
+  });
+  uint32_t rva = pdata.first->getRVA();
+  for (const auto &entry : entries) {
+    for (uint32_t off = 0; off != 8; ++off)
+      result[entry.second + off] = rva + off;
+    rva += 8;
+  }
+  return result;
+}
+
 // Add base relocations to .reloc section.
 void Writer::addBaserels() {
   if (!ctx.config.relocatable)
     return;
+  DenseMap<uint32_t, uint32_t> pdataRelocMap = getPPCPDataRelocMap();
   std::vector<Baserel> v;
   for (OutputSection *sec : ctx.outputSections) {
     if (sec->header.Characteristics & IMAGE_SCN_MEM_DISCARDABLE)
@@ -2636,6 +2707,11 @@ void Writer::addBaserels() {
     // Collect all locations for base relocations.
     for (Chunk *c : sec->chunks)
       c->getBaserels(&v);
+    for (Baserel &rel : v) {
+      auto it = pdataRelocMap.find(rel.rva);
+      if (it != pdataRelocMap.end())
+        rel.rva = it->second;
+    }
     // Add the addresses to .reloc section.
     if (!v.empty())
       addBaserelBlocks(v);
