@@ -488,7 +488,6 @@ void SectionChunk::applyRelPPC(uint8_t *off, uint16_t type, OutputSection *os,
     add32be(off, s + imageBase);
     break;
   case IMAGE_REL_PPC_ADDR64:
-    write64be(off, read64be(off) + s + imageBase);
     break;
   case IMAGE_REL_PPC_ADDR32NB:
     add32(off, s);
@@ -515,13 +514,8 @@ void SectionChunk::applyRelPPC(uint8_t *off, uint16_t type, OutputSection *os,
             getSectionName());
       break;
     }
-    // In executable sections PPC COFF places this relocation at the start of
-    // the instruction, while the section-relative immediate is in its low
-    // halfword. Data-section relocations point directly at the 16-bit field.
-    uint8_t *Field = off;
-    if (getOutputCharacteristics() & IMAGE_SCN_MEM_EXECUTE)
-      Field += 2;
-    add16be(Field, SecRel);
+    // The relocation addresses a 32-bit word; update its low halfword.
+    add16be(off + 2, SecRel);
     break;
   }
   case IMAGE_REL_PPC_SECRELLO: {
@@ -617,6 +611,13 @@ void SectionChunk::writeTo(uint8_t *buf) const {
 
 void SectionChunk::applyRelocation(uint8_t *off,
                                    const coff_relocation &rel) const {
+  if (getArch() == Triple::ppc64 && rel.Type == IMAGE_REL_PPC_SECREL16 &&
+      (rel.VirtualAddress > getSize() ||
+       getSize() - rel.VirtualAddress < 4)) {
+    error("IMAGE_REL_PPC_SECREL16 relocation extends beyond its parent section in " +
+          toString(file));
+    return;
+  }
   if (getArch() == Triple::ppc64 && rel.Type == IMAGE_REL_PPC_PAIR) {
     ArrayRef<coff_relocation> Relocs = getRelocs();
     const coff_relocation *Reloc = &rel;
@@ -735,6 +736,12 @@ void SectionChunk::writeAndRelocateSubsection(ArrayRef<uint8_t> sec,
       continue;
     if (rel.VirtualAddress + 1 >= vaEnd)
       break;
+    if (getArch() == Triple::ppc64 && rel.Type == IMAGE_REL_PPC_SECREL16 &&
+        vaEnd - rel.VirtualAddress < 4) {
+      error("IMAGE_REL_PPC_SECREL16 relocation extends beyond its subsection in " +
+            toString(file));
+      continue;
+    }
     applyRelocation(&buf[rel.VirtualAddress - vaBegin], rel);
   }
 }
@@ -781,8 +788,6 @@ static uint8_t getBaserelType(const coff_relocation &rel,
       return IMAGE_REL_BASED_DIR64;
     return IMAGE_REL_BASED_ABSOLUTE;
   case Triple::ppc64:
-    if (rel.Type == IMAGE_REL_PPC_ADDR64)
-      return IMAGE_REL_BASED_DIR64;
     if (rel.Type == IMAGE_REL_PPC_ADDR32)
         return IMAGE_REL_BASED_HIGHLOW;
     return IMAGE_REL_BASED_ABSOLUTE;

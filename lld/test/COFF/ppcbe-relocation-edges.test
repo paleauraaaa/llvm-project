@@ -12,6 +12,8 @@
 # RUN: lld-link /machine:ppcbe /entry:main /base:0x10000 /out:%t.secrel16-fields.exe %t.secrel16-fields.obj
 # RUN: llvm-objdump -s --section=.text %t.secrel16-fields.exe | FileCheck --check-prefix=SECREL16-CODE %s
 # RUN: llvm-objdump -s --section=.data %t.secrel16-fields.exe | FileCheck --check-prefix=SECREL16-DATA %s
+# RUN: llvm-mc -filetype=obj -triple=ppc64-ibm-xbox360 %t.dir/secrel16-truncated.s -o %t.secrel16-truncated.obj
+# RUN: not lld-link /machine:ppcbe /entry:main /out:%t.secrel16-truncated.exe %t.secrel16-truncated.obj 2>&1 | FileCheck --check-prefix=SECREL16-TRUNCATED %s
 # RUN: yaml2obj %t.dir/pair-icf.yaml -o %t.pair-icf.obj
 # RUN: lld-link /machine:ppcbe /entry:foo /include:bar /include:baz /opt:icf /base:0x10000 /out:%t.pair-icf.exe %t.pair-icf.obj
 # RUN: llvm-objdump -s --section=.text %t.pair-icf.exe | FileCheck --check-prefix=PAIR-ICF %s
@@ -32,9 +34,10 @@
 # BRANCH-ERROR: IMAGE_REL_PPC_ADDR14 relocation out of range
 
 # SECREL16-ERROR: overflow in IMAGE_REL_PPC_SECREL16 relocation
+# SECREL16-TRUNCATED: IMAGE_REL_PPC_SECREL16 relocation extends beyond its parent section
 
-# SECREL16-CODE: 11000 39400024 4e800020
-# SECREL16-DATA: 12000 00060000 00000000 00000000
+# SECREL16-CODE: 11000 39400024 39601258 4e800020
+# SECREL16-DATA: 12000 11220122 aabb000a 00000000 00000000
 
 # PAIR-ICF: 11000 3c600001 4e800020 3c600001 4e800020
 
@@ -176,7 +179,7 @@ main:
 target:
   blr
 .data
-  .short 0
+  .long 0
   .reloc 0, IMAGE_REL_PPC_SECREL16, target
 
 #--- secrel16-fields.s
@@ -184,10 +187,15 @@ target:
 .globl main
 main:
   li 10, tls_target@SECREL32
+  li 11, tls_target@SECREL32+0x1234
   blr
 .data
-  .short 0
-  .reloc 0, IMAGE_REL_PPC_SECREL16, data_target
+first:
+  .long 0x112200fe
+  .reloc first, IMAGE_REL_PPC_SECREL16, tls_target
+second:
+  .long 0xaabbfffe
+  .reloc second, IMAGE_REL_PPC_SECREL16, data_target
   .space 4
 data_target:
   .long 0
@@ -195,6 +203,15 @@ data_target:
   .space 36
 tls_target:
   .long 0
+
+#--- secrel16-truncated.s
+.text
+.globl main
+main:
+  blr
+.data
+  .short 0
+  .reloc 0, IMAGE_REL_PPC_SECREL16, main
 
 #--- pair-icf.yaml
 --- !COFF

@@ -10,6 +10,7 @@
 #include "MCTargetDesc/PPCFixupKinds.h"
 #include "MCTargetDesc/PPCMCTargetDesc.h"
 #include "llvm/BinaryFormat/COFF.h"
+#include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCFixup.h"
 #include "llvm/MC/MCFixupKindInfo.h"
 #include "llvm/MC/MCValue.h"
@@ -66,8 +67,12 @@ unsigned PPCWinCOFFObjectWriter::getRelocType(MCContext &Ctx, const MCValue &Tar
     return llvm::COFF::IMAGE_REL_PPC_ADDR14;
   case FK_Data_2:
   case PPC::fixup_ppc_codeview_data_2:
-    if (Modifier == MCSymbolRefExpr::VK_SECREL)
-      return llvm::COFF::IMAGE_REL_PPC_SECREL16;
+    if (Modifier == MCSymbolRefExpr::VK_SECREL) {
+      Ctx.reportError(Fixup.getLoc(),
+                      "16-bit section-relative data relocation is not "
+                      "supported; use a 32-bit section-relative field");
+      return COFF::IMAGE_REL_PPC_ABSOLUTE;
+    }
     return llvm::COFF::IMAGE_REL_PPC_ADDR16;
   case FK_Data_4:
   case PPC::fixup_ppc_codeview_data_4:
