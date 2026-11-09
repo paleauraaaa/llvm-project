@@ -1,0 +1,43 @@
+# RUN: split-file %s %t.dir
+# RUN: llvm-mc -filetype=obj -triple=ppc64-ibm-xbox360 %t.dir/refs.s -o %t.refs.obj
+# RUN: llvm-mc -filetype=obj -triple=ppc64-ibm-xbox360 %t.dir/target.s -o %t.target.obj
+# RUN: llvm-readobj --relocations %t.refs.obj | FileCheck %s --check-prefix=OBJECT
+# RUN: lld-link /machine:ppcbe /subsystem:xbox /entry:main /nodefaultlib /fixed /base:0x82000000 /out:%t.fixed.exe %t.refs.obj %t.target.obj
+# RUN: llvm-objdump -s --section=.data %t.fixed.exe | FileCheck %s --check-prefix=DATA
+# RUN: lld-link /machine:ppcbe /subsystem:xbox /entry:main /nodefaultlib /fixed:no /base:0x82000000 /out:%t.rebase.exe %t.refs.obj %t.target.obj
+# RUN: llvm-objdump -s --section=.data %t.rebase.exe | FileCheck %s --check-prefix=DATA
+# RUN: llvm-readobj --coff-basereloc %t.rebase.exe | FileCheck %s --check-prefix=BASE
+
+# XDK LINK leaves ADDR64 addends unchanged and emits no DIR64 base relocations.
+# OBJECT: IMAGE_REL_PPC_ADDR64 target
+# OBJECT: IMAGE_REL_PPC_ADDR64 target
+# OBJECT: IMAGE_REL_PPC_ADDR64 target
+# OBJECT: IMAGE_REL_PPC_ADDR32 target
+# DATA: 82002000 00000000 00000000 00000000 00000008
+# DATA: 82002010 11223344 fffffff0 82001004
+# BASE: BaseReloc [
+# BASE-NEXT: Entry {
+# BASE-NEXT: Type: HIGHLOW
+# BASE-NEXT: Address: 0x2018
+# BASE-NEXT: }
+# BASE-NOT: Type: DIR64
+# BASE: ]
+
+#--- refs.s
+.text
+.globl main
+main:
+  blr
+.data
+  .quad target
+  .quad target+8
+field:
+  .quad 0x11223344fffffff0
+  .reloc field, IMAGE_REL_PPC_ADDR64, target
+  .long target
+
+#--- target.s
+.text
+.globl target
+target:
+  blr
