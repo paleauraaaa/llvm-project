@@ -1,0 +1,84 @@
+# RUN: split-file %s %t.dir
+# RUN: llvm-mc -triple=powerpc64-ibm-xbox360 -filetype=obj %t.dir/pdata.s -o %t.obj
+# RUN: lld-link /machine:ppcbe /subsystem:xbox /entry:main /nodefaultlib /fixed:no /out:%t.exe %t.obj
+# RUN: llvm-objdump -s --section=.pdata %t.exe | FileCheck %s --check-prefix=DATA
+# RUN: llvm-readobj --file-headers --coff-basereloc %t.exe | FileCheck %s --check-prefix=HEADER
+# RUN: lld-link /machine:ppcbe /subsystem:xbox /entry:main /nodefaultlib /fixed:no /merge:.pdata=.rdata /out:%t.merged.exe %t.obj
+# RUN: llvm-objdump -s --section=.rdata %t.merged.exe | FileCheck %s --check-prefix=DATA
+# RUN: llvm-readobj --file-headers --coff-basereloc %t.merged.exe | FileCheck %s --check-prefix=HEADER
+# RUN: llvm-mc -triple=powerpc64-ibm-xbox360 -filetype=obj %t.dir/bad-size.s -o %t.bad.obj
+# RUN: env LLD_IN_TEST=1 not lld-link /machine:ppcbe /entry:main /out:%t.bad.exe %t.bad.obj 2>&1 | FileCheck %s --check-prefix=BAD
+
+# Alignment between input contributions is not part of the exception table.
+# The absolute-address record sorts before relocatable records but must not
+# acquire a base relocation. Equal-address records retain their input order.
+# DATA: 82002000 81000000 40000100 82001000 40000100
+# DATA: 82002010 82001100 40000200 82001100 40000201
+# DATA: 82002020 82001108 40000300
+# HEADER: ExceptionTableRVA: 0x2000
+# HEADER-NEXT: ExceptionTableSize: 0x28
+# HEADER: BaseReloc [
+# HEADER-NEXT: Entry {
+# HEADER-NEXT: Type: HIGHLOW
+# HEADER-NEXT: Address: 0x2008
+# HEADER-NEXT: }
+# HEADER-NEXT: Entry {
+# HEADER-NEXT: Type: HIGHLOW
+# HEADER-NEXT: Address: 0x2010
+# HEADER-NEXT: }
+# HEADER-NEXT: Entry {
+# HEADER-NEXT: Type: HIGHLOW
+# HEADER-NEXT: Address: 0x2018
+# HEADER-NEXT: }
+# HEADER-NEXT: Entry {
+# HEADER-NEXT: Type: HIGHLOW
+# HEADER-NEXT: Address: 0x2020
+# HEADER-NEXT: }
+# HEADER-NEXT: ]
+# BAD: unexpected .pdata contribution size: 12 is not a multiple of 8
+
+#--- pdata.s
+.text
+.globl main
+main:
+  blr
+  .space 252
+middle:
+  nop
+  blr
+last:
+  nop
+  nop
+  blr
+.section .pdata$a,"dr"
+.p2align 4
+  .long last
+  .long 0x40000300
+.section .pdata$b,"dr"
+.p2align 4
+  .long main
+  .long 0x40000100
+.section .pdata$c,"dr"
+.p2align 4
+  .long middle
+  .long 0x40000200
+.section .pdata$d,"dr"
+.p2align 4
+  .long 0x81000000
+  .long 0x40000100
+.section .pdata$e,"dr"
+.p2align 4
+  .long middle
+  .long 0x40000201
+
+#--- bad-size.s
+.text
+.globl main
+main:
+  blr
+.section .pdata$a,"dr"
+  .long main
+  .long 0x40000100
+  .long 0
+.section .pdata$b,"dr"
+  .long 0

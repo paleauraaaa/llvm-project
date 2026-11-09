@@ -112,9 +112,6 @@ private:
 } // namespace
 
 static CPUType mapArchToCVCPUType(const Triple &T) {
-  if (T.isOSXbox360())
-    return CPUType::PPC604;
-
   switch (T.getArch()) {
   case Triple::ArchType::x86:
     return CPUType::Pentium3;
@@ -126,12 +123,8 @@ static CPUType mapArchToCVCPUType(const Triple &T) {
     return CPUType::ARMNT;
   case Triple::ArchType::aarch64:
     return CPUType::ARM64;
-  case Triple::ArchType::ppc:
-  case Triple::ArchType::ppcle:
-    return CPUType::PPC604;
   case Triple::ArchType::ppc64:
-  case Triple::ArchType::ppc64le:
-    return CPUType::PPC620;
+    return CPUType::PPCBE;
   case Triple::ArchType::mipsel:
     return CPUType::MIPS;
   default:
