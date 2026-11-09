@@ -1651,6 +1651,18 @@ public:
   ///    objects
   PragmaStack<MSVtorDispMode> VtorDispStack;
   PragmaStack<BitfieldOrder> BitfieldOrderStack;
+  struct FunctionBitfieldOrderReplayState {
+    PragmaStack<BitfieldOrder> Stack{BitfieldOrder::MSBToLSB};
+    bool HasStack = false;
+    bool IsReplaying = false;
+  };
+  struct TemplateBitfieldOrderReplayState {
+    llvm::DenseMap<const FunctionDecl *, FunctionBitfieldOrderReplayState>
+        FunctionStates;
+    unsigned ActiveReplays = 0;
+  };
+  // Keep template-body replay state separate from the lexical pragma stack.
+  TemplateBitfieldOrderReplayState TemplateBitfieldOrderReplay;
   PragmaStack<AlignPackInfo> AlignPackStack;
   // The current #pragma align/pack values and locations at each #include.
   struct AlignPackIncludeState {
@@ -1698,6 +1710,18 @@ public:
     Sema &S;
     StringRef SlotLabel;
     bool ShouldAct;
+  };
+
+  class PragmaBitfieldOrderReplayRAII {
+  public:
+    PragmaBitfieldOrderReplayRAII(Sema &S, const FunctionDecl *Pattern,
+                                  bool ShouldAct);
+    ~PragmaBitfieldOrderReplayRAII();
+
+  private:
+    Sema &S;
+    const FunctionDecl *Pattern;
+    bool Swapped = false;
   };
 
   /// Last section used with #pragma init_seg.

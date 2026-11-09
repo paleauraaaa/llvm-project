@@ -47,6 +47,20 @@ template<class T> void unused() {
 }
 #pragma bitfield_order(pop, unused_label) // expected-warning {{failed: stack empty}}
 
+template<class T> struct MemberDeferred {
+  template<class U> void apply() {
+#pragma bitfield_order(show) // expected-warning {{== msb_to_lsb}} expected-warning {{== lsb_to_msb}}
+#pragma bitfield_order(lsb_to_msb)
+  }
+};
+#pragma bitfield_order(msb_to_lsb)
+void instantiate_member() {
+  MemberDeferred<int> member;
+  member.apply<int>(); // expected-note {{in instantiation of function template specialization 'MemberDeferred<int>::apply<int>' requested here}}
+  member.apply<char>(); // expected-note {{in instantiation of function template specialization 'MemberDeferred<int>::apply<char>' requested here}}
+}
+#pragma bitfield_order(show) // expected-warning {{== msb_to_lsb}}
+
 template<class T> unsigned deferred() {
 #pragma bitfield_order(show) // expected-warning {{== msb_to_lsb}} expected-warning {{== lsb_to_msb}}
 #pragma bitfield_order(lsb_to_msb)
