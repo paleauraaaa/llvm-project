@@ -515,7 +515,13 @@ void SectionChunk::applyRelPPC(uint8_t *off, uint16_t type, OutputSection *os,
             getSectionName());
       break;
     }
-    add16be(off, SecRel);
+    // In executable sections PPC COFF places this relocation at the start of
+    // the instruction, while the section-relative immediate is in its low
+    // halfword. Data-section relocations point directly at the 16-bit field.
+    uint8_t *Field = off;
+    if (getOutputCharacteristics() & IMAGE_SCN_MEM_EXECUTE)
+      Field += 2;
+    add16be(Field, SecRel);
     break;
   }
   case IMAGE_REL_PPC_SECRELLO: {
