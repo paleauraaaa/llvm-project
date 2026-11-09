@@ -19,6 +19,7 @@
 #include "clang/Lex/Preprocessor.h"
 #include "clang/Sema/Lookup.h"
 #include <optional>
+#include <utility>
 using namespace clang;
 
 //===----------------------------------------------------------------------===//
@@ -48,6 +49,38 @@ Sema::PragmaStackSentinelRAII::~PragmaStackSentinelRAII() {
     S.CodeSegStack.SentinelAction(PSK_Pop, SlotLabel);
     S.StrictGuardStackCheckStack.SentinelAction(PSK_Pop, SlotLabel);
   }
+}
+
+Sema::PragmaBitfieldOrderReplayRAII::PragmaBitfieldOrderReplayRAII(
+    Sema &S, const FunctionDecl *Pattern, bool ShouldAct)
+    : S(S), Pattern(Pattern) {
+  if (!ShouldAct)
+    return;
+
+  auto &TemplateState = S.TemplateBitfieldOrderReplay;
+  auto &State = TemplateState.FunctionStates[Pattern];
+  if (State.IsReplaying)
+    return;
+
+  if (!State.HasStack) {
+    State.Stack = S.BitfieldOrderStack;
+    State.HasStack = true;
+  }
+  std::swap(S.BitfieldOrderStack, State.Stack);
+  State.IsReplaying = true;
+  ++TemplateState.ActiveReplays;
+  Swapped = true;
+}
+
+Sema::PragmaBitfieldOrderReplayRAII::~PragmaBitfieldOrderReplayRAII() {
+  if (!Swapped)
+    return;
+
+  auto &TemplateState = S.TemplateBitfieldOrderReplay;
+  auto &State = TemplateState.FunctionStates[Pattern];
+  std::swap(S.BitfieldOrderStack, State.Stack);
+  State.IsReplaying = false;
+  --TemplateState.ActiveReplays;
 }
 
 void Sema::AddAlignmentAttributesForRecord(RecordDecl *RD) {
@@ -649,12 +682,15 @@ Decl *Sema::ActOnPragmaBitfieldOrder(SourceLocation Loc,
         Info.Order == BitfieldOrder::LSBToMSB, Label);
     CurContext->addDecl(D);
 
-    // bitfield_order defers free-function template bodies. Member bodies also have an
-    // initial processing pass when their containing class is defined.
-    for (DeclContext *DC = CurContext; DC; DC = DC->getParent())
-      if (DC->isFunctionOrMethod() && DC->isDependentContext() &&
-          !isa<CXXMethodDecl>(DC))
+    // Defer pragmas in dependent function bodies until the body is instantiated.
+    for (DeclContext *DC = CurContext; DC; DC = DC->getParent()) {
+      if (!DC->isFunctionOrMethod())
+        continue;
+      const auto *FD = cast<FunctionDecl>(Decl::castFromDeclContext(DC));
+      if (DC->isDependentContext() || DC->getParent()->isDependentContext() ||
+          FD->getTemplatedKind() != FunctionDecl::TK_NonTemplate)
         return D;
+    }
   }
   ApplyPragmaBitfieldOrder(Loc, Info);
   return D;
@@ -693,6 +729,11 @@ void Sema::ReplayPragmaBitfieldOrder(const PragmaBitfieldOrderDecl *D) {
 
 void Sema::ApplyPragmaBitfieldOrder(SourceLocation Loc,
                                    const PragmaBitfieldOrderInfo &Info) {
+  auto &ReplayState = TemplateBitfieldOrderReplay;
+  if (!ReplayState.ActiveReplays && Info.Action != PSK_Show)
+    for (auto &Entry : ReplayState.FunctionStates)
+      Entry.second.HasStack = false;
+
   if (Info.Action == PSK_Show) {
     Diag(Loc, diag::warn_pragma_bitfield_order_show)
         << (BitfieldOrderStack.CurrentValue == BitfieldOrder::LSBToMSB

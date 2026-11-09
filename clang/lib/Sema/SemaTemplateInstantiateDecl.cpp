@@ -5291,6 +5291,9 @@ void Sema::InstantiateFunctionDefinition(SourceLocation PointOfInstantiation,
       }
 
       // Instantiate the function body.
+      PragmaBitfieldOrderReplayRAII ReplayBitfieldOrder(
+          *this, PatternDecl,
+          Context.getTargetInfo().getTriple().isOSXbox360());
       Body = SubstStmt(Pattern, TemplateArgs);
 
       if (Body.isInvalid())
