@@ -44,7 +44,7 @@ struct COFFParser {
   }
 
   bool isPE() const { return Obj.OptionalHeader.has_value(); }
-  bool is64Bit() const { return COFF::is64Bit(Obj.Header.Machine); }
+  bool is64Bit() const { return COFF::is64Bit(Obj.Header.Machine) && Obj.Header.Machine != COFF::IMAGE_FILE_MACHINE_PPCBE; }
 
   uint32_t getFileAlignment() const {
     return Obj.OptionalHeader->Header.FileAlignment;

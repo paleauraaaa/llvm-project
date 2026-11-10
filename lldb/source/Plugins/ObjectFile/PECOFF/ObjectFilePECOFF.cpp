@@ -348,6 +348,11 @@ size_t ObjectFilePECOFF::GetModuleSpecifications(
     spec.GetTriple().setEnvironment(env);
     specs.Append(module_spec);
     break;
+  case MachinePowerPcBe:
+    spec.SetTriple("powerpc-ibm-xbox360");
+    spec.GetTriple().setEnvironment(llvm::Triple::MSVC);
+    specs.Append(module_spec);
+    break;
   default:
     break;
   }
@@ -456,6 +461,9 @@ bool ObjectFilePECOFF::ParseHeader() {
         ParseSectionHeaders(offset);
       }
       m_data.SetAddressByteSize(GetAddressByteSize());
+      // PE headers are always little-endian, but section contents use the
+      // target's byte order.
+      m_data.SetByteOrder(GetByteOrder());
       return true;
     }
   }
@@ -493,7 +501,12 @@ bool ObjectFilePECOFF::SetLoadAddress(Target &target, addr_t value,
   return changed;
 }
 
-ByteOrder ObjectFilePECOFF::GetByteOrder() const { return eByteOrderLittle; }
+ByteOrder ObjectFilePECOFF::GetByteOrder() const {
+  if (m_coff_header.machine == llvm::COFF::IMAGE_FILE_MACHINE_PPCBE)
+    return eByteOrderBig;
+
+  return eByteOrderLittle;
+}
 
 bool ObjectFilePECOFF::IsExecutable() const {
   return (m_coff_header.flags & llvm::COFF::IMAGE_FILE_DLL) == 0;
@@ -688,7 +701,7 @@ DataExtractor ObjectFilePECOFF::ReadImageData(uint32_t offset, size_t size) {
     return DataExtractor(m_data, offset, size);
 
   ProcessSP process_sp(m_process_wp.lock());
-  DataExtractor data;
+  DataExtractor data(nullptr, 0, GetByteOrder(), GetAddressByteSize());
   if (process_sp) {
     auto data_up = std::make_unique<DataBufferHeap>(size, 0);
     Status readmem_error;
@@ -723,6 +736,7 @@ bool ObjectFilePECOFF::ParseSectionHeaders(
     const size_t section_header_byte_size = nsects * sizeof(section_header_t);
     DataExtractor section_header_data =
         ReadImageData(section_header_data_offset, section_header_byte_size);
+    section_header_data.SetByteOrder(eByteOrderLittle);
 
     lldb::offset_t offset = 0;
     if (section_header_data.ValidOffsetForDataOfSize(
@@ -1401,6 +1415,13 @@ bool ObjectFilePECOFF::IsWindowsSubsystem() {
 
 ArchSpec ObjectFilePECOFF::GetArchitecture() {
   uint16_t machine = m_coff_header.machine;
+  uint16_t subsystem = m_coff_header_opt.subsystem;
+  uint32_t os = llvm::Triple::UnknownOS;
+  if (machine == llvm::COFF::IMAGE_FILE_MACHINE_PPCBE && subsystem == llvm::COFF::IMAGE_SUBSYSTEM_XBOX)
+    os = llvm::Triple::Xbox360;
+  else if (IsWindowsSubsystem())
+    os = llvm::Triple::Win32;
+
   switch (machine) {
   default:
     break;
@@ -1408,14 +1429,13 @@ ArchSpec ObjectFilePECOFF::GetArchitecture() {
   case llvm::COFF::IMAGE_FILE_MACHINE_I386:
   case llvm::COFF::IMAGE_FILE_MACHINE_POWERPC:
   case llvm::COFF::IMAGE_FILE_MACHINE_POWERPCFP:
+  case llvm::COFF::IMAGE_FILE_MACHINE_PPCBE:
   case llvm::COFF::IMAGE_FILE_MACHINE_ARM:
   case llvm::COFF::IMAGE_FILE_MACHINE_ARMNT:
   case llvm::COFF::IMAGE_FILE_MACHINE_THUMB:
   case llvm::COFF::IMAGE_FILE_MACHINE_ARM64:
     ArchSpec arch;
-    arch.SetArchitecture(eArchTypeCOFF, machine, LLDB_INVALID_CPUTYPE,
-                         IsWindowsSubsystem() ? llvm::Triple::Win32
-                                              : llvm::Triple::UnknownOS);
+    arch.SetArchitecture(eArchTypeCOFF, machine, LLDB_INVALID_CPUTYPE, os);
     return arch;
   }
   return ArchSpec();

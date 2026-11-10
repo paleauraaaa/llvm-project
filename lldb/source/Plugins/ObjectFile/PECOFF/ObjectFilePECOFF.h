@@ -35,6 +35,7 @@ public:
     MachineMipsFpu16 = 0x466,
     MachinePowerPc = 0x1f0,
     MachinePowerPcfp = 0x1f1,
+    MachinePowerPcBe = 0x1f2,
     MachineR4000 = 0x166,
     MachineSh3 = 0x1a2,
     MachineSh3dsp = 0x1a3,

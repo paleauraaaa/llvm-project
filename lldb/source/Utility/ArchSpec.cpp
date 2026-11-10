@@ -448,6 +448,8 @@ static const ArchDefinitionEntry g_coff_arch_entries[] = {
      LLDB_INVALID_CPUTYPE, 0xFFFFFFFFu, 0xFFFFFFFFu}, // PowerPC
     {ArchSpec::eCore_ppc_generic, llvm::COFF::IMAGE_FILE_MACHINE_POWERPCFP,
      LLDB_INVALID_CPUTYPE, 0xFFFFFFFFu, 0xFFFFFFFFu}, // PowerPC (with FPU)
+    {ArchSpec::eCore_ppc_generic, llvm::COFF::IMAGE_FILE_MACHINE_PPCBE,
+     LLDB_INVALID_CPUTYPE, 0xFFFFFFFFu, 0xFFFFFFFFu}, // PowerPC (big-endian)
     {ArchSpec::eCore_arm_generic, llvm::COFF::IMAGE_FILE_MACHINE_ARM,
      LLDB_INVALID_CPUTYPE, 0xFFFFFFFFu, 0xFFFFFFFFu}, // ARM
     {ArchSpec::eCore_arm_armv7, llvm::COFF::IMAGE_FILE_MACHINE_ARMNT,
