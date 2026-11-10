@@ -81,6 +81,7 @@ add_lldb_library(lldbTarget
   UnwindAssembly.cpp
   UnwindLLDB.cpp
   VerboseTrapFrameRecognizer.cpp
+  Xbox360RegisterInfo.cpp
 
   LINK_LIBS
     lldbBreakpoint

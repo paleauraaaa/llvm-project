@@ -52,6 +52,7 @@
 #include "lldb/Interpreter/Property.h"
 #include "lldb/Symbol/ObjectFile.h"
 #include "lldb/Target/ABI.h"
+#include "lldb/Target/Xbox360RegisterInfo.h"
 #include "lldb/Target/DynamicLoader.h"
 #include "lldb/Target/MemoryRegionInfo.h"
 #include "lldb/Target/RegisterFlags.h"
@@ -4915,8 +4916,10 @@ void ProcessGDBRemote::AddRemoteRegisters(
   // Don't use Process::GetABI, this code gets called from DidAttach, and
   // in that context we haven't set the Target's architecture yet, so the
   // ABI is also potentially incorrect.
-  if (ABISP abi_sp = ABI::FindPlugin(shared_from_this(), arch_to_use))
-    abi_sp->AugmentRegisterInfo(registers);
+  if (!AugmentXbox360RegisterInfo(arch_to_use, registers)) {
+    if (ABISP abi_sp = ABI::FindPlugin(shared_from_this(), arch_to_use))
+      abi_sp->AugmentRegisterInfo(registers);
+  }
 
   m_register_info_sp->SetRegisterInfo(std::move(registers), arch_to_use);
 }

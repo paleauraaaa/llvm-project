@@ -13,6 +13,7 @@ add_lldb_unittest(TargetTests
   StackFrameRecognizerTest.cpp
   SummaryStatisticsTest.cpp
   FindFileTest.cpp
+  Xbox360RegisterInfoTest.cpp
 
   LINK_LIBS
       lldbCore
