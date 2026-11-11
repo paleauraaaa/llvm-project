@@ -1525,7 +1525,11 @@ Status Thread::ReturnFromFrame(lldb::StackFrameSP frame_sp,
       }
     }
 
-    return_error = abi->SetReturnValueObject(older_frame_sp, return_value_sp);
+    CompilerDeclContext function_decl_context;
+    if (sc.function)
+      function_decl_context = sc.function->GetDeclContext();
+    return_error = abi->SetReturnValueObject(older_frame_sp, return_value_sp,
+                                             &function_decl_context);
     if (!return_error.Success())
       return return_error;
   }

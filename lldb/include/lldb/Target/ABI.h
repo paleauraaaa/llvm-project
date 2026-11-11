@@ -90,6 +90,15 @@ public:
   virtual Status SetReturnValueObject(lldb::StackFrameSP &frame_sp,
                                       lldb::ValueObjectSP &new_value) = 0;
 
+  /// Set a forced return value using the returning function's declaration
+  /// context when its ABI depends on that context.
+  virtual Status
+  SetReturnValueObject(lldb::StackFrameSP &frame_sp,
+                       lldb::ValueObjectSP &new_value,
+                       const CompilerDeclContext *function_decl_context) {
+    return SetReturnValueObject(frame_sp, new_value);
+  }
+
 protected:
   // This is the method the ABI will call to actually calculate the return
   // value. Don't put it in a persistent value object, that will be done by the

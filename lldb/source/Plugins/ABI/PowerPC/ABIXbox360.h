@@ -45,6 +45,10 @@ public:
   SetReturnValueObject(lldb::StackFrameSP &frame_sp,
                        lldb::ValueObjectSP &new_value) override;
 
+  lldb_private::Status SetReturnValueObject(
+      lldb::StackFrameSP &frame_sp, lldb::ValueObjectSP &new_value,
+      const lldb_private::CompilerDeclContext *function_decl_context) override;
+
   bool
   CreateFunctionEntryUnwindPlan(lldb_private::UnwindPlan &unwind_plan) override;
   bool CreateDefaultUnwindPlan(lldb_private::UnwindPlan &unwind_plan) override;
