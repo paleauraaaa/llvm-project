@@ -722,6 +722,13 @@ uint32_t DIARawSymbol::getOemId() const {
   return PrivateGetDIAValue(Symbol, &IDiaSymbol::get_oemId);
 }
 
+SymIndexId DIARawSymbol::getObjectPointerTypeId() const {
+  CComPtr<IDiaSymbol> ObjectPointer;
+  if (Symbol->get_objectPointerType(&ObjectPointer) != S_OK || !ObjectPointer)
+    return 0;
+  return PrivateGetDIAValue(ObjectPointer, &IDiaSymbol::get_symIndexId);
+}
+
 SymIndexId DIARawSymbol::getOemSymbolId() const {
   return PrivateGetDIAValue(Symbol, &IDiaSymbol::get_oemSymbolId);
 }

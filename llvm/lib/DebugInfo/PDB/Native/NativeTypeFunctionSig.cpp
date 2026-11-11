@@ -149,6 +149,12 @@ SymIndexId NativeTypeFunctionSig::getClassParentId() const {
   return ClassParentId;
 }
 
+SymIndexId NativeTypeFunctionSig::getObjectPointerTypeId() const {
+  if (!IsMemberFunction || MemberFunc.ThisType.isNoneType())
+    return 0;
+  return Session.getSymbolCache().findSymbolByTypeIndex(MemberFunc.ThisType);
+}
+
 PDB_CallingConv NativeTypeFunctionSig::getCallingConvention() const {
   return IsMemberFunction ? MemberFunc.CallConv : Proc.CallConv;
 }

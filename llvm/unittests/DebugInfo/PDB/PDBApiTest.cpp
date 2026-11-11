@@ -270,6 +270,7 @@ public:
   MOCK_SYMBOL_ACCESSOR(getNumberOfRegisterIndices)
   MOCK_SYMBOL_ACCESSOR(getNumberOfRows)
   MOCK_SYMBOL_ACCESSOR(getObjectFileName)
+  MOCK_SYMBOL_ACCESSOR(getObjectPointerTypeId)
   MOCK_SYMBOL_ACCESSOR(getOemId)
   MOCK_SYMBOL_ACCESSOR(getOemSymbolId)
   MOCK_SYMBOL_ACCESSOR(getOffsetInUdt)

@@ -491,7 +491,7 @@ unsigned CodeViewDebug::getPointerSizeInBytes() {
 void CodeViewDebug::recordLocalVariable(LocalVariable &&Var,
                                         const LexicalScope *LS) {
   if (const DILocation *InlinedAt = LS->getInlinedAt()) {
-    if (isXbox360Target()) {
+    if (EmitLegacyXbox360CodeView) {
       CurFn->Locals.emplace_back(std::move(Var));
       return;
     }
@@ -543,7 +543,7 @@ void CodeViewDebug::maybeRecordLocation(const DebugLoc &DL,
 
   unsigned FuncId = CurFn->FuncId;
   if (const DILocation *SiteLoc = DL->getInlinedAt();
-      SiteLoc && !isXbox360Target()) {
+      SiteLoc && !EmitLegacyXbox360CodeView) {
     const DILocation *Loc = DL.get();
 
     // If this location was actually inlined from somewhere else, give it the ID
@@ -573,10 +573,6 @@ void CodeViewDebug::emitCodeViewMagicVersion() {
   OS.emitValueToAlignment(Align(4));
   OS.AddComment("Debug section magic");
   OS.emitInt32(COFF::DEBUG_SECTION_MAGIC);
-}
-
-bool CodeViewDebug::isXbox360Target() const {
-  return Triple(MMI->getModule()->getTargetTriple()).isOSXbox360();
 }
 
 static SourceLanguage MapDWLangToCVLang(unsigned DWLang) {
@@ -632,6 +628,10 @@ void CodeViewDebug::beginModule(Module *M) {
   }
 
   TheCPU = mapArchToCVCPUType(Triple(M->getTargetTriple()));
+  const auto *Modern = mdconst::extract_or_null<ConstantInt>(
+      M->getModuleFlag("CodeViewXbox360Modern"));
+  EmitLegacyXbox360CodeView = Triple(M->getTargetTriple()).isOSXbox360() &&
+                              (!Modern || Modern->isZero());
 
   // Get the current source language.
   const MDNode *Node = *M->debug_compile_units_begin();
@@ -703,8 +703,8 @@ void CodeViewDebug::endModule() {
   OS.AddComment("String table");
   OS.emitCVStringTableDirective();
 
-  // XDK's CodeView reader predates the ID records used by S_BUILDINFO.
-  if (!isXbox360Target())
+  // Legacy Xbox 360 readers predate the ID records used by S_BUILDINFO.
+  if (!EmitLegacyXbox360CodeView)
     emitBuildInfo();
 
   // Emit type information and hashes last, so that any types we translate while
@@ -1074,8 +1074,8 @@ void CodeViewDebug::emitDebugInfoForThunk(const Function *GV,
   // marking this as a thunk is so Visual Studio will NOT stop in this routine.
 
   // Terminate the thunk's symbol scope.
-  emitEndSymbolRecord(isXbox360Target() ? SymbolKind::S_END
-                                        : SymbolKind::S_PROC_ID_END);
+  emitEndSymbolRecord(EmitLegacyXbox360CodeView ? SymbolKind::S_END
+                                                : SymbolKind::S_PROC_ID_END);
 
   endCVSubsection(SymbolsEnd);
 }
@@ -1117,9 +1117,8 @@ void CodeViewDebug::emitDebugInfoForFunction(const Function *GV,
   OS.AddComment("Symbol subsection for " + Twine(FuncName));
   MCSymbol *SymbolsEnd = beginCVSubsection(DebugSubsectionKind::Symbols);
   {
-    bool IsXbox360 = isXbox360Target();
     SymbolKind ProcKind;
-    if (IsXbox360)
+    if (EmitLegacyXbox360CodeView)
       ProcKind = GV->hasLocalLinkage() ? SymbolKind::S_LPROC32
                                        : SymbolKind::S_GPROC32;
     else
@@ -1144,7 +1143,7 @@ void CodeViewDebug::emitDebugInfoForFunction(const Function *GV,
     OS.emitInt32(0);
     OS.AddComment("Function type index");
     TypeIndex FunctionTypeIndex;
-    if (IsXbox360) {
+    if (EmitLegacyXbox360CodeView) {
       if (const auto *Class =
               dyn_cast_or_null<DICompositeType>(SP->getScope()))
         FunctionTypeIndex = getMemberFunctionType(SP, Class);
@@ -1246,8 +1245,8 @@ void CodeViewDebug::emitDebugInfoForFunction(const Function *GV,
     emitDebugInfoForJumpTables(FI);
 
     // We're done with this function.
-    emitEndSymbolRecord(IsXbox360 ? SymbolKind::S_END
-                                  : SymbolKind::S_PROC_ID_END);
+    emitEndSymbolRecord(EmitLegacyXbox360CodeView ? SymbolKind::S_END
+                                                  : SymbolKind::S_PROC_ID_END);
   }
   endCVSubsection(SymbolsEnd);
 
@@ -2238,8 +2237,8 @@ static ClassOptions getCommonClassOptions(const DICompositeType *Ty) {
 }
 
 void CodeViewDebug::addUDTSrcLine(const DIType *Ty, TypeIndex TI) {
-  // LF_UDT_SRC_LINE references LF_STRING_ID, which is not supported by XDK.
-  if (isXbox360Target())
+  // LF_UDT_SRC_LINE references LF_STRING_ID, unsupported by legacy readers.
+  if (EmitLegacyXbox360CodeView)
     return;
 
   switch (Ty->getTag()) {

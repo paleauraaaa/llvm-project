@@ -116,6 +116,7 @@ public:
   virtual uint32_t getNumberOfRegisterIndices() const = 0;
   virtual uint32_t getNumberOfRows() const = 0;
   virtual std::string getObjectFileName() const = 0;
+  virtual SymIndexId getObjectPointerTypeId() const = 0;
   virtual uint32_t getOemId() const = 0;
   virtual SymIndexId getOemSymbolId() const = 0;
   virtual uint32_t getOffsetInUdt() const = 0;
