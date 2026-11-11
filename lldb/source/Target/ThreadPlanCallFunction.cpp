@@ -12,6 +12,8 @@
 #include "lldb/Core/Address.h"
 #include "lldb/Core/DumpRegisterValue.h"
 #include "lldb/Core/Module.h"
+#include "lldb/Symbol/CompilerDeclContext.h"
+#include "lldb/Symbol/Function.h"
 #include "lldb/Symbol/ObjectFile.h"
 #include "lldb/Target/ABI.h"
 #include "lldb/Target/LanguageRuntime.h"
@@ -468,7 +470,13 @@ void ThreadPlanCallFunction::SetReturnValue() {
   const ABI *abi = m_process.GetABI().get();
   if (abi && m_return_type.IsValid()) {
     const bool persistent = false;
-    m_return_valobj_sp =
-        abi->GetReturnValueObject(GetThread(), m_return_type, persistent);
+    SymbolContext context;
+    m_function_addr.CalculateSymbolContext(&context, eSymbolContextFunction);
+    CompilerDeclContext function_decl_context;
+    if (context.function)
+      function_decl_context = context.function->GetDeclContext();
+    m_return_valobj_sp = abi->GetReturnValueObject(
+        GetThread(), m_return_type, persistent,
+        context.function ? &function_decl_context : nullptr);
   }
 }

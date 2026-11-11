@@ -6,10 +6,12 @@ add_lldb_unittest(ABIPowerPCTests
     lldbHost
     lldbPluginABIPowerPC
     lldbPluginPlatformLinux
+    lldbPluginScriptInterpreterNone
     lldbPluginTypeSystemClang
     lldbSymbol
     lldbTarget
     lldbUtility
+    clangAST
   LINK_COMPONENTS
     PowerPCDesc
     PowerPCInfo

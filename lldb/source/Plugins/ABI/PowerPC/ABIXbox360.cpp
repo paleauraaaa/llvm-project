@@ -8,8 +8,11 @@
 
 #include "ABIXbox360.h"
 
+#include "Plugins/ExpressionParser/Clang/ClangUtil.h"
+#include "Plugins/TypeSystem/Clang/TypeSystemClang.h"
 #include "lldb/Core/PluginManager.h"
 #include "lldb/Core/Value.h"
+#include "lldb/Symbol/CompilerDeclContext.h"
 #include "lldb/Symbol/UnwindPlan.h"
 #include "lldb/Target/Process.h"
 #include "lldb/Target/RegisterContext.h"
@@ -21,6 +24,11 @@
 #include "lldb/Utility/Log.h"
 #include "lldb/Utility/RegisterValue.h"
 #include "lldb/Utility/Status.h"
+#include "lldb/ValueObject/ValueObjectConstResult.h"
+#include "clang/AST/Attr.h"
+#include "clang/AST/DeclCXX.h"
+#include "clang/AST/DeclTemplate.h"
+#include "llvm/Support/Error.h"
 #include "llvm/Support/MathExtras.h"
 
 using namespace lldb;
@@ -41,6 +49,161 @@ bool IsNumberedRegister(llvm::StringRef name, llvm::StringRef prefix,
   unsigned number;
   return !name.empty() && !name.getAsInteger(10, number) && number >= first &&
          number <= last;
+}
+
+bool IsCodeAddressValid(addr_t pc) {
+  return pc && pc <= UINT32_MAX && (pc & 3) == 0;
+}
+
+enum class ReturnKind { GPR, FPR, Vector, Memory };
+
+struct ReturnInfo {
+  ReturnKind kind;
+  uint32_t element_size;
+  uint32_t count = 1;
+};
+
+// Keep this consistent with isTrivialForMSVC in MicrosoftCXXABI.cpp.
+bool IsDirectCXXRecord(const clang::CXXRecordDecl &record) {
+  if (!record.canPassInRegisters() || record.hasProtectedFields() ||
+      record.hasPrivateFields() || record.getNumBases() ||
+      record.isPolymorphic() || record.hasNonTrivialCopyAssignment() ||
+      (record.needsImplicitCopyAssignment() &&
+       !record.hasSimpleCopyAssignment()) ||
+      record.hasNonTrivialDestructor())
+    return false;
+  for (const clang::Decl *decl : record.decls()) {
+    if (const auto *ctor = llvm::dyn_cast<clang::CXXConstructorDecl>(decl)) {
+      if (ctor->isUserProvided())
+        return false;
+    } else if (const auto *templ =
+                   llvm::dyn_cast<clang::FunctionTemplateDecl>(decl)) {
+      if (llvm::isa<clang::CXXConstructorDecl>(templ->getTemplatedDecl()))
+        return false;
+    } else if (const auto *method =
+                   llvm::dyn_cast<clang::CXXMethodDecl>(decl)) {
+      if (method->isCopyAssignmentOperator() && method->isDeleted())
+        return false;
+    }
+  }
+  return true;
+}
+
+llvm::Expected<ReturnInfo>
+ClassifyReturn(CompilerType &type, uint64_t size,
+               const CompilerDeclContext *function_decl_context) {
+  auto unsupported = []() {
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                   "unsupported Xbox 360 return type");
+  };
+  bool is_signed = false;
+  if (type.IsIntegerOrEnumerationType(is_signed) ||
+      type.IsPointerOrReferenceType()) {
+    if (size == 1 || size == 2 || size == 4 || size == 8)
+      return ReturnInfo{ReturnKind::GPR, static_cast<uint32_t>(size)};
+    if (size == 16 && type.IsIntegerOrEnumerationType(is_signed))
+      return ReturnInfo{ReturnKind::GPR, 8, 2};
+    return unsupported();
+  }
+
+  uint32_t count = 0;
+  bool is_complex = false;
+  if (!type.IsVectorType() && type.IsFloatingPointType(count, is_complex)) {
+    uint64_t element_size = is_complex ? size / 2 : size;
+    if ((element_size != 4 && element_size != 8) ||
+        size != element_size * (is_complex ? 2 : 1))
+      return unsupported();
+    return ReturnInfo{ReturnKind::FPR, static_cast<uint32_t>(element_size),
+                      is_complex ? 2u : 1u};
+  }
+  if (ClangUtil::IsClangType(type)) {
+    if (const auto *complex = ClangUtil::GetCanonicalQualType(type)
+                                  ->getAs<clang::ComplexType>()) {
+      if (complex->getElementType()->isIntegerType() && size % 2 == 0 &&
+          (size == 2 || size == 4 || size == 8 || size == 16))
+        return ReturnInfo{ReturnKind::GPR, static_cast<uint32_t>(size / 2), 2};
+      return unsupported();
+    }
+  }
+
+  if (!type.IsAggregateType() && !type.IsVectorType())
+    return unsupported();
+
+  bool instance_method = false;
+  if (function_decl_context) {
+    if (!*function_decl_context ||
+        !llvm::isa<TypeSystemClang>(function_decl_context->GetTypeSystem()))
+      return llvm::createStringError(
+          llvm::inconvertibleErrorCode(),
+          "Xbox 360 aggregate/vector return requires a function declaration");
+    auto *decl_context = static_cast<clang::DeclContext *>(
+        function_decl_context->GetOpaqueDeclContext());
+    const auto *function = llvm::dyn_cast<clang::FunctionDecl>(decl_context);
+    if (!function)
+      return llvm::createStringError(
+          llvm::inconvertibleErrorCode(),
+          "Xbox 360 return context is not a function declaration");
+    if (const auto *method = llvm::dyn_cast<clang::CXXMethodDecl>(function))
+      instance_method = method->isInstance();
+    else {
+      auto context = *function_decl_context;
+      instance_method = context.IsClassMethod();
+    }
+  }
+  if (type.IsVectorType()) {
+    if (size != 16)
+      return unsupported();
+    return ReturnInfo{instance_method ? ReturnKind::Memory : ReturnKind::Vector,
+                      16};
+  }
+
+  const auto *record =
+      llvm::dyn_cast_or_null<clang::RecordDecl>(ClangUtil::GetAsTagDecl(type));
+  if (record) {
+    if (record->hasAttr<clang::PassInRegAttr>() && !record->field_empty()) {
+      clang::QualType field = record->field_begin()->getType();
+      if (const auto *field_record = field->getAsRecordDecl()) {
+        if (field_record->hasAttr<clang::IntrinTypeAttr>() && size == 16)
+          return ReturnInfo{ReturnKind::Vector, 16};
+      }
+      if ((field->isSpecificBuiltinType(clang::BuiltinType::Float) &&
+           size == 4) ||
+          (field->isSpecificBuiltinType(clang::BuiltinType::Double) &&
+           size == 8))
+        return ReturnInfo{ReturnKind::FPR, static_cast<uint32_t>(size)};
+      return unsupported();
+    }
+    if (record->hasAttr<clang::IntrinTypeAttr>()) {
+      if (size != 16)
+        return unsupported();
+      return ReturnInfo{
+          instance_method ? ReturnKind::Memory : ReturnKind::Vector, 16};
+    }
+    if (const auto *cxx_record = llvm::dyn_cast<clang::CXXRecordDecl>(record))
+      if (instance_method || !IsDirectCXXRecord(*cxx_record))
+        return ReturnInfo{ReturnKind::Memory, 0};
+  }
+  if (size == 1 || size == 2 || size == 4 || size == 8)
+    return ReturnInfo{ReturnKind::GPR, static_cast<uint32_t>(size)};
+  return ReturnInfo{ReturnKind::Memory, 0};
+}
+
+Status ReadReturnRegister(RegisterContext &reg_ctx, llvm::StringRef name,
+                          uint32_t register_size, void *bytes, uint32_t size) {
+  const RegisterInfo *reg = reg_ctx.GetRegisterInfoByName(name);
+  if (!reg && name == "v1")
+    reg = reg_ctx.GetRegisterInfoByName("vr1");
+  RegisterValue value;
+  if (!reg || reg->byte_size != register_size ||
+      !reg_ctx.ReadRegister(reg, value))
+    return Status::FromErrorStringWithFormat(
+        "cannot read Xbox 360 return register %s", name.str().c_str());
+  Status error;
+  if (value.GetAsMemoryData(*reg, bytes, size, eByteOrderBig, error) != size ||
+      error.Fail())
+    return Status::FromErrorStringWithFormat(
+        "cannot decode Xbox 360 return register %s", name.str().c_str());
+  return {};
 }
 } // namespace
 
@@ -93,8 +256,8 @@ bool ABIXbox360::PrepareTrivialCall(Thread &thread, addr_t sp,
   auto process_sp = thread.GetProcess();
   if (!reg_ctx || !process_sp)
     return Fail("missing register context or process");
-  if (sp > UINT32_MAX || !CodeAddressIsValid(function_address) ||
-      !CodeAddressIsValid(return_address))
+  if (sp > UINT32_MAX || !IsCodeAddressValid(function_address) ||
+      !IsCodeAddressValid(return_address))
     return Fail("invalid call address");
 
   // Eight doubleword home slots are mandatory even for register-only calls.
@@ -278,7 +441,7 @@ bool ABIXbox360::CallFrameAddressIsValid(addr_t cfa) {
 }
 
 bool ABIXbox360::CodeAddressIsValid(addr_t pc) {
-  return pc && pc <= UINT32_MAX && (pc & 3) == 0;
+  return IsCodeAddressValid(pc);
 }
 
 Status ABIXbox360::SetReturnValueObject(StackFrameSP &frame_sp,
@@ -289,6 +452,91 @@ Status ABIXbox360::SetReturnValueObject(StackFrameSP &frame_sp,
 
 ValueObjectSP
 ABIXbox360::GetReturnValueObjectImpl(Thread &thread, CompilerType &type) const {
-  Fail("reading Xbox 360 return values is not implemented");
-  return {};
+  return GetReturnValueObjectImpl(thread, type, nullptr);
 }
+
+ValueObjectSP ABIXbox360::GetReturnValueObjectImpl(
+    Thread &thread, CompilerType &type,
+    const CompilerDeclContext *function_decl_context) const {
+  if (type.IsVoidType())
+    return {};
+  auto fail = [&](llvm::StringRef message) -> ValueObjectSP {
+    Fail(message);
+    return {};
+  };
+  if (!type.GetCompleteType())
+    return fail("incomplete return type");
+  auto size = type.GetByteSize(&thread);
+  if (!size)
+    return fail("unknown return type size");
+  auto info = ClassifyReturn(type, *size, function_decl_context);
+  if (!info)
+    return fail(llvm::toString(info.takeError()));
+  auto reg_ctx = thread.GetRegisterContext();
+  if (!reg_ctx)
+    return fail("missing return register context");
+
+  if (info->kind == ReturnKind::Memory) {
+    uint8_t bytes[4];
+    Status error = ReadReturnRegister(*reg_ctx, "r3", 8, bytes, 4);
+    if (error.Fail())
+      return fail(error.AsCString());
+    DataExtractor pointer(bytes, 4, eByteOrderBig, 4);
+    lldb::offset_t offset = 0;
+    addr_t address = pointer.GetU32(&offset);
+    if (!address || *size > UINT32_MAX - address + 1ull)
+      return fail("invalid indirect return storage");
+    auto process_sp = thread.GetProcess();
+    if (!process_sp)
+      return fail("missing process for indirect return");
+    auto buffer = std::make_shared<DataBufferHeap>(*size, 0);
+    if (*size && (process_sp->ReadMemory(address, buffer->GetBytes(), *size,
+                                         error) != *size ||
+                  error.Fail()))
+      return fail("cannot read indirect return storage");
+    return ValueObjectConstResult::Create(&thread, type, ConstString(), buffer,
+                                          eByteOrderBig, 4, address);
+  }
+
+  auto buffer = std::make_shared<DataBufferHeap>(*size, 0);
+  for (uint32_t i = 0; i < info->count; ++i) {
+    uint8_t *destination = buffer->GetBytes() + i * info->element_size;
+    Status error;
+    switch (info->kind) {
+    case ReturnKind::GPR:
+      error = ReadReturnRegister(*reg_ctx, "r" + std::to_string(3 + i), 8,
+                                 destination, info->element_size);
+      break;
+    case ReturnKind::FPR: {
+      uint8_t bytes[8];
+      error = ReadReturnRegister(*reg_ctx, "f" + std::to_string(1 + i), 8,
+                                 bytes, 8);
+      if (error.Fail())
+        break;
+      DataExtractor data(bytes, 8, eByteOrderBig, 4);
+      lldb::offset_t offset = 0;
+      llvm::APFloat number(llvm::APFloat::IEEEdouble(),
+                           llvm::APInt(64, data.GetU64(&offset)));
+      if (info->element_size == 4) {
+        bool loses_info;
+        number.convert(llvm::APFloat::IEEEsingle(),
+                       llvm::APFloat::rmNearestTiesToEven, &loses_info);
+      }
+      Scalar bits(number.bitcastToAPInt());
+      if (bits.GetAsMemoryData(destination, info->element_size, eByteOrderBig,
+                               error) != info->element_size)
+        return fail("cannot decode floating-point return");
+      break;
+    }
+    case ReturnKind::Vector:
+      error = ReadReturnRegister(*reg_ctx, "v1", 16, destination, 16);
+      break;
+    case ReturnKind::Memory:
+      llvm_unreachable("indirect returns handled above");
+    }
+    if (error.Fail())
+      return fail(error.AsCString());
+  }
+  return ValueObjectConstResult::Create(&thread, type, ConstString(), buffer,
+                                        eByteOrderBig, 4);
+} 
