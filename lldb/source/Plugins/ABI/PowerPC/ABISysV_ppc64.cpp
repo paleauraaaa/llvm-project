@@ -73,7 +73,7 @@ lldb::ByteOrder ABISysV_ppc64::GetByteOrder() const {
 ABISP
 ABISysV_ppc64::CreateInstance(lldb::ProcessSP process_sp,
                               const ArchSpec &arch) {
-  if (arch.GetTriple().isPPC64())
+  if (arch.GetTriple().isPPC64() && !arch.GetTriple().isOSXbox360())
     return ABISP(
         new ABISysV_ppc64(std::move(process_sp), MakeMCRegisterInfo(arch)));
   return ABISP();
