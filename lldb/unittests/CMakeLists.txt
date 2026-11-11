@@ -47,6 +47,7 @@ function(add_unittest_inputs test_name inputs)
 endfunction()
 
 add_subdirectory(TestingSupport)
+add_subdirectory(ABI)
 if (NOT CMAKE_SYSTEM_NAME MATCHES "Windows")
   # FIXME: APITests.exe is not a valid googletest binary.
   add_subdirectory(API)
