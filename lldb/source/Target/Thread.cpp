@@ -1678,6 +1678,10 @@ lldb::addr_t Thread::GetThreadPointer() {
 
 addr_t Thread::GetThreadLocalData(const ModuleSP module,
                                   lldb::addr_t tls_file_addr) {
+  if (auto abi = GetProcess()->GetABI())
+    if (auto address = abi->GetThreadLocalData(*this, module, tls_file_addr))
+      return *address;
+
   // The default implementation is to ask the dynamic loader for it. This can
   // be overridden for specific platforms.
   DynamicLoader *loader = GetProcess()->GetDynamicLoader();

@@ -10,12 +10,15 @@
 
 #include "Plugins/ExpressionParser/Clang/ClangUtil.h"
 #include "Plugins/TypeSystem/Clang/TypeSystemClang.h"
+#include "lldb/Core/Module.h"
 #include "lldb/Core/PluginManager.h"
+#include "lldb/Core/Section.h"
 #include "lldb/Core/Value.h"
 #include "lldb/Symbol/CompilerDeclContext.h"
 #include "lldb/Symbol/UnwindPlan.h"
 #include "lldb/Target/Process.h"
 #include "lldb/Target/RegisterContext.h"
+#include "lldb/Target/Target.h"
 #include "lldb/Target/Thread.h"
 #include "lldb/Target/Xbox360RegisterInfo.h"
 #include "lldb/Utility/ArchSpec.h"
@@ -533,6 +536,48 @@ bool ABIXbox360::CreateFunctionEntryUnwindPlan(UnwindPlan &unwind_plan) {
   unwind_plan.SetSourcedFromCompiler(eLazyBoolNo);
   unwind_plan.SetUnwindPlanValidAtAllInstructions(eLazyBoolNo);
   return true;
+}
+
+std::optional<addr_t> ABIXbox360::GetThreadLocalData(Thread &thread,
+                                                     const ModuleSP &module,
+                                                     addr_t tls_offset) {
+  auto fail = [](llvm::StringRef message) -> std::optional<addr_t> {
+    LLDB_LOG(GetLog(LLDBLog::Expressions), "Xbox 360 TLS: {0}", message);
+    return LLDB_INVALID_ADDRESS;
+  };
+  auto process = thread.GetProcess();
+  if (!process || !module)
+    return fail("missing process or module");
+  // r13 names the executable's static block. There is no per-module DTV or
+  // Windows TLS index to resolve TLS in independently loaded images.
+  if (process->GetTarget().GetExecutableModule() != module)
+    return fail("TLS is only supported for the executable module");
+  auto *sections = module->GetSectionList();
+  auto section =
+      sections ? sections->FindSectionByName(ConstString(".tls")) : SectionSP();
+  if (!section || tls_offset >= section->GetByteSize())
+    return fail("offset is outside the executable TLS section");
+
+  auto registers = thread.GetRegisterContext();
+  const RegisterInfo *r13 =
+      registers ? registers->GetRegisterInfoByName("r13") : nullptr;
+  if (!r13 || r13->byte_size != 8)
+    return fail("missing full-width r13");
+  addr_t thread_pointer = NormalizeAddress(
+      registers->ReadRegisterAsUnsigned(r13, LLDB_INVALID_ADDRESS));
+  if (!thread_pointer || thread_pointer > UINT32_MAX - 3 || thread_pointer % 4)
+    return fail("invalid or unreadable thread pointer");
+
+  uint8_t bytes[4];
+  Status error;
+  if (process->ReadMemory(thread_pointer, bytes, sizeof(bytes), error) !=
+          sizeof(bytes) ||
+      error.Fail())
+    return fail("cannot read the static TLS block pointer");
+  addr_t block = llvm::support::endian::read32be(bytes);
+  if (!block || block % 4 || tls_offset > UINT32_MAX - block)
+    return fail("invalid or overflowing static TLS address");
+  return block + tls_offset;
 }
 
 bool ABIXbox360::CreateDefaultUnwindPlan(UnwindPlan &unwind_plan) {

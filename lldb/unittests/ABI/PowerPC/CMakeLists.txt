@@ -8,6 +8,7 @@ add_lldb_unittest(ABIPowerPCTests
     lldbPluginObjectFilePECOFF
     lldbPluginPlatformLinux
     lldbPluginScriptInterpreterNone
+    lldbPluginSymbolFileNativePDB
     lldbPluginTypeSystemClang
     lldbSymbol
     lldbTarget

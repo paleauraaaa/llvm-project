@@ -13,6 +13,8 @@
 #include "lldb/Expression/DWARFExpression.h"
 #include "lldb/Utility/ArchSpec.h"
 #include "lldb/Utility/DataBufferHeap.h"
+#include "lldb/Utility/LLDBLog.h"
+#include "lldb/Utility/Log.h"
 #include "lldb/Utility/StreamBuffer.h"
 
 #include "llvm/BinaryFormat/Dwarf.h"
@@ -202,12 +204,30 @@ DWARFExpression lldb_private::npdb::MakeVFrameRelLocationExpression(
 }
 
 DWARFExpression lldb_private::npdb::MakeGlobalLocationExpression(
-    uint16_t section, uint32_t offset, ModuleSP module) {
+    uint16_t section, uint32_t offset, ModuleSP module, bool is_thread_local) {
   assert(section > 0);
   assert(module);
 
   return MakeLocationExpressionInternal(
       module, [&](Stream &stream, RegisterKind &register_kind) -> bool {
+        if (is_thread_local &&
+            module->GetArchitecture().GetTriple().isOSXbox360()) {
+          auto *sections = module->GetSectionList();
+          auto tls =
+              sections ? sections->FindSectionByID(section) : SectionSP();
+          if (!tls || tls->GetName() != ConstString(".tls") ||
+              offset >= tls->GetByteSize()) {
+            LLDB_LOG(GetLog(LLDBLog::Symbols),
+                     "Xbox 360 PDB TLS location outside .tls: section {0}, "
+                     "offset {1}",
+                     section, offset);
+            return false;
+          }
+          stream.PutHex8(llvm::dwarf::DW_OP_constu);
+          stream.PutULEB128(offset);
+          stream.PutHex8(llvm::dwarf::DW_OP_form_tls_address);
+          return true;
+        }
         stream.PutHex8(llvm::dwarf::DW_OP_addr);
 
         SectionList *section_list = module->GetSectionList();

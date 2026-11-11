@@ -17,6 +17,7 @@
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/MC/MCRegisterInfo.h"
+#include <optional>
 
 namespace llvm {
 class Type;
@@ -64,6 +65,15 @@ public:
                                   llvm::ArrayRef<CallArgument> args) const;
 
   virtual bool GetArgumentValues(Thread &thread, ValueList &values) const = 0;
+
+  /// Resolve TLS for ABIs whose static TLS layout does not require a loader.
+  /// Return nullopt to delegate to the dynamic loader, or LLDB_INVALID_ADDRESS
+  /// if this ABI handles TLS but the requested storage is unavailable.
+  virtual std::optional<lldb::addr_t>
+  GetThreadLocalData(Thread &thread, const lldb::ModuleSP &module,
+                     lldb::addr_t tls_offset) {
+    return std::nullopt;
+  }
 
   /// Decode a return value, optionally using the returning function's
   /// declaration context to distinguish instance methods from free functions.

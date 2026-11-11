@@ -38,6 +38,8 @@ lldb_private::GetXbox360RegisterInfo() {
     uint32_t generic = LLDB_INVALID_REGNUM;
     if (i == 1)
       generic = LLDB_REGNUM_GENERIC_SP;
+    else if (i == 13)
+      generic = LLDB_REGNUM_GENERIC_TP;
     else if (i >= 3 && i <= 10)
       generic = LLDB_REGNUM_GENERIC_ARG1 + i - 3;
     add("r" + std::to_string(i), i == 1 ? "sp" : "", "General Purpose", 8, i,

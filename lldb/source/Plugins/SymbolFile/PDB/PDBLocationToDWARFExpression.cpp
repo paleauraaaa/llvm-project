@@ -20,6 +20,7 @@
 #include "llvm/DebugInfo/PDB/PDBSymbolData.h"
 
 #include "Plugins/SymbolFile/NativePDB/CodeViewRegisterMapping.h"
+#include "Plugins/SymbolFile/NativePDB/DWARFLocationExpression.h"
 #include "Plugins/SymbolFile/NativePDB/PdbFPOProgramToDWARFExpression.h"
 
 using namespace lldb;
@@ -85,6 +86,13 @@ DWARFExpression ConvertPDBLocationToDWARFExpression(
   switch (symbol.getLocationType()) {
   case PDB_LocType::Static:
   case PDB_LocType::TLS: {
+    if (symbol.getLocationType() == PDB_LocType::TLS &&
+        architecture.GetTriple().isOSXbox360()) {
+      is_constant = false;
+      return MakeGlobalLocationExpression(symbol.getAddressSection(),
+                                          symbol.getAddressOffset(), module,
+                                          /*is_thread_local=*/true);
+    }
     stream.PutHex8(DW_OP_addr);
 
     SectionList *section_list = module->GetSectionList();
