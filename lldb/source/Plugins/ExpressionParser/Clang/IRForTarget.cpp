@@ -1050,10 +1050,14 @@ bool IRForTarget::MaybeHandleVariable(Value *llvm_value_ptr) {
              lldb_private::ClangUtil::GetQualType(compiler_type).getAsString(),
              PrintType(value_type), *value_size, value_alignment);
 
-    if (named_decl)
-      m_decl_map->AddValueToStruct(named_decl, lldb_private::ConstString(name),
-                                   llvm_value_ptr, *value_size,
-                                   value_alignment);
+    if (!m_decl_map->AddValueToStruct(
+            named_decl, lldb_private::ConstString(name), llvm_value_ptr,
+            *value_size, value_alignment)) {
+      // Imported static members may not be variable entities in the decl map.
+      if (auto *var_decl = dyn_cast<clang::VarDecl>(named_decl))
+        if (var_decl->isStaticDataMember())
+          return HandleSymbol(global_variable);
+    }
   } else if (isa<llvm::Function>(llvm_value_ptr)) {
     LLDB_LOG(log, "Function pointers aren't handled right now");
 

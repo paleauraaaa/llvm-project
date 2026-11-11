@@ -83,6 +83,8 @@ public:
   CompilerDeclContext ToCompilerDeclContext(clang::DeclContext &context);
   clang::Decl *FromCompilerDecl(CompilerDecl decl);
   clang::DeclContext *FromCompilerDeclContext(CompilerDeclContext context);
+  clang::NamespaceDecl *FindNamespaceDecl(CompilerDeclContext parent,
+                                          llvm::StringRef name);
 
   TypeSystemClang &clang() { return m_clang; }
   ClangASTImporter &GetClangASTImporter() { return m_importer; }
@@ -105,7 +107,8 @@ private:
                                  const llvm::codeview::EnumRecord &record);
   clang::QualType
   CreateFunctionType(TypeIndex args_type_idx, TypeIndex return_type_idx,
-                     llvm::codeview::CallingConvention calling_convention);
+                     llvm::codeview::CallingConvention calling_convention,
+                     unsigned qualifiers = 0);
   clang::QualType CreateType(PdbTypeSymId type);
 
   void CreateFunctionParameters(PdbCompilandSymId func_id,

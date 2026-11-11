@@ -11,6 +11,7 @@
 #include "Plugins/TypeSystem/Clang/TypeSystemClang.h"
 #include "SymbolFileNativePDB.h"
 #include "lldb/Core/Address.h"
+#include "lldb/Symbol/ObjectFile.h"
 #include "lldb/Symbol/Type.h"
 #include "lldb/Utility/LLDBAssert.h"
 #include "lldb/Utility/LLDBLog.h"
@@ -249,7 +250,16 @@ Error UdtRecordCompleter::visitKnownMember(CVMemberRecord &cvr,
     if (cvt.kind() == LF_BITFIELD) {
       BitFieldRecord bfr;
       llvm::cantFail(TypeDeserializer::deserializeAs<BitFieldRecord>(cvt, bfr));
-      offset += bfr.BitOffset;
+      uint64_t bit_offset = bfr.BitOffset;
+      auto *symbol_file = m_ast_builder.clang().GetSymbolFile();
+      // CodeView counts from the storage unit's LSB, Clang from its MSB.
+      if (symbol_file->GetObjectFile()->GetByteOrder() == eByteOrderBig) {
+        uint64_t storage_bits = GetSizeOfType(bfr.Type, m_index.tpi()) * 8;
+        if (bit_offset + bfr.BitSize > storage_bits)
+          return llvm::createStringError("invalid CodeView bitfield offset");
+        bit_offset = storage_bits - bit_offset - bfr.BitSize;
+      }
+      offset += bit_offset;
       bitfield_width = bfr.BitSize;
       ti = bfr.Type;
     }

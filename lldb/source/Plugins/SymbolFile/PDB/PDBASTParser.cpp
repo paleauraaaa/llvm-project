@@ -19,6 +19,7 @@
 #include "Plugins/TypeSystem/Clang/TypeSystemClang.h"
 #include "lldb/Core/Declaration.h"
 #include "lldb/Core/Module.h"
+#include "lldb/Symbol/ObjectFile.h"
 #include "lldb/Symbol/SymbolFile.h"
 #include "lldb/Symbol/TypeMap.h"
 #include "lldb/Symbol/TypeSystem.h"
@@ -652,6 +653,15 @@ lldb::TypeSP PDBASTParser::CreateLLDBTypeFromPDBType(const PDBSymbol &type) {
       type_quals |= clang::Qualifiers::Const;
     if (func_sig->isVolatileType())
       type_quals |= clang::Qualifiers::Volatile;
+    if (auto object_pointer = func_sig->getObjectPointerType()) {
+      if (auto *object_type =
+              symbol_file->ResolveTypeUID(object_pointer->getSymIndexId())) {
+        CompilerType pointee =
+            object_type->GetForwardCompilerType().GetPointeeType();
+        if (pointee)
+          type_quals |= ClangUtil::GetQualType(pointee).getCVRQualifiers();
+      }
+    }
     auto cc = TranslateCallingConvention(func_sig->getCallingConvention());
     CompilerType func_sig_ast_type =
         m_ast.CreateFunctionType(return_ast_type, arg_list.data(),
@@ -1273,17 +1283,28 @@ void PDBASTParser::AddRecordMembers(
       if (location_type == PDB_LocType::ThisRel)
         bit_size *= 8;
 
+      auto offset = member->getOffset() * 8;
+      if (location_type == PDB_LocType::BitField) {
+        uint64_t bit_offset = member->getBitPosition();
+        // CodeView counts from the storage unit's LSB, Clang from its MSB.
+        if (symbol_file.GetObjectFile()->GetByteOrder() == eByteOrderBig) {
+          auto storage_bits = member_comp_type.GetBitSize(nullptr);
+          if (!storage_bits || bit_offset + bit_size > *storage_bits) {
+            symbol_file.GetObjectFile()->GetModule()->ReportError(
+                "invalid CodeView bitfield offset for '{0}'", member_name);
+            continue;
+          }
+          bit_offset = *storage_bits - bit_offset - bit_size;
+        }
+        offset += bit_offset;
+      }
+
       auto decl = TypeSystemClang::AddFieldToRecordType(
           record_type, member_name.c_str(), member_comp_type, access, bit_size);
       if (!decl)
         continue;
 
       m_uid_to_decl[member->getSymIndexId()] = decl;
-
-      auto offset = member->getOffset() * 8;
-      if (location_type == PDB_LocType::BitField)
-        offset += member->getBitPosition();
-
       layout_info.field_offsets.insert(std::make_pair(decl, offset));
 
       break;

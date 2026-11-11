@@ -341,13 +341,14 @@ PdbAstBuilder::CreateDeclInfoForUndecoratedName(llvm::StringRef name) {
   // It might be a class name, try that first.
   std::vector<TypeIndex> types = index.tpi().findRecordsByName(scope_name);
   while (!types.empty()) {
-    clang::QualType qt = GetOrCreateType(types.back());
+    TypeIndex ti = types.back();
+    types.pop_back();
+    clang::QualType qt = GetOrCreateType(ti);
     if (qt.isNull())
       continue;
     clang::TagDecl *tag = qt->getAsTagDecl();
     if (tag)
       return {clang::TagDecl::castToDeclContext(tag), std::string(uname)};
-    types.pop_back();
   }
 
   // If that fails, treat it as a series of namespaces.
@@ -677,8 +678,32 @@ clang::VarDecl *PdbAstBuilder::CreateVariableDecl(PdbSymUid uid, CVSymbol sym,
   if (qt.isNull())
     return nullptr;
 
-  clang::VarDecl *var_decl = m_clang.CreateVariableDeclaration(
-      &scope, OptionalClangModuleID(), var_info.name.str().c_str(), qt);
+  clang::DeclContext *context = &scope;
+  std::string name = var_info.name.str();
+  if (scope.isTranslationUnit())
+    std::tie(context, name) = CreateDeclInfoForUndecoratedName(var_info.name);
+  if (!context)
+    return nullptr;
+  clang::VarDecl *var_decl = nullptr;
+  if (auto *record = llvm::dyn_cast<clang::TagDecl>(context)) {
+    if (!CompleteTagDecl(*record))
+      return nullptr;
+    for (clang::Decl *decl : context->decls())
+      if (auto *member = llvm::dyn_cast<clang::VarDecl>(decl))
+        if (member->getName() == name && member->isStaticDataMember()) {
+          var_decl = member;
+          break;
+        }
+    if (!var_decl) {
+      LLDB_LOG(GetLog(LLDBLog::Symbols),
+               "Unable to find static member declaration for {0}",
+               var_info.name);
+      return nullptr;
+    }
+  } else {
+    var_decl = m_clang.CreateVariableDeclaration(
+        context, OptionalClangModuleID(), name.c_str(), qt);
+  }
 
   m_uid_to_decl[toOpaqueUid(uid)] = var_decl;
   DeclStatus status;
@@ -801,7 +826,14 @@ clang::QualType PdbAstBuilder::CreateType(PdbTypeSymId type) {
     MemberFunctionRecord mfr;
     llvm::cantFail(
         TypeDeserializer::deserializeAs<MemberFunctionRecord>(cvt, mfr));
-    return CreateFunctionType(mfr.ArgumentList, mfr.ReturnType, mfr.CallConv);
+    unsigned qualifiers = 0;
+    if (!mfr.ThisType.isNoneType()) {
+      clang::QualType this_type = GetOrCreateType(mfr.ThisType);
+      if (!this_type.isNull() && this_type->isPointerType())
+        qualifiers = this_type->getPointeeType().getCVRQualifiers();
+    }
+    return CreateFunctionType(mfr.ArgumentList, mfr.ReturnType, mfr.CallConv,
+                              qualifiers);
   }
 
   return {};
@@ -1188,7 +1220,7 @@ clang::QualType PdbAstBuilder::CreateArrayType(const ArrayRecord &ar) {
 
 clang::QualType PdbAstBuilder::CreateFunctionType(
     TypeIndex args_type_idx, TypeIndex return_type_idx,
-    llvm::codeview::CallingConvention calling_convention) {
+    llvm::codeview::CallingConvention calling_convention, unsigned qualifiers) {
   SymbolFileNativePDB *pdb = static_cast<SymbolFileNativePDB *>(
       m_clang.GetSymbolFile()->GetBackingSymbolFile());
   PdbIndex &index = pdb->GetIndex();
@@ -1223,8 +1255,9 @@ clang::QualType PdbAstBuilder::CreateFunctionType(
     return {};
 
   CompilerType return_ct = ToCompilerType(return_type);
-  CompilerType func_sig_ast_type = m_clang.CreateFunctionType(
-      return_ct, arg_types.data(), arg_types.size(), is_variadic, 0, *cc);
+  CompilerType func_sig_ast_type =
+      m_clang.CreateFunctionType(return_ct, arg_types.data(), arg_types.size(),
+                                 is_variadic, qualifiers, *cc);
 
   return clang::QualType::getFromOpaquePtr(
       func_sig_ast_type.GetOpaqueQualType());
@@ -1299,6 +1332,22 @@ void PdbAstBuilder::ParseAllTypes() {
   });
 }
 
+clang::NamespaceDecl *
+PdbAstBuilder::FindNamespaceDecl(CompilerDeclContext parent,
+                                 llvm::StringRef name) {
+  clang::DeclContext *context =
+      parent ? FromCompilerDeclContext(parent)
+             : m_clang.getASTContext().getTranslationUnitDecl();
+  if (!context)
+    return nullptr;
+  ParseDeclsForContext(*context);
+  for (clang::Decl *decl : context->decls())
+    if (auto *ns = llvm::dyn_cast<clang::NamespaceDecl>(decl))
+      if (ns->getName() == name)
+        return ns;
+  return nullptr;
+}
+
 void PdbAstBuilder::ParseAllFunctionsAndNonLocalVars() {
   llvm::call_once(m_parse_functions_and_non_local_vars, [this]() {
     SymbolFileNativePDB *pdb = static_cast<SymbolFileNativePDB *>(
@@ -1329,6 +1378,20 @@ void PdbAstBuilder::ParseAllFunctionsAndNonLocalVars() {
           ++iter;
           continue;
         }
+      }
+    }
+    for (uint32_t gid : index.globals().getGlobalsTable()) {
+      PdbGlobalSymId global{gid, false};
+      CVSymbol sym = index.ReadSymbolRecord(global);
+      switch (sym.kind()) {
+      case S_GDATA32:
+      case S_LDATA32:
+      case S_GTHREAD32:
+      case S_LTHREAD32:
+        GetOrCreateVariableDecl(global);
+        break;
+      default:
+        break;
       }
     }
   });

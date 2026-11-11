@@ -1127,8 +1127,9 @@ void SymbolFilePDB::FindGlobalVariables(
     sc.module_sp = m_objfile_sp->GetModule();
     lldbassert(sc.module_sp.get());
 
-    if (name.GetStringRef() !=
-        MSVCUndecoratedNameParser::DropScope(pdb_data->getName()))
+    std::string full_name = pdb_data->getName();
+    if (name.GetStringRef() != full_name &&
+        name.GetStringRef() != MSVCUndecoratedNameParser::DropScope(full_name))
       continue;
 
     sc.comp_unit = ParseCompileUnitForUID(GetCompilandId(*pdb_data)).get();

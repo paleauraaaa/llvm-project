@@ -1,0 +1,52 @@
+# REQUIRES: lld, powerpc
+# RUN: %clang -target powerpc64-ibm-xbox360 -mcpu=xenon -std=c++17 -g -gcodeview -O0 -c %S/Inputs/xbox360-pdb.cpp -o %t.obj
+# RUN: lld-link /machine:ppcbe /subsystem:xbox /entry:debug_entry /nodefaultlib /debug:full /out:%t.exe /pdb:%t.pdb %t.obj
+# RUN: %lldb -b -f %t.exe -s %S/Inputs/xbox360-pdb.lldbinit | FileCheck %s
+# RUN: %python %S/Inputs/xbox360-pdb-remote.py %t.exe %lldb
+# RUN: %clang -target powerpc64-ibm-xbox360 -mcpu=xenon -std=c++17 -g -gcodeview -gcodeview-xbox360-modern -O0 -c %S/Inputs/xbox360-pdb.cpp -o %t.modern.obj
+# RUN: lld-link /machine:ppcbe /subsystem:xbox /entry:debug_entry /nodefaultlib /debug:full /out:%t.modern.exe /pdb:%t.modern.pdb %t.modern.obj
+# RUN: llvm-pdbutil dump --ids --symbols %t.modern.pdb | FileCheck %s --check-prefix=MODERN-PDB
+# RUN: %lldb -b -f %t.modern.exe -s %S/Inputs/xbox360-pdb.lldbinit | FileCheck %s
+# RUN: %python %S/Inputs/xbox360-pdb-remote.py %t.modern.exe %lldb
+
+# CHECK: Breakpoint 1:
+# CHECK-SAME: debug_entry
+# CHECK-SAME: xbox360-pdb.cpp:101
+# CHECK: struct Actor : public game::Base
+# CHECK-DAG: Position position;
+# CHECK-DAG: game::Kind kind;
+# CHECK-DAG: unsigned int enabled : 1;
+# CHECK-DAG: unsigned int team : 3;
+# CHECK-DAG: int values[3];
+# CHECK-DAG: game::Actor *next;
+# CHECK-DAG: int GetID() const;
+# CHECK-DAG: int GetTeam() volatile;
+# CHECK-DAG: void SetID(int);
+# CHECK-DAG: static int count;
+# CHECK: (lldb) type lookup game::Actor::Position
+# CHECK: struct Position
+# CHECK: float x;
+# CHECK: float y;
+# CHECK: enum Kind
+# CHECK: Idle
+# CHECK: Active
+# CHECK: struct Box<game::Actor *>
+# CHECK: game::Actor *value;
+# CHECK: id = 42
+# CHECK: x = 1.5
+# CHECK: y = 2.5
+# CHECK: kind = Active
+# CHECK: enabled = 1
+# CHECK: team = 5
+# CHECK: [0] = 10
+# CHECK: [1] = 20
+# CHECK: [2] = 30
+# CHECK: next = {{(0x0+|nullptr|NULL)}}
+# CHECK: (unsigned long) $0 = 36
+# CHECK: (unsigned long) $1 = 4
+# CHECK: (unsigned long) $2 = 2
+# CHECK: (unsigned long) $3 = 8
+
+# MODERN-PDB-DAG: LF_UDT_SRC_LINE
+# MODERN-PDB-DAG: LF_BUILDINFO
+# MODERN-PDB-DAG: S_BUILDINFO
