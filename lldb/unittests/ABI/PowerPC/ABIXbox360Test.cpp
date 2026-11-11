@@ -367,6 +367,7 @@ TEST_F(Xbox360ABI, Selection) {
     ASSERT_TRUE(selected);
     EXPECT_NE(selected->GetPluginName(), "xbox360");
     EXPECT_FALSE(selected->GetThreadLocalData(*thread, {}, 0).has_value());
+    EXPECT_THAT_EXPECTED(selected->GetRuntimeTLS(*thread), llvm::Failed());
   }
 }
 
@@ -910,6 +911,70 @@ TEST_F(Xbox360ABI, CodeViewRegisterAndStackLocations) {
   EXPECT_FALSE(npdb::MakeEnregisteredLocationExpressionForComposite(
                    pieces, sizes, 16, module)
                    .IsValid());
+}
+
+TEST_F(Xbox360ABI, RuntimeTLSUsesKernelThreadInsteadOfStaticBlock) {
+  registers->Set("r13", RegisterValue(uint64_t(0xdeadbeef00010000)));
+  llvm::support::endian::write32be(process->memory.data(), 0x13000);
+  llvm::support::endian::write32be(process->memory.data() + 0x100, 0x11000);
+  llvm::support::endian::write32be(process->memory.data() + 0x1068, 0x12000);
+  auto slots = abi->GetRuntimeTLS(*thread);
+  ASSERT_THAT_EXPECTED(slots, llvm::Succeeded());
+  EXPECT_EQ(slots->address, 0x12000u);
+  EXPECT_EQ(slots->slot_count, 256u);
+  EXPECT_EQ(slots->slot_size, 4u);
+
+  auto second = std::make_shared<TestThread>(*process);
+  second->registers->Set("r13", RegisterValue(uint64_t(0xdeadbeef00010200)));
+  llvm::support::endian::write32be(process->memory.data() + 0x300, 0x11200);
+  llvm::support::endian::write32be(process->memory.data() + 0x1268, 0x13000);
+  auto other = abi->GetRuntimeTLS(*second);
+  ASSERT_THAT_EXPECTED(other, llvm::Succeeded());
+  EXPECT_EQ(other->address, 0x13000u);
+
+  Status error;
+  const uint8_t replacement[] = {0, 1, 0x30, 0};
+  ASSERT_EQ(process->WriteMemory(0x11068, replacement, 4, error), 4u);
+  slots = abi->GetRuntimeTLS(*thread);
+  ASSERT_THAT_EXPECTED(slots, llvm::Succeeded());
+  EXPECT_EQ(slots->address, 0x13000u);
+}
+
+TEST_F(Xbox360ABI, RuntimeTLSRejectsInvalidPointersAndUnreadableState) {
+  registers->Set("r13", RegisterValue(uint64_t(0x10000)));
+  llvm::support::endian::write32be(process->memory.data() + 0x100, 0x11000);
+  llvm::support::endian::write32be(process->memory.data() + 0x1068, 0x12000);
+  for (uint64_t pcr : {0ull, 1ull, 0xffffff00ull, 0xffffffffffffffffull}) {
+    registers->Set("r13", RegisterValue(pcr));
+    EXPECT_THAT_EXPECTED(abi->GetRuntimeTLS(*thread), llvm::Failed());
+  }
+  registers->Set("r13", RegisterValue(uint64_t(0x10000)));
+  registers->unreadable = "r13";
+  EXPECT_THAT_EXPECTED(abi->GetRuntimeTLS(*thread), llvm::Failed());
+  registers->unreadable.clear();
+  for (uint32_t pointer : {0u, 1u, 0xffffff98u, 0xffffff9cu}) {
+    Status error;
+    uint8_t bytes[4];
+    llvm::support::endian::write32be(bytes, pointer);
+    ASSERT_EQ(process->WriteMemory(0x10100, bytes, 4, error), 4u);
+    EXPECT_THAT_EXPECTED(abi->GetRuntimeTLS(*thread), llvm::Failed());
+  }
+  Status error;
+  const uint8_t valid_thread[] = {0, 1, 0x10, 0};
+  ASSERT_EQ(process->WriteMemory(0x10100, valid_thread, 4, error), 4u);
+  for (uint32_t pointer : {0u, 1u, 0xfffffc04u}) {
+    uint8_t bytes[4];
+    llvm::support::endian::write32be(bytes, pointer);
+    ASSERT_EQ(process->WriteMemory(0x11068, bytes, 4, error), 4u);
+    EXPECT_THAT_EXPECTED(abi->GetRuntimeTLS(*thread), llvm::Failed());
+  }
+  const uint8_t unreadable_thread[] = {0, 2, 0, 0};
+  ASSERT_EQ(process->WriteMemory(0x10100, unreadable_thread, 4, error), 4u);
+  EXPECT_THAT_EXPECTED(abi->GetRuntimeTLS(*thread), llvm::Failed());
+  auto *r13 =
+      const_cast<RegisterInfo *>(registers->GetRegisterInfoByName("r13"));
+  r13->byte_size = 4;
+  EXPECT_THAT_EXPECTED(abi->GetRuntimeTLS(*thread), llvm::Failed());
 }
 
 TEST_F(Xbox360ABI, StaticTLSIsThreadRelativeAndBigEndian) {

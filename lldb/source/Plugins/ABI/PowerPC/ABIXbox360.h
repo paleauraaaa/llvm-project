@@ -53,6 +53,8 @@ public:
   CreateFunctionEntryUnwindPlan(lldb_private::UnwindPlan &unwind_plan) override;
   bool CreateDefaultUnwindPlan(lldb_private::UnwindPlan &unwind_plan) override;
   bool RegisterIsVolatile(const lldb_private::RegisterInfo *reg_info) override;
+  llvm::Expected<RuntimeTLS>
+  GetRuntimeTLS(lldb_private::Thread &thread) override;
   bool CallFrameAddressIsValid(lldb::addr_t cfa) override;
   bool CodeAddressIsValid(lldb::addr_t pc) override;
   lldb::addr_t FixCodeAddress(lldb::addr_t pc) override;

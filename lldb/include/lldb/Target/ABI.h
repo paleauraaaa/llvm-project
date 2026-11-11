@@ -123,6 +123,20 @@ protected:
   lldb::ProcessSP GetProcessSP() const { return m_process_wp.lock(); }
 
 public:
+  /// Target-memory layout of the current thread's runtime TLS slot array.
+  struct RuntimeTLS {
+    lldb::addr_t address;
+    uint32_t slot_count;
+    uint32_t slot_size;
+  };
+
+  /// Locate runtime-allocated TLS slots without executing inferior code.
+  virtual llvm::Expected<RuntimeTLS> GetRuntimeTLS(Thread &thread) {
+    return llvm::createStringError(
+        llvm::inconvertibleErrorCode(),
+        "runtime TLS inspection is not supported by this ABI");
+  }
+
   virtual bool CreateFunctionEntryUnwindPlan(UnwindPlan &unwind_plan) = 0;
 
   virtual bool CreateDefaultUnwindPlan(UnwindPlan &unwind_plan) = 0;

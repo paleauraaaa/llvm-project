@@ -1,0 +1,2 @@
+# REQUIRES: powerpc
+# RUN: %python %S/Inputs/xbox360-tls.py %lldb
