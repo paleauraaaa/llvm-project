@@ -9,6 +9,7 @@
 #include "ObjectFilePECOFF.h"
 #include "PECallFrameInfo.h"
 #include "WindowsMiniDump.h"
+#include "Xbox360CallFrameInfo.h"
 
 #include "lldb/Core/Module.h"
 #include "lldb/Core/ModuleSpec.h"
@@ -957,6 +958,10 @@ std::unique_ptr<CallFrameInfo> ObjectFilePECOFF::CreateCallFrameInfo() {
       m_coff_header_opt.data_dirs[llvm::COFF::EXCEPTION_TABLE];
   if (!data_dir_exception.vmaddr)
     return {};
+
+  if (m_coff_header.machine == llvm::COFF::IMAGE_FILE_MACHINE_PPCBE)
+    return std::make_unique<Xbox360CallFrameInfo>(
+        *this, data_dir_exception.vmaddr, data_dir_exception.vmsize);
 
   if (m_coff_header.machine != llvm::COFF::IMAGE_FILE_MACHINE_AMD64)
     return {};

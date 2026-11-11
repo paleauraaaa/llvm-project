@@ -44,6 +44,8 @@ public:
   bool RegisterIsVolatile(const lldb_private::RegisterInfo *reg_info) override;
   bool CallFrameAddressIsValid(lldb::addr_t cfa) override;
   bool CodeAddressIsValid(lldb::addr_t pc) override;
+  lldb::addr_t FixCodeAddress(lldb::addr_t pc) override;
+  lldb::addr_t FixDataAddress(lldb::addr_t address) override;
   void AugmentRegisterInfo(
       std::vector<lldb_private::DynamicRegisterInfo::Register> &regs) override;
 

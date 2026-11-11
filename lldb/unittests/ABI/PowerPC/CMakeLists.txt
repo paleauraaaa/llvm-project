@@ -5,12 +5,15 @@ add_lldb_unittest(ABIPowerPCTests
     lldbCore
     lldbHost
     lldbPluginABIPowerPC
+    lldbPluginObjectFilePECOFF
     lldbPluginPlatformLinux
     lldbPluginScriptInterpreterNone
     lldbPluginTypeSystemClang
     lldbSymbol
     lldbTarget
     lldbUtility
+    lldbUtilityHelpers
+    LLVMTestingSupport
     clangAST
   LINK_COMPONENTS
     PowerPCDesc
