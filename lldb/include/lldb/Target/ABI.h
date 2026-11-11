@@ -65,8 +65,12 @@ public:
 
   virtual bool GetArgumentValues(Thread &thread, ValueList &values) const = 0;
 
-  lldb::ValueObjectSP GetReturnValueObject(Thread &thread, CompilerType &type,
-                                           bool persistent = true) const;
+  /// Decode a return value, optionally using the returning function's
+  /// declaration context to distinguish instance methods from free functions.
+  /// Without a context, targets may assume free-function return conventions.
+  lldb::ValueObjectSP GetReturnValueObject(
+      Thread &thread, CompilerType &type, bool persistent = true,
+      const CompilerDeclContext *function_decl_context = nullptr) const;
 
   // specialized to work with llvm IR types
   lldb::ValueObjectSP GetReturnValueObject(Thread &thread, llvm::Type &type,
@@ -82,6 +86,10 @@ protected:
   // ABI::GetReturnValueObject.
   virtual lldb::ValueObjectSP
   GetReturnValueObjectImpl(Thread &thread, CompilerType &ast_type) const = 0;
+
+  virtual lldb::ValueObjectSP GetReturnValueObjectImpl(
+      Thread &thread, CompilerType &ast_type,
+      const CompilerDeclContext *function_decl_context) const;
 
   // specialized to work with llvm IR types
   virtual lldb::ValueObjectSP

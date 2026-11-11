@@ -13,6 +13,7 @@
 #include "Plugins/ABI/PowerPC/ABISysV_ppc64.h"
 #include "Plugins/ExpressionParser/Clang/ClangUtil.h"
 #include "Plugins/Platform/Linux/PlatformLinux.h"
+#include "Plugins/ScriptInterpreter/None/ScriptInterpreterNone.h"
 #include "Plugins/TypeSystem/Clang/TypeSystemClang.h"
 #include "TestingSupport/SubsystemRAII.h"
 #include "TestingSupport/Symbol/ClangTestUtils.h"
@@ -20,6 +21,7 @@
 #include "lldb/Core/Value.h"
 #include "lldb/Host/FileSystem.h"
 #include "lldb/Host/HostInfo.h"
+#include "lldb/Symbol/CompilerDeclContext.h"
 #include "lldb/Symbol/UnwindPlan.h"
 #include "lldb/Target/Process.h"
 #include "lldb/Target/RegisterContext.h"
@@ -28,6 +30,9 @@
 #include "lldb/Target/Xbox360RegisterInfo.h"
 #include "lldb/Utility/Listener.h"
 #include "lldb/Utility/RegisterValue.h"
+#include "lldb/ValueObject/ValueObject.h"
+#include "clang/AST/Attr.h"
+#include "clang/AST/DeclCXX.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/TargetSelect.h"
 #include "gtest/gtest.h"
@@ -138,7 +143,9 @@ public:
 };
 
 class Xbox360ABI : public testing::Test {
-  SubsystemRAII<FileSystem, HostInfo, platform_linux::PlatformLinux> subsystems;
+  SubsystemRAII<FileSystem, HostInfo, platform_linux::PlatformLinux,
+                ScriptInterpreterNone>
+      subsystems;
 
 protected:
   void SetUp() override {
@@ -192,6 +199,59 @@ protected:
   void WriteStack(uint64_t offset, uint64_t value) {
     llvm::support::endian::write64be(process->memory.data() + 0x1000 + offset,
                                      value);
+  }
+
+  ValueObjectSP Return(CompilerType type,
+                       const CompilerDeclContext *context = nullptr) {
+    return abi->GetReturnValueObject(*thread, type, /*persistent=*/false,
+                                     context);
+  }
+
+  void ExpectReturnBytes(CompilerType type, llvm::ArrayRef<uint8_t> expected,
+                         const CompilerDeclContext *context = nullptr) {
+    auto value = Return(type, context);
+    ASSERT_TRUE(value);
+    EXPECT_EQ(value->GetCompilerType(), type);
+    DataExtractor data;
+    Status error;
+    ASSERT_EQ(value->GetData(data, error), expected.size());
+    ASSERT_TRUE(error.Success()) << error.AsCString();
+    ASSERT_EQ(data.GetByteSize(), expected.size());
+    EXPECT_EQ(data.GetByteOrder(), eByteOrderBig);
+    EXPECT_EQ(data.GetAddressByteSize(), 4u);
+    EXPECT_EQ(memcmp(data.GetDataStart(), expected.data(), expected.size()), 0);
+  }
+
+  CompilerType Record(llvm::StringRef name, CompilerType field,
+                      bool cxx = false, AccessType access = eAccessPublic) {
+    auto type = ast->CreateRecordType(
+        ast->getASTContext().getTranslationUnitDecl(), OptionalClangModuleID(),
+        eAccessPublic, name, llvm::to_underlying(clang::TagTypeKind::Struct),
+        cxx ? eLanguageTypeC_plus_plus : eLanguageTypeC);
+    TypeSystemClang::StartTagDeclarationDefinition(type);
+    ast->AddFieldToRecordType(type, "value", field, access, 0);
+    TypeSystemClang::CompleteTagDeclarationDefinition(type);
+    return type;
+  }
+
+  CompilerDeclContext FunctionContext(CompilerType return_type,
+                                      bool instance_method) {
+    auto owner = ast->CreateRecordType(
+        ast->getASTContext().getTranslationUnitDecl(), OptionalClangModuleID(),
+        eAccessPublic, "ReturnOwner",
+        llvm::to_underlying(clang::TagTypeKind::Struct),
+        eLanguageTypeC_plus_plus);
+    TypeSystemClang::StartTagDeclarationDefinition(owner);
+    auto function_type =
+        ast->CreateFunctionType(return_type, nullptr, 0, false, 0);
+    auto *method = ast->AddMethodToCXXRecordType(
+        owner.GetOpaqueQualType(), instance_method ? "Instance" : "Static",
+        nullptr, function_type, eAccessPublic, /*is_virtual=*/false,
+        /*is_static=*/!instance_method, /*is_inline=*/false,
+        /*is_explicit=*/false, /*is_attr_used=*/false, /*is_artificial=*/false);
+    TypeSystemClang::CompleteTagDeclarationDefinition(owner);
+    EXPECT_NE(method, nullptr);
+    return ast->CreateDeclContext(method);
   }
 
   DebuggerSP debugger;
@@ -481,4 +541,231 @@ TEST_F(Xbox360ABI, DoesNotUseSysVUnwindOrReturnRules) {
   StackFrameSP frame;
   ValueObjectSP value;
   EXPECT_TRUE(abi->SetReturnValueObject(frame, value).Fail());
+}
+
+TEST_F(Xbox360ABI, IntegerReturnWidthsAndSignedness) {
+  for (auto entry : {std::pair{eBasicTypeSignedChar, 1u},
+                     {eBasicTypeShort, 2u},
+                     {eBasicTypeInt, 4u},
+                     {eBasicTypeLongLong, 8u}}) {
+    registers->Set("r3", RegisterValue(UINT64_MAX));
+    auto value = Return(Type(entry.first));
+    ASSERT_TRUE(value);
+    bool success = false;
+    EXPECT_EQ(value->GetValueAsSigned(0, &success), -1);
+    EXPECT_TRUE(success);
+    std::array<uint8_t, 8> bytes;
+    bytes.fill(0xff);
+    ExpectReturnBytes(Type(entry.first),
+                      llvm::ArrayRef(bytes).take_front(entry.second));
+  }
+  registers->Set("r3", RegisterValue(uint64_t(0x12345678876543fe)));
+  auto value = Return(Type(eBasicTypeUnsignedChar));
+  ASSERT_TRUE(value);
+  EXPECT_EQ(value->GetValueAsUnsigned(0), 254u);
+  value = Return(Type(eBasicTypeUnsignedInt));
+  ASSERT_TRUE(value);
+  EXPECT_EQ(value->GetValueAsUnsigned(0), 0x876543feu);
+  registers->Set("r3", RegisterValue(uint64_t(0xdeadbeef00000001)));
+  ExpectReturnBytes(Type(eBasicTypeBool), {1});
+}
+
+TEST_F(Xbox360ABI, PointerReferenceAndEnumReturns) {
+  registers->Set("r3", RegisterValue(uint64_t(0xdeadbeef82001000)));
+  ExpectReturnBytes(Type(eBasicTypeInt).GetPointerType(), {0x82, 0, 0x10, 0});
+  ExpectReturnBytes(Type(eBasicTypeInt).GetLValueReferenceType(),
+                    {0x82, 0, 0x10, 0});
+  auto enumeration = ast->CreateEnumerationType(
+      "ReturnEnum", ast->getASTContext().getTranslationUnitDecl(),
+      OptionalClangModuleID(), Declaration(), Type(eBasicTypeUnsignedShort),
+      /*is_scoped=*/true);
+  TypeSystemClang::StartTagDeclarationDefinition(enumeration);
+  TypeSystemClang::CompleteTagDeclarationDefinition(enumeration);
+  ExpectReturnBytes(enumeration, {0x10, 0});
+}
+
+TEST_F(Xbox360ABI, WideAndComplexIntegerReturns) {
+  registers->Set("r3", RegisterValue(uint64_t(0x0123456789abcdef)));
+  registers->Set("r4", RegisterValue(uint64_t(0xfedcba9876543210)));
+  ExpectReturnBytes(Type(eBasicTypeUnsignedInt128),
+                    {0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0xfe, 0xdc,
+                     0xba, 0x98, 0x76, 0x54, 0x32, 0x10});
+  auto complex_int = ast->GetType(ast->getASTContext().getComplexType(
+      ClangUtil::GetQualType(Type(eBasicTypeInt))));
+  ExpectReturnBytes(complex_int,
+                    {0x89, 0xab, 0xcd, 0xef, 0x76, 0x54, 0x32, 0x10});
+}
+
+TEST_F(Xbox360ABI, FloatingPointReturnsUseDoublePrecisionFPRContents) {
+  registers->Set("f1", RegisterValue(uint64_t(0x3ff4000000000000)));
+  ExpectReturnBytes(Type(eBasicTypeFloat), {0x3f, 0xa0, 0, 0});
+  ExpectReturnBytes(Type(eBasicTypeDouble), {0x3f, 0xf4, 0, 0, 0, 0, 0, 0});
+  registers->Set("f1", RegisterValue(uint64_t(0x8000000000000000)));
+  ExpectReturnBytes(Type(eBasicTypeFloat), {0x80, 0, 0, 0});
+  registers->Set("f1", RegisterValue(uint64_t(0x7ff0000000000000)));
+  ExpectReturnBytes(Type(eBasicTypeFloat), {0x7f, 0x80, 0, 0});
+  registers->Set("f1", RegisterValue(uint64_t(0x7ff8123456789abc)));
+  ExpectReturnBytes(Type(eBasicTypeDouble),
+                    {0x7f, 0xf8, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc});
+}
+
+TEST_F(Xbox360ABI, ComplexFloatingPointReturns) {
+  registers->Set("f1", RegisterValue(1.25));
+  registers->Set("f2", RegisterValue(-3.5));
+  ExpectReturnBytes(Type(eBasicTypeFloatComplex),
+                    {0x3f, 0xa0, 0, 0, 0xc0, 0x60, 0, 0});
+  ExpectReturnBytes(
+      Type(eBasicTypeDoubleComplex),
+      {0x3f, 0xf4, 0, 0, 0, 0, 0, 0, 0xc0, 0x0c, 0, 0, 0, 0, 0, 0});
+}
+
+TEST_F(Xbox360ABI, VectorReturnsUseV1NotV2) {
+  const std::array<uint8_t, 16> bytes = {0, 1, 2,  3,  4,  5,  6,  7,
+                                         8, 9, 10, 11, 12, 13, 14, 15};
+  registers->Set("v1", RegisterValue(bytes, eByteOrderBig));
+  registers->Set("v2", RegisterValue(std::array<uint8_t, 16>{}, eByteOrderBig));
+  ExpectReturnBytes(VectorType(), bytes);
+  auto float_vector = ast->GetType(ast->getASTContext().getVectorType(
+      ClangUtil::GetQualType(Type(eBasicTypeFloat)), 4,
+      clang::VectorKind::Generic));
+  ExpectReturnBytes(float_vector, bytes);
+  auto *reg =
+      const_cast<RegisterInfo *>(registers->GetRegisterInfoByName("v1"));
+  reg->name = reg->alt_name;
+  reg->alt_name = nullptr;
+  ExpectReturnBytes(float_vector, bytes);
+}
+
+TEST_F(Xbox360ABI, SmallAggregateReturnsAreRawR3MemoryImages) {
+  registers->Set("r3", RegisterValue(uint64_t(0x0123456789abcdef)));
+  ExpectReturnBytes(Record("ByteResult", Type(eBasicTypeUnsignedChar)), {0xef});
+  ExpectReturnBytes(Record("ShortResult", Type(eBasicTypeUnsignedShort)),
+                    {0xcd, 0xef});
+  ExpectReturnBytes(Record("IntResult", Type(eBasicTypeUnsignedInt)),
+                    {0x89, 0xab, 0xcd, 0xef});
+  ExpectReturnBytes(Record("LongResult", Type(eBasicTypeUnsignedLongLong)),
+                    {0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef});
+  // An ordinary struct containing float still returns in r3, not f1.
+  registers->Set("r3", RegisterValue(uint64_t(0xdeadbeef3fa00000)));
+  registers->unreadable = "f1";
+  ExpectReturnBytes(Record("FloatResult", Type(eBasicTypeFloat)),
+                    {0x3f, 0xa0, 0, 0});
+}
+
+TEST_F(Xbox360ABI, IndirectReturnsUseTheLow32BitsOfR3AndAreFrozen) {
+  auto array = ast->GetType(ast->getASTContext().getConstantArrayType(
+      ClangUtil::GetQualType(Type(eBasicTypeUnsignedChar)), llvm::APInt(64, 3),
+      nullptr, clang::ArraySizeModifier::Normal, 0));
+  auto type = Record("ThreeByteResult", array);
+  registers->Set("r3", RegisterValue(uint64_t(0xdeadbeef00010000)));
+  process->memory[0] = 0x12;
+  process->memory[1] = 0x34;
+  process->memory[2] = 0x56;
+  ExpectReturnBytes(type, {0x12, 0x34, 0x56});
+  auto value = Return(type);
+  ASSERT_TRUE(value);
+  Status error;
+  const uint8_t replacement = 0xff;
+  ASSERT_EQ(process->WriteMemory(TestProcess::base, &replacement, 1, error),
+            1u);
+  DataExtractor data;
+  ASSERT_EQ(value->GetData(data, error), 3u);
+  lldb::offset_t offset = 0;
+  EXPECT_EQ(data.GetU8(&offset), 0x12);
+  auto array_value = value->GetChildAtIndex(0);
+  ASSERT_TRUE(array_value);
+  auto element = array_value->GetChildAtIndex(0);
+  ASSERT_TRUE(element);
+  EXPECT_EQ(element->GetValueAsUnsigned(0), 0x12u);
+
+  type = Record("LargeResult", VectorType());
+  const std::array<uint8_t, 16> bytes = {0, 1, 2,  3,  4,  5,  6,  7,
+                                         8, 9, 10, 11, 12, 13, 14, 15};
+  ASSERT_EQ(process->WriteMemory(TestProcess::base, bytes.data(), bytes.size(),
+                                 error),
+            bytes.size());
+  ExpectReturnBytes(type, bytes);
+}
+
+TEST_F(Xbox360ABI, InstanceAndStaticMethodReturnsDiffer) {
+  auto type = Record("CXXResult", Type(eBasicTypeUnsignedInt), /*cxx=*/true);
+  auto instance = FunctionContext(type, true);
+  auto statik = FunctionContext(type, false);
+  registers->Set("r3", RegisterValue(uint64_t(0x1234567800010000)));
+  process->memory[0] = 0x12;
+  process->memory[1] = 0x34;
+  process->memory[2] = 0x56;
+  process->memory[3] = 0x78;
+  ExpectReturnBytes(type, {0x12, 0x34, 0x56, 0x78}, &instance);
+  ExpectReturnBytes(type, {0, 1, 0, 0}, &statik);
+  auto vector_type = VectorType();
+  instance = FunctionContext(vector_type, true);
+  statik = FunctionContext(vector_type, false);
+  std::array<uint8_t, 16> vector = {};
+  vector.fill(0xab);
+  registers->Set("v1", RegisterValue(vector, eByteOrderBig));
+  ExpectReturnBytes(vector_type, vector, &statik);
+  ExpectReturnBytes(vector_type, llvm::ArrayRef(process->memory).take_front(16),
+                    &instance);
+}
+
+TEST_F(Xbox360ABI, NonTrivialMSVCRecordsReturnIndirectly) {
+  auto type = Record("PrivateResult", Type(eBasicTypeUnsignedInt),
+                     /*cxx=*/true, eAccessPrivate);
+  registers->Set("r3", RegisterValue(uint64_t(0x10000)));
+  process->memory[0] = 0x12;
+  process->memory[1] = 0x34;
+  process->memory[2] = 0x56;
+  process->memory[3] = 0x78;
+  ExpectReturnBytes(type, {0x12, 0x34, 0x56, 0x78});
+}
+
+TEST_F(Xbox360ABI, ExplicitPassInRegAndIntrinsicReturnOverrides) {
+  auto intrinsic = Record("IntrinsicResult", VectorType(), true);
+  auto &context = ast->getASTContext();
+  ClangUtil::GetAsTagDecl(intrinsic)->addAttr(
+      clang::IntrinTypeAttr::CreateImplicit(context, 128, 128));
+  const std::array<uint8_t, 16> bytes = {0, 1, 2,  3,  4,  5,  6,  7,
+                                         8, 9, 10, 11, 12, 13, 14, 15};
+  registers->Set("v1", RegisterValue(bytes, eByteOrderBig));
+  ExpectReturnBytes(intrinsic, bytes);
+  auto instance = FunctionContext(intrinsic, true);
+  registers->Set("r3", RegisterValue(uint64_t(0x10000)));
+  ExpectReturnBytes(intrinsic, llvm::ArrayRef(process->memory).take_front(16),
+                    &instance);
+  auto wrapper = Record("VectorWrapper", intrinsic, true);
+  ClangUtil::GetAsTagDecl(wrapper)->addAttr(
+      clang::PassInRegAttr::CreateImplicit(context));
+  instance = FunctionContext(wrapper, true);
+  ExpectReturnBytes(wrapper, bytes, &instance);
+
+  auto floating = Record("FloatWrapper", Type(eBasicTypeFloat), true);
+  ClangUtil::GetAsTagDecl(floating)->addAttr(
+      clang::PassInRegAttr::CreateImplicit(context));
+  registers->Set("f1", RegisterValue(1.25));
+  instance = FunctionContext(floating, true);
+  ExpectReturnBytes(floating, {0x3f, 0xa0, 0, 0}, &instance);
+}
+
+TEST_F(Xbox360ABI, ReturnReadFailuresDoNotFabricateValues) {
+  registers->unreadable = "r3";
+  EXPECT_FALSE(Return(Type(eBasicTypeInt)));
+  registers->unreadable = "f1";
+  EXPECT_FALSE(Return(Type(eBasicTypeFloat)));
+  registers->unreadable = "v1";
+  EXPECT_FALSE(Return(VectorType()));
+  registers->unreadable.clear();
+  registers->Set("r3", RegisterValue(uint64_t(0)));
+  auto indirect = Record("UnreadableResult", VectorType());
+  EXPECT_FALSE(Return(indirect));
+  registers->Set("r3", RegisterValue(uint64_t(0xfffffff8)));
+  EXPECT_FALSE(Return(indirect));
+  registers->Set("r3", RegisterValue(uint64_t(0x10000)));
+  process->fail_memory = true;
+  EXPECT_FALSE(Return(indirect));
+  process->fail_memory = false;
+  auto small = Record("UnknownContextResult", Type(eBasicTypeInt));
+  CompilerDeclContext unknown;
+  EXPECT_FALSE(Return(small, &unknown));
+  EXPECT_FALSE(Return(Type(eBasicTypeVoid)));
 }

@@ -10,6 +10,7 @@
 #include "lldb/Breakpoint/Breakpoint.h"
 #include "lldb/Core/Value.h"
 #include "lldb/Symbol/Block.h"
+#include "lldb/Symbol/CompilerDeclContext.h"
 #include "lldb/Symbol/Function.h"
 #include "lldb/Symbol/Symbol.h"
 #include "lldb/Symbol/Type.h"
@@ -513,9 +514,13 @@ void ThreadPlanStepOut::CalculateReturnValue() {
             .GetFunctionReturnType();
     if (return_compiler_type) {
       lldb::ABISP abi_sp = m_process.GetABI();
-      if (abi_sp)
-        m_return_valobj_sp =
-            abi_sp->GetReturnValueObject(GetThread(), return_compiler_type);
+      if (abi_sp) {
+        CompilerDeclContext function_decl_context =
+            m_immediate_step_from_function->GetDeclContext();
+        m_return_valobj_sp = abi_sp->GetReturnValueObject(
+            GetThread(), return_compiler_type,
+            /*persistent=*/true, &function_decl_context);
+      }
     }
   }
 }

@@ -67,14 +67,16 @@ bool RegInfoBasedABI::GetRegisterInfoByName(llvm::StringRef name,
   return false;
 }
 
-ValueObjectSP ABI::GetReturnValueObject(Thread &thread, CompilerType &ast_type,
-                                        bool persistent) const {
+ValueObjectSP ABI::GetReturnValueObject(
+    Thread &thread, CompilerType &ast_type, bool persistent,
+    const CompilerDeclContext *function_decl_context) const {
   if (!ast_type.IsValid())
     return ValueObjectSP();
 
   ValueObjectSP return_valobj_sp;
 
-  return_valobj_sp = GetReturnValueObjectImpl(thread, ast_type);
+  return_valobj_sp =
+      GetReturnValueObjectImpl(thread, ast_type, function_decl_context);
   if (!return_valobj_sp)
     return return_valobj_sp;
 
@@ -145,6 +147,12 @@ ValueObjectSP ABI::GetReturnValueObject(Thread &thread, CompilerType &ast_type,
     return_valobj_sp = expr_variable_sp->GetValueObject();
   }
   return return_valobj_sp;
+}
+
+ValueObjectSP ABI::GetReturnValueObjectImpl(
+    Thread &thread, CompilerType &ast_type,
+    const CompilerDeclContext *function_decl_context) const {
+  return GetReturnValueObjectImpl(thread, ast_type);
 }
 
 addr_t ABI::FixCodeAddress(lldb::addr_t pc) {

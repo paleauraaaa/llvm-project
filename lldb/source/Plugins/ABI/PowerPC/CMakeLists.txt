@@ -10,6 +10,8 @@ add_lldb_library(lldbPluginABIPowerPC PLUGIN
     lldbTarget
     lldbPluginTypeSystemClang
     lldbValueObject
+  CLANG_LIBS
+    clangAST
   LINK_COMPONENTS
     Support
     TargetParser

@@ -52,6 +52,11 @@ protected:
   GetReturnValueObjectImpl(lldb_private::Thread &thread,
                            lldb_private::CompilerType &type) const override;
 
+  lldb::ValueObjectSP GetReturnValueObjectImpl(
+      lldb_private::Thread &thread, lldb_private::CompilerType &type,
+      const lldb_private::CompilerDeclContext *function_decl_context)
+      const override;
+
 private:
   using ABI::ABI;
 };
