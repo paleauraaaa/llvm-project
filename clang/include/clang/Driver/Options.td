@@ -4528,6 +4528,11 @@ defm codeview_ghash : BoolOption<"g", "codeview-ghash",
   PosFlag<SetTrue, [], [ClangOption, CC1Option],
           "Emit type record hashes in a .debug$H section">,
   NegFlag<SetFalse>, BothFlags<[], [ClangOption, CLOption, DXCOption]>>;
+defm codeview_xbox360_modern : BoolOption<"g", "codeview-xbox360-modern",
+  CodeGenOpts<"CodeViewXbox360Modern">, DefaultFalse,
+  PosFlag<SetTrue, [], [ClangOption],
+          "Emit modern CodeView records on Xbox 360 (incompatible with legacy readers)">,
+  NegFlag<SetFalse>, BothFlags<[], [ClangOption, CLOption, CC1Option]>>;
 defm codeview_command_line : BoolOption<"g", "codeview-command-line",
   CodeGenOpts<"CodeViewCommandLine">, DefaultTrue,
   PosFlag<SetTrue, [], [ClangOption], "Emit compiler path and command line into CodeView debug information">,

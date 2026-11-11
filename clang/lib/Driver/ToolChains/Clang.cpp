@@ -4790,6 +4790,8 @@ renderDebugOptions(const ToolChain &TC, const Driver &D, const llvm::Triple &T,
 
     Args.addOptInFlag(CmdArgs, options::OPT_gcodeview_ghash,
                       options::OPT_gno_codeview_ghash);
+    Args.addOptInFlag(CmdArgs, options::OPT_gcodeview_xbox360_modern,
+                      options::OPT_gno_codeview_xbox360_modern);
 
     Args.addOptOutFlag(CmdArgs, options::OPT_gcodeview_command_line,
                        options::OPT_gno_codeview_command_line);

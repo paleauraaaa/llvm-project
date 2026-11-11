@@ -1015,6 +1015,8 @@ void CodeGenModule::Release() {
   if (CodeGenOpts.EmitCodeView) {
     // Indicate that we want CodeView in the metadata.
     getModule().addModuleFlag(llvm::Module::Warning, "CodeView", 1);
+    if (CodeGenOpts.CodeViewXbox360Modern && getTriple().isOSXbox360())
+      getModule().addModuleFlag(llvm::Module::Max, "CodeViewXbox360Modern", 1);
   }
   if (CodeGenOpts.CodeViewGHash) {
     getModule().addModuleFlag(llvm::Module::Warning, "CodeViewGHash", 1);
