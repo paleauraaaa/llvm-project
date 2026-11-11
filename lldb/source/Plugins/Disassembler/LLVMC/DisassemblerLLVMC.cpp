@@ -1450,6 +1450,11 @@ DisassemblerLLVMC::DisassemblerLLVMC(const ArchSpec &arch,
   unsigned flavor = ~0U;
   llvm::Triple triple = arch.GetTriple();
 
+  // Xbox uses 64-bit instructions with 32-bit addresses. The PPC COFF MC
+  // layer requires a ppc64 triple; leave the target ArchSpec unchanged.
+  if (triple.isOSXbox360() && triple.getArch() == llvm::Triple::ppc)
+    triple.setArch(llvm::Triple::ppc64);
+
   // So far the only supported flavor is "intel" on x86.  The base class will
   // set this correctly coming in.
   if (triple.getArch() == llvm::Triple::x86 ||
@@ -1543,6 +1548,12 @@ DisassemblerLLVMC::DisassemblerLLVMC(const ArchSpec &arch,
       break;
     }
   }
+
+  if (triple.isOSXbox360() &&
+      (triple.getArch() == llvm::Triple::ppc ||
+       triple.getArch() == llvm::Triple::ppc64) &&
+      !cpu_or_features_overriden)
+    cpu = "xenon";
 
   if (arch.IsMIPS() && !cpu_or_features_overriden) {
     uint32_t arch_flags = arch.GetFlags();
