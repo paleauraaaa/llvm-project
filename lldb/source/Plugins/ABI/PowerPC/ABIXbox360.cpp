@@ -18,6 +18,7 @@
 #include "lldb/Symbol/UnwindPlan.h"
 #include "lldb/Target/Process.h"
 #include "lldb/Target/RegisterContext.h"
+#include "lldb/Target/StackFrame.h"
 #include "lldb/Target/Target.h"
 #include "lldb/Target/Thread.h"
 #include "lldb/Target/Xbox360RegisterInfo.h"
@@ -31,6 +32,7 @@
 #include "clang/AST/Attr.h"
 #include "clang/AST/DeclCXX.h"
 #include "clang/AST/DeclTemplate.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/MathExtras.h"
@@ -601,8 +603,167 @@ addr_t ABIXbox360::FixDataAddress(addr_t address) {
 
 Status ABIXbox360::SetReturnValueObject(StackFrameSP &frame_sp,
                                        ValueObjectSP &new_value) {
-  return Status::FromErrorString(
-      "Setting Xbox 360 return values is not implemented");
+  return SetReturnValueObject(frame_sp, new_value, nullptr);
+}
+
+Status ABIXbox360::SetReturnValueObject(
+    StackFrameSP &frame_sp, ValueObjectSP &new_value,
+    const CompilerDeclContext *function_decl_context) {
+  if (!frame_sp || !new_value)
+    return Status::FromErrorString("missing Xbox 360 return frame or value");
+
+  if (new_value->GetError().Fail())
+    return new_value->GetError().Clone();
+
+  CompilerType type = new_value->GetCompilerType();
+  if (!type || !type.GetCompleteType()) {
+    return Status::FromErrorString(
+        "invalid or incomplete Xbox 360 return type");
+  }
+
+  if (type.IsVoidType())
+    return {};
+
+  auto size = type.GetByteSize(frame_sp.get());
+  if (!size)
+    return Status::FromErrorString("unknown Xbox 360 return type size");
+
+  auto info = ClassifyReturn(type, *size, function_decl_context);
+  if (!info)
+    return Status::FromError(info.takeError());
+
+  // r3 is a return pointer only after a normal return, not at an arbitrary
+  // stop in the callee. Do not treat its current contents as hidden storage.
+  if (info->kind == ReturnKind::Memory) {
+    return Status::FromErrorString(
+        "cannot force an indirect Xbox 360 return without the original "
+        "hidden return-storage pointer");
+  }
+
+  auto thread = frame_sp->GetThread();
+
+  // Return registers are volatile and may be undefined in the caller's unwind
+  // context. ReturnFromFrame preserves these from the live register context.
+  auto reg_ctx = thread ? thread->GetRegisterContext() : nullptr;
+  if (!reg_ctx)
+    return Status::FromErrorString("missing Xbox 360 return register context");
+
+  DataExtractor data;
+  Status error;
+  size_t data_size = new_value->GetData(data, error);
+  if (error.Fail())
+    return error;
+
+  if (data_size != *size || data.GetByteSize() < *size ||
+      (data.GetByteOrder() != eByteOrderBig &&
+       data.GetByteOrder() != eByteOrderLittle)) 
+  {
+    return Status::FromErrorString("invalid Xbox 360 return value data");
+  }
+
+  if ((type.IsAggregateType() || type.IsVectorType()) &&
+      data.GetByteOrder() != eByteOrderBig) 
+  {
+    return Status::FromErrorString(
+        "Xbox 360 aggregate/vector return data must be big-endian");
+  }
+
+  struct RegisterWrite {
+    const RegisterInfo *reg;
+    RegisterValue value;
+    RegisterValue original;
+  };
+
+  llvm::SmallVector<RegisterWrite, 2> writes;
+  for (uint32_t i = 0; i < info->count; i++) {
+    std::string name;
+    uint32_t register_size = 8;
+    RegisterValue value;
+    lldb::offset_t offset = i * info->element_size;
+
+    switch (info->kind) {
+    case ReturnKind::GPR: {
+      name = "r" + std::to_string(3 + i);
+      bool is_signed = false;
+      bool is_integer = type.IsIntegerOrEnumerationType(is_signed);
+
+      if (is_integer && info->count == 2 &&
+          data.GetByteOrder() == eByteOrderLittle)
+      {
+        offset = (info->count - 1 - i) * info->element_size;
+      }
+
+      uint64_t bits = data.GetMaxU64(&offset, info->element_size);
+      if (info->element_size < 8 && is_integer && is_signed)
+        bits = llvm::SignExtend64(bits, info->element_size * 8);
+
+      value.SetUInt64(bits);
+      break;
+    }
+    case ReturnKind::FPR: {
+      name = "f" + std::to_string(1 + i);
+      llvm::APFloat number(
+          info->element_size == 4 ? llvm::APFloat::IEEEsingle()
+                                  : llvm::APFloat::IEEEdouble(),
+          llvm::APInt(info->element_size * 8,
+                      data.GetMaxU64(&offset, info->element_size)));
+
+      if (info->element_size == 4) {
+        bool loses_info;
+        number.convert(llvm::APFloat::IEEEdouble(),
+                       llvm::APFloat::rmNearestTiesToEven, &loses_info);
+      }
+
+      value.SetUInt64(number.bitcastToAPInt().getZExtValue());
+      break;
+    }
+    case ReturnKind::Vector:
+      name = "v1";
+      register_size = 16;
+      break;
+    case ReturnKind::Memory:
+      llvm_unreachable("indirect returns rejected above");
+    }
+
+    const RegisterInfo *reg = reg_ctx->GetRegisterInfoByName(name);
+    if (!reg && name == "v1")
+      reg = reg_ctx->GetRegisterInfoByName("vr1");
+
+    if (!reg || reg->byte_size != register_size) {
+      return Status::FromErrorStringWithFormat(
+          "invalid Xbox 360 return register %s", name.c_str());
+    }
+
+    if (info->kind == ReturnKind::Vector &&
+        (value.SetFromMemoryData(*reg, data.GetDataStart(), 16, eByteOrderBig,
+                                 error) != 16 ||
+         error.Fail())) 
+    {
+      return Status::FromErrorString("cannot encode Xbox 360 vector return");
+    }
+
+    RegisterValue original;
+    if (info->count > 1 && !reg_ctx->ReadRegister(reg, original)) {
+      return Status::FromErrorStringWithFormat(
+          "cannot preserve Xbox 360 return register %s", name.c_str());
+    }
+
+    writes.push_back({reg, value, original});
+  }
+  for (size_t i = 0; i < writes.size(); i++) {
+    if (reg_ctx->WriteRegister(writes[i].reg, writes[i].value))
+      continue;
+
+    bool restored = true;
+    for (size_t j = 0; j < i; ++j)
+      restored &= reg_ctx->WriteRegister(writes[j].reg, writes[j].original);
+
+    return Status::FromErrorStringWithFormat(
+        "cannot write Xbox 360 return register %s%s", writes[i].reg->name,
+        restored ? "" : "; failed to restore earlier return registers");
+  }
+  
+  return {};
 }
 
 ValueObjectSP
