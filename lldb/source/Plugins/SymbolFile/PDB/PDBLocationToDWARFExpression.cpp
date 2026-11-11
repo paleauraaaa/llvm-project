@@ -114,6 +114,11 @@ DWARFExpression ConvertPDBLocationToDWARFExpression(
     break;
   }
   case PDB_LocType::RegRel: {
+    if (architecture.GetTriple().isOSXbox360()) {
+      is_constant = false;
+      return MakeRegRelLocationExpression(symbol.getRegisterId(),
+                                          symbol.getOffset(), module);
+    }
     uint32_t reg_num;
     auto reg_id = symbol.getRegisterId();
     if (reg_id == llvm::codeview::RegisterId::VFRAME) {
@@ -155,6 +160,10 @@ DWARFExpression ConvertPDBLocationToDWARFExpression(
     break;
   }
   case PDB_LocType::Enregistered: {
+    if (architecture.GetTriple().isOSXbox360()) {
+      is_constant = false;
+      return MakeEnregisteredLocationExpression(symbol.getRegisterId(), module);
+    }
     register_kind = eRegisterKindLLDB;
     uint32_t reg_num = GetLLDBRegisterNumber(arch_type, symbol.getRegisterId());
     if (reg_num == LLDB_INVALID_REGNUM)

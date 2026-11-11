@@ -793,6 +793,87 @@ TEST_F(Xbox360ABI, UnwindAddressesUseLow32Bits) {
   EXPECT_EQ(abi->FixDataAddress(LLDB_INVALID_ADDRESS), LLDB_INVALID_ADDRESS);
 }
 
+TEST_F(Xbox360ABI, CodeViewRegisterAndStackLocations) {
+  using llvm::codeview::RegisterId;
+  auto module =
+      std::make_shared<Module>(FileSpec(), ArchSpec("powerpc-ibm-xbox360"));
+  ExecutionContext context(thread.get());
+  auto evaluate =
+      [&](const DWARFExpression &expression) -> llvm::Expected<Value> {
+    DataExtractor data;
+    if (!expression.GetExpressionData(data))
+      return llvm::createStringError("invalid test location");
+    return DWARFExpression::Evaluate(&context, registers.get(), module, data,
+                                     nullptr, expression.GetRegisterKind(),
+                                     nullptr, nullptr);
+  };
+  registers->Set("r3", RegisterValue(uint64_t(0x1234567887654321)));
+  auto integer = evaluate(
+      npdb::MakeEnregisteredLocationExpression(RegisterId::PPC_GPR3, module));
+  ASSERT_THAT_EXPECTED(integer, llvm::Succeeded());
+  EXPECT_EQ(integer->GetScalar().ULongLong(), 0x1234567887654321ull);
+  registers->Set("f1", RegisterValue(1.25));
+  auto floating = evaluate(
+      npdb::MakeEnregisteredLocationExpression(RegisterId::PPC_FPR1, module));
+  ASSERT_THAT_EXPECTED(floating, llvm::Succeeded());
+  EXPECT_EQ(floating->GetScalar().Double(), 1.25);
+  registers->Set("lr", RegisterValue(uint64_t(0x82001234)));
+  auto link = evaluate(
+      npdb::MakeEnregisteredLocationExpression(RegisterId::PPC_LR, module));
+  ASSERT_THAT_EXPECTED(link, llvm::Succeeded());
+  EXPECT_EQ(link->GetScalar().ULongLong(), 0x82001234u);
+  for (auto [cv, name] : {std::pair{RegisterId::PPC_GPR1, "r1"},
+                          {RegisterId::PPC_GPR31, "r31"},
+                          {RegisterId::PPC_GPR30, "r30"},
+                          {RegisterId::PPC_GPR13, "r13"}}) {
+    registers->Set(name, RegisterValue(uint64_t(0xdeadbeef00011000)));
+    for (int32_t offset : {-16, 0, 24}) {
+      auto address =
+          evaluate(npdb::MakeRegRelLocationExpression(cv, offset, module));
+      ASSERT_THAT_EXPECTED(address, llvm::Succeeded());
+      EXPECT_EQ(address->GetScalar().ULongLong(), 0x11000 + offset);
+    }
+  }
+  auto pc_expression =
+      npdb::MakeEnregisteredLocationExpression(RegisterId::PPC_PC, module);
+  EXPECT_EQ(pc_expression.GetRegisterKind(), eRegisterKindGeneric);
+  registers->Set("pc", RegisterValue(uint32_t(0x82004321)));
+  auto pc = evaluate(pc_expression);
+  ASSERT_THAT_EXPECTED(pc, llvm::Succeeded());
+  EXPECT_EQ(pc->GetScalar().ULongLong(), 0x82004321u);
+  registers->Set("cr", RegisterValue(uint32_t(0x12345678)));
+  auto cr = evaluate(
+      npdb::MakeEnregisteredLocationExpression(RegisterId::PPC_CR, module));
+  ASSERT_THAT_EXPECTED(cr, llvm::Succeeded());
+  EXPECT_EQ(cr->GetScalar().ULongLong(), 0x12345678u);
+  auto vector =
+      npdb::MakeEnregisteredLocationExpression(RegisterId::PPC_VR127, module);
+  EXPECT_EQ(vector.GetRegisterKind(), eRegisterKindDWARF);
+  const std::array<uint8_t, 16> vector_bytes = {0, 1, 2,  3,  4,  5,  6,  7,
+                                                8, 9, 10, 11, 12, 13, 14, 15};
+  registers->Set("v127", RegisterValue(vector_bytes, eByteOrderBig));
+  auto vector_value = evaluate(vector);
+  ASSERT_THAT_EXPECTED(vector_value, llvm::Succeeded());
+  EXPECT_EQ(vector_value->GetScalar().UInt128(llvm::APInt(128, 0)),
+            llvm::APInt(128, "000102030405060708090a0b0c0d0e0f", 16));
+  EXPECT_FALSE(
+      npdb::MakeEnregisteredLocationExpression(RegisterId::PPC_MQ, module)
+          .IsValid());
+
+  std::map<uint64_t, npdb::MemberValLocation> pieces = {
+      {0, {uint16_t(RegisterId::PPC_GPR3), 0}},
+      {8, {uint16_t(RegisterId::PPC_GPR4), 0}}};
+  std::map<uint64_t, size_t> sizes = {{0, 8}, {8, 8}};
+  auto composite = npdb::MakeEnregisteredLocationExpressionForComposite(
+      pieces, sizes, 16, module);
+  EXPECT_TRUE(composite.IsValid());
+  EXPECT_EQ(composite.GetRegisterKind(), eRegisterKindDWARF);
+  pieces[8].reg_id = uint16_t(RegisterId::PPC_PC);
+  EXPECT_FALSE(npdb::MakeEnregisteredLocationExpressionForComposite(
+                   pieces, sizes, 16, module)
+                   .IsValid());
+}
+
 TEST_F(Xbox360ABI, StaticTLSIsThreadRelativeAndBigEndian) {
   auto file = TestFile::fromYaml(R"(
 --- !COFF

@@ -61,6 +61,7 @@ ArchSpec ObjectFilePDB::GetArchitecture() {
   case PDB_Machine::x86:
   case PDB_Machine::PowerPC:
   case PDB_Machine::PowerPCFP:
+  case PDB_Machine::PowerPCBE:
   case PDB_Machine::Arm:
   case PDB_Machine::ArmNT:
   case PDB_Machine::Thumb:
@@ -135,6 +136,10 @@ size_t ObjectFilePDB::GetModuleSpecifications(
 
   ArchSpec &module_arch = module_spec.GetArchitecture();
   switch (dbi_stream->getMachineType()) {
+  case PDB_Machine::PowerPCBE:
+    module_arch.SetTriple("powerpc-ibm-xbox360");
+    specs.Append(module_spec);
+    break;
   case PDB_Machine::Amd64:
     module_arch.SetTriple("x86_64-pc-windows");
     specs.Append(module_spec);

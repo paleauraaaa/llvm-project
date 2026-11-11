@@ -8,12 +8,97 @@
 
 #include "CodeViewRegisterMapping.h"
 
+#include "lldb/Target/Xbox360RegisterInfo.h"
+#include "lldb/Utility/ArchSpec.h"
 #include "lldb/lldb-defines.h"
 
 #include "Plugins/Process/Utility/lldb-arm64-register-enums.h"
 #include "Plugins/Process/Utility/lldb-x86-register-enums.h"
 
+#include <string>
+
 using namespace lldb_private;
+
+namespace {
+llvm::StringRef GetXboxRegisterName(llvm::codeview::RegisterId reg,
+                                    std::string &storage) {
+  using llvm::codeview::RegisterId;
+  unsigned id = static_cast<unsigned>(reg);
+  auto numbered = [&](llvm::StringRef prefix, RegisterId first) {
+    storage = prefix.str() + std::to_string(id - static_cast<unsigned>(first));
+    return llvm::StringRef(storage);
+  };
+  if (reg >= RegisterId::PPC_GPR0 && reg <= RegisterId::PPC_GPR31)
+    return numbered("r", RegisterId::PPC_GPR0);
+  if (reg >= RegisterId::PPC_FPR0 && reg <= RegisterId::PPC_FPR31)
+    return numbered("f", RegisterId::PPC_FPR0);
+  if (reg >= RegisterId::PPC_CR0 && reg <= RegisterId::PPC_CR7)
+    return numbered("cr", RegisterId::PPC_CR0);
+  constexpr unsigned vector_stride = 5;
+  if (reg >= RegisterId::PPC_VR0 && reg <= RegisterId::PPC_VR127 &&
+      (id - static_cast<unsigned>(RegisterId::PPC_VR0)) % vector_stride == 0) {
+    storage =
+        "v" + std::to_string((id - static_cast<unsigned>(RegisterId::PPC_VR0)) /
+                             vector_stride);
+    return storage;
+  }
+  switch (reg) {
+  case RegisterId::PPC_PC:
+    return "pc";
+  case RegisterId::PPC_LR:
+    return "lr";
+  case RegisterId::PPC_CTR:
+    return "ctr";
+  case RegisterId::PPC_CR:
+    return "cr";
+  case RegisterId::PPC_XER:
+    return "xer";
+  default:
+    return {};
+  }
+}
+
+bool IsXbox(const ArchSpec &arch) {
+  return arch.GetTriple().isOSXbox360() &&
+         (arch.GetMachine() == llvm::Triple::ppc ||
+          arch.GetMachine() == llvm::Triple::ppc64);
+}
+} // namespace
+
+uint32_t
+lldb_private::npdb::GetRegisterNumber(const ArchSpec &arch,
+                                      llvm::codeview::RegisterId register_id,
+                                      lldb::RegisterKind &kind) {
+  kind = lldb::eRegisterKindLLDB;
+  if (!IsXbox(arch))
+    return GetLLDBRegisterNumber(arch.GetMachine(), register_id);
+  std::string storage;
+  auto name = GetXboxRegisterName(register_id, storage);
+  for (const auto &reg : GetXbox360RegisterInfo()) {
+    if (name.empty() || reg.name.GetStringRef() != name)
+      continue;
+    if (reg.regnum_dwarf != LLDB_INVALID_REGNUM) {
+      kind = lldb::eRegisterKindDWARF;
+      return reg.regnum_dwarf;
+    }
+    kind = lldb::eRegisterKindGeneric;
+    return reg.regnum_generic;
+  }
+  return LLDB_INVALID_REGNUM;
+}
+
+uint32_t
+lldb_private::npdb::GetRegisterSize(const ArchSpec &arch,
+                                    llvm::codeview::RegisterId register_id) {
+  if (!IsXbox(arch))
+    return GetRegisterSize(register_id);
+  std::string storage;
+  auto name = GetXboxRegisterName(register_id, storage);
+  for (const auto &reg : GetXbox360RegisterInfo())
+    if (!name.empty() && reg.name.GetStringRef() == name)
+      return reg.byte_size;
+  return 0;
+}
 
 static const uint32_t g_code_view_to_lldb_registers_arm64[] = {
     LLDB_INVALID_REGNUM, // NONE

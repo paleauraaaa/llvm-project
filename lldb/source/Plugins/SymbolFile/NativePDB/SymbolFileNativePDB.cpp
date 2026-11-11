@@ -327,7 +327,8 @@ uint32_t SymbolFileNativePDB::CalculateAbilities() {
 
     auto expected_index = PdbIndex::create(pdb_file);
     if (!expected_index) {
-      llvm::consumeError(expected_index.takeError());
+      LLDB_LOG_ERROR(GetLog(LLDBLog::Symbols), expected_index.takeError(),
+                     "Failed to index PDB: {0}");
       return 0;
     }
     m_index = std::move(*expected_index);
@@ -712,7 +713,12 @@ TypeSP SymbolFileNativePDB::CreateType(PdbTypeSymId type_id, CompilerType ct) {
   if (type_id.index.isSimple())
     return CreateSimpleType(type_id.index, ct);
 
-  TpiStream &stream = type_id.is_ipi ? m_index->ipi() : m_index->tpi();
+  if (type_id.is_ipi && !m_index->ipi()) {
+    LLDB_LOG(GetLog(LLDBLog::Symbols),
+             "CodeView type ID references a missing IPI stream");
+    return nullptr;
+  }
+  TpiStream &stream = type_id.is_ipi ? *m_index->ipi() : m_index->tpi();
   CVType cvt = stream.getType(type_id.index);
 
   if (cvt.kind() == LF_MODIFIER) {
@@ -1564,7 +1570,12 @@ void SymbolFileNativePDB::ParseInlineSite(PdbCompilandSymId id,
   }
 
   // Get the inlined function name.
-  CVType inlinee_cvt = m_index->ipi().getType(inline_site.Inlinee);
+  if (!m_index->ipi()) {
+    LLDB_LOG(GetLog(LLDBLog::Symbols),
+             "CodeView inline site references a missing IPI stream");
+    return;
+  }
+  CVType inlinee_cvt = m_index->ipi()->getType(inline_site.Inlinee);
   std::string inlinee_name;
   if (inlinee_cvt.kind() == LF_MFUNC_ID) {
     MemberFuncIdRecord mfr;
@@ -1579,7 +1590,7 @@ void SymbolFileNativePDB::ParseInlineSite(PdbCompilandSymId id,
     cantFail(TypeDeserializer::deserializeAs<FuncIdRecord>(inlinee_cvt, fir));
     TypeIndex parent_idx = fir.getParentScope();
     if (!parent_idx.isNoneType()) {
-      LazyRandomTypeCollection &ids = m_index->ipi().typeCollection();
+      LazyRandomTypeCollection &ids = m_index->ipi()->typeCollection();
       inlinee_name.append(std::string(ids.getTypeName(parent_idx)));
       inlinee_name.append("::");
     }

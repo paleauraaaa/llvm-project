@@ -1,0 +1,14 @@
+# REQUIRES: system-windows, lld, powerpc
+# RUN: %clang -target powerpc64-ibm-xbox360 -mcpu=xenon -g -gcodeview -O1 -c %S/../NativePDB/xbox360-codeview.cpp -o %t.obj
+# RUN: lld-link /machine:ppcbe /subsystem:xbox /entry:debug_function /nodefaultlib /debug:full /out:%t.exe /pdb:%t.pdb %t.obj
+# RUN: %lldb -b -f %t.exe -o "b debug_function" -o "image lookup -a 0x82001000 -v" -o quit | FileCheck %s
+
+# CHECK: Breakpoint 1: where = {{.*}}`debug_function{{.*}} at xbox360-codeview.cpp:
+# CHECK: name = "value", type = "int"
+# CHECK-SAME: DW_OP_reg3 R3
+# CHECK: name = "scale", type = "double"
+# CHECK-SAME: DW_OP_regx F1
+# CHECK: name = "lanes"
+# CHECK-SAME: DW_OP_regx VF1
+# CHECK: name = "local"
+# CHECK-SAME: DW_OP_breg1 {{.*}}DW_OP_constu 0xffffffff, DW_OP_and

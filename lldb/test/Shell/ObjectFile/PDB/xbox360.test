@@ -1,0 +1,21 @@
+# RUN: llvm-pdbutil yaml2pdb %s -pdb=%t.pdb
+# RUN: llvm-pdbutil pdb2yaml -dbi-stream %t.pdb | FileCheck %s --check-prefix=YAML
+# RUN: lldb-test object-file %t.pdb | FileCheck %s
+# RUN: %lldb -b -f %t.pdb -o "image list -t" -o quit | FileCheck %s --check-prefix=MODULE
+
+# CHECK: Plugin name: pdb
+# CHECK: Architecture: powerpc-ibm-xbox360
+# CHECK: Type: debug info
+# MODULE: powerpc-ibm-xbox360
+# YAML: MachineType: PowerPCBE
+
+---
+PdbStream:
+  Age: 1
+  Guid: '{61AF583F-29A8-7A6C-4C4C-44205044422E}'
+  Version: VC70
+DbiStream:
+  VerHeader: V70
+  Age: 1
+  MachineType: PowerPCBE
+...

@@ -20,6 +20,7 @@
 
 #include "Plugins/Language/CPlusPlus/MSVCUndecoratedNameParser.h"
 #include "Plugins/SymbolFile/NativePDB/CodeViewRegisterMapping.h"
+#include "lldb/Core/Module.h"
 #include "lldb/Symbol/Block.h"
 #include "lldb/Utility/LLDBAssert.h"
 #include "lldb/Utility/LLDBLog.h"
@@ -879,8 +880,8 @@ VariableInfo lldb_private::npdb::GetVariableLocationInfo(
         }
 
         Variable::RangeList ranges = MakeRangeList(index, loc.Range, loc.Gaps);
-        uint32_t reg_size =
-            GetRegisterSize((RegisterId)(uint16_t)loc.Hdr.Register);
+        uint32_t reg_size = GetRegisterSize(
+            module->GetArchitecture(), (RegisterId)(uint16_t)loc.Hdr.Register);
         if (reg_size == 0)
           break;
         offset_to_size[loc.Hdr.OffsetInParent] = reg_size;

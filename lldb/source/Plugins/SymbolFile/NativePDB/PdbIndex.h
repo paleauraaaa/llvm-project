@@ -124,8 +124,8 @@ public:
   llvm::pdb::TpiStream &tpi() { return *m_tpi; }
   const llvm::pdb::TpiStream &tpi() const { return *m_tpi; }
 
-  llvm::pdb::TpiStream &ipi() { return *m_ipi; }
-  const llvm::pdb::TpiStream &ipi() const { return *m_ipi; }
+  llvm::pdb::TpiStream *ipi() { return m_ipi; }
+  const llvm::pdb::TpiStream *ipi() const { return m_ipi; }
 
   llvm::pdb::InfoStream &info() { return *m_info; }
   const llvm::pdb::InfoStream &info() const { return *m_info; }
