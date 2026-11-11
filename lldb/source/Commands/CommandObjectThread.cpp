@@ -26,6 +26,7 @@
 #include "lldb/Symbol/Function.h"
 #include "lldb/Symbol/LineEntry.h"
 #include "lldb/Symbol/LineTable.h"
+#include "lldb/Target/ABI.h"
 #include "lldb/Target/Process.h"
 #include "lldb/Target/RegisterContext.h"
 #include "lldb/Target/SystemRuntime.h"
@@ -37,6 +38,8 @@
 #include "lldb/Target/TraceDumper.h"
 #include "lldb/Utility/State.h"
 #include "lldb/ValueObject/ValueObject.h"
+#include "llvm/ADT/StringExtras.h"
+#include "llvm/Support/FormatVariadic.h"
 
 using namespace lldb;
 using namespace lldb_private;
@@ -1230,6 +1233,125 @@ protected:
 
   OptionGroupThreadSelect m_options;
   OptionGroupOptions m_option_group;
+};
+
+class CommandObjectThreadTLS : public CommandObjectParsed {
+public:
+  CommandObjectThreadTLS(CommandInterpreter &interpreter)
+      : CommandObjectParsed(
+            interpreter, "thread tls",
+            "Inspect runtime TLS slots in the selected thread, or bind their "
+            "address to a new persistent expression pointer. A binding is a "
+            "snapshot of this thread's slot-array address, not a "
+            "thread-relative "
+            "variable. Slot allocation state is not checked.",
+            "thread tls [<slot-index> | bind <$variable>]",
+            eCommandRequiresThread | eCommandRequiresProcess |
+                eCommandTryTargetAPILock | eCommandProcessMustBeLaunched |
+                eCommandProcessMustBePaused) 
+  {
+    AddSimpleArgumentList(eArgTypeExpression, eArgRepeatStar);
+  }
+
+protected:
+  void DoExecute(Args &command, CommandReturnObject &result) override {
+    bool bind = command.GetArgumentCount() == 2 &&
+                command.GetArgumentAtIndex(0) == llvm::StringRef("bind");
+    uint32_t index = 0;
+
+    if (!bind && (command.GetArgumentCount() > 1 ||
+                  (command.GetArgumentCount() == 1 &&
+                   llvm::StringRef(command.GetArgumentAtIndex(0))
+                       .getAsInteger(0, index)))) 
+    {
+      result.AppendError("expected a slot index or 'bind <$variable>'");
+      return;
+    }
+
+    auto abi = m_exe_ctx.GetProcessPtr()->GetABI();
+    if (!abi) {
+      result.AppendError("missing target ABI");
+      return;
+    }
+
+    auto tls = abi->GetRuntimeTLS(*m_exe_ctx.GetThreadPtr());
+    if (!tls) {
+      result.AppendError(llvm::toString(tls.takeError()));
+      return;
+    }
+
+    if (tls->slot_size != 4) {
+      result.AppendError("runtime TLS inspection requires four-byte slots");
+      return;
+    }
+
+    if (bind) {
+      llvm::StringRef name(command.GetArgumentAtIndex(1));
+      llvm::StringRef identifier = name;
+      if (!identifier.consume_front("$") || identifier.empty() ||
+          !(llvm::isAlpha(identifier.front()) || identifier.front() == '_') ||
+          !llvm::all_of(identifier,
+                        [](char c) { return llvm::isAlnum(c) || c == '_'; })) 
+      {
+        result.AppendError("expected a persistent variable such as $tls");
+        return;
+      }
+
+      Target &target = *m_exe_ctx.GetTargetPtr();
+      if (target.GetPersistentVariable(ConstString(name))) {
+        result.AppendError("persistent variable already exists; choose a new "
+                           "name to bind another thread or stop");
+        return;
+      }
+
+      std::string expression =
+          llvm::formatv("unsigned int *{0} = (unsigned int *){1:x};", name,
+                        tls->address)
+              .str();
+
+      EvaluateExpressionOptions options;
+      options.SetLanguage(eLanguageTypeC_plus_plus);
+      options.SetExecutionPolicy(eExecutionPolicyNever);
+      options.SetSuppressPersistentResult(true);
+
+      ValueObjectSP value;
+      auto status = target.EvaluateExpression(
+          expression, m_exe_ctx.GetFramePtr(), value, options);
+
+      if (status != eExpressionCompleted) {
+        result.AppendError(value ? value->GetError().AsCString()
+                                 : "could not create runtime TLS binding");
+        return;
+      }
+
+      result.GetOutputStream().Format(
+          "{0} = {1:x} ({2} slots; bound to thread #{3})\n", name, tls->address,
+          tls->slot_count, m_exe_ctx.GetThreadPtr()->GetIndexID());
+    } else if (command.GetArgumentCount() == 0) {
+      result.GetOutputStream().Format(
+          "Runtime TLS: {0:x}, {1} four-byte slots. Use 'thread tls <index>' "
+          "to read or 'thread tls bind $tls' for expression access.\n",
+          tls->address, tls->slot_count);
+    } else {
+      if (index >= tls->slot_count) {
+        result.AppendErrorWithFormat("slot index must be less than %u",
+                                     tls->slot_count);
+        return;
+      }
+
+      Status error;
+      uint64_t value = m_exe_ctx.GetProcessPtr()->ReadUnsignedIntegerFromMemory(
+          tls->address + index * tls->slot_size, tls->slot_size, 0, error);
+
+      if (error.Fail()) {
+        result.AppendError(error.AsCString());
+        return;
+      }
+      
+      result.GetOutputStream().Format("TLS[{0}] = {1:x8}\n", index, value);
+    }
+    result.SetStatus(eReturnStatusSuccessFinishResult);
+  }
 };
 
 // CommandObjectThreadList
@@ -2552,6 +2674,8 @@ CommandObjectMultiwordThread::CommandObjectMultiwordThread(
                  CommandObjectSP(new CommandObjectThreadContinue(interpreter)));
   LoadSubCommand("list",
                  CommandObjectSP(new CommandObjectThreadList(interpreter)));
+  LoadSubCommand("tls",
+                 CommandObjectSP(new CommandObjectThreadTLS(interpreter)));
   LoadSubCommand("return",
                  CommandObjectSP(new CommandObjectThreadReturn(interpreter)));
   LoadSubCommand("jump",

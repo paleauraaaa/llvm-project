@@ -582,6 +582,64 @@ std::optional<addr_t> ABIXbox360::GetThreadLocalData(Thread &thread,
   return block + tls_offset;
 }
 
+llvm::Expected<ABI::RuntimeTLS> ABIXbox360::GetRuntimeTLS(Thread &thread) {
+  constexpr uint32_t kCurrentThreadOffset = 0x100;
+  constexpr uint32_t kThreadTLSOffset = 0x68;
+  constexpr uint32_t kSlotCount = 256;
+  constexpr uint32_t kSlotSize = 4;
+  auto process = thread.GetProcess();
+  auto registers = thread.GetRegisterContext();
+
+  const RegisterInfo *r13 =
+      registers ? registers->GetRegisterInfoByName("r13") : nullptr;
+
+  if (!process || !r13 || r13->byte_size != 8)
+    return llvm::createStringError(
+        "Xbox 360 runtime TLS requires a process and full-width r13");
+
+  RegisterValue value;
+  if (!registers->ReadRegister(r13, value))
+    return llvm::createStringError("cannot read Xbox 360 thread pointer");
+
+  addr_t pcr = NormalizeAddress(value.GetAsUInt64());
+  auto read_pointer = [&](addr_t base,
+                          uint32_t offset) -> llvm::Expected<addr_t> {
+    if (!base || base % 4 || base > UINT32_MAX - offset - 3)
+      return llvm::createStringError("invalid Xbox 360 runtime TLS address");
+
+    uint8_t bytes[4];
+    Status error;
+    if (process->ReadMemory(base + offset, bytes, sizeof(bytes), error) !=
+            sizeof(bytes) ||
+        error.Fail())
+    {
+      return llvm::createStringError(
+          "cannot read Xbox 360 runtime TLS pointer at 0x%" PRIx64,
+          base + offset);
+    }
+
+    addr_t pointer = llvm::support::endian::read32be(bytes);
+    if (!pointer || pointer % 4)
+      return llvm::createStringError("invalid Xbox 360 runtime TLS pointer");
+
+    return pointer;
+  };
+
+  // KPCR.PrcbData.CurrentThread -> KTHREAD.TlsData, not KPCR.TlsData.
+  auto current_thread = read_pointer(pcr, kCurrentThreadOffset);
+  if (!current_thread)
+    return current_thread.takeError();
+
+  auto slots = read_pointer(*current_thread, kThreadTLSOffset);
+  if (!slots)
+    return slots.takeError();
+
+  if (*slots > UINT32_MAX - (kSlotCount * kSlotSize - 1))
+    return llvm::createStringError("Xbox 360 runtime TLS slots overflow");
+
+  return RuntimeTLS{*slots, kSlotCount, kSlotSize};
+}
+
 bool ABIXbox360::CreateDefaultUnwindPlan(UnwindPlan &unwind_plan) {
   unwind_plan.Clear();
   return false;
@@ -762,7 +820,7 @@ Status ABIXbox360::SetReturnValueObject(
         "cannot write Xbox 360 return register %s%s", writes[i].reg->name,
         restored ? "" : "; failed to restore earlier return registers");
   }
-  
+
   return {};
 }
 
