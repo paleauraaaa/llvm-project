@@ -33,6 +33,7 @@
 #include "lldb/Target/RegisterContext.h"
 #include "lldb/Target/Target.h"
 #include "lldb/Target/Thread.h"
+#include "lldb/Target/ThreadPlanCallFunction.h"
 #include "lldb/Target/UnwindLLDB.h"
 #include "lldb/Target/Xbox360RegisterInfo.h"
 #include "lldb/Utility/Listener.h"
@@ -63,6 +64,8 @@ public:
 
   size_t DoReadMemory(addr_t address, void *buffer, size_t size,
                       Status &error) override {
+    last_read = address;
+    last_read_size = size;
     if (fail_memory || address < base || address - base > memory.size() ||
         size > memory.size() - (address - base)) {
       error = Status::FromErrorString("unreadable test memory");
@@ -73,11 +76,18 @@ public:
   }
   size_t DoWriteMemory(addr_t address, const void *buffer, size_t size,
                        Status &error) override {
+    ++write_count;
     if (fail_memory || address < base || address - base > memory.size() ||
-        size > memory.size() - (address - base)) {
+        size > memory.size() - (address - base) ||
+        (address <= unwritable_address &&
+         unwritable_address - address < size)) {
       error = Status::FromErrorString("unwritable test memory");
       return 0;
     }
+    if (write_budget == 0)
+      return 0;
+    size = std::min(size, write_budget);
+    write_budget -= size;
     memcpy(memory.data() + address - base, buffer, size);
     return size;
   }
@@ -85,6 +95,11 @@ public:
   static constexpr addr_t base = 0x10000;
   std::array<uint8_t, 0x4000> memory = {};
   bool fail_memory = false;
+  addr_t unwritable_address = LLDB_INVALID_ADDRESS;
+  addr_t last_read = LLDB_INVALID_ADDRESS;
+  size_t last_read_size = 0;
+  unsigned write_count = 0;
+  size_t write_budget = SIZE_MAX;
 };
 
 class TestRegisters : public RegisterContext {
@@ -110,6 +125,8 @@ public:
   const RegisterSet *GetRegisterSet(size_t) override { return nullptr; }
   ByteOrder GetByteOrder() override { return eByteOrderBig; }
   bool ReadRegister(const RegisterInfo *reg, RegisterValue &value) override {
+    if (reg && llvm::StringRef(reg->name) == "r2")
+      ++r2_reads;
     if (!reg || unreadable == reg->name)
       return false;
     value = values[reg->kinds[eRegisterKindLLDB]];
@@ -117,6 +134,8 @@ public:
   }
   bool WriteRegister(const RegisterInfo *reg,
                      const RegisterValue &value) override {
+    if (reg && llvm::StringRef(reg->name) == "r2")
+      ++r2_writes;
     if (!reg || unwritable == reg->name)
       return false;
     values[reg->kinds[eRegisterKindLLDB]] = value;
@@ -133,6 +152,7 @@ public:
   DynamicRegisterInfo info;
   std::vector<RegisterValue> values;
   std::string unreadable, unwritable;
+  unsigned r2_reads = 0, r2_writes = 0;
 };
 
 class TestThread : public Thread {
@@ -148,6 +168,25 @@ public:
   }
   bool CalculateStopInfo() override { return false; }
   std::shared_ptr<TestRegisters> registers;
+};
+
+class TestCallPlan : public ThreadPlanCallFunction {
+public:
+  TestCallPlan(Thread &thread)
+      : ThreadPlanCallFunction(thread, Address(), Options()) {}
+
+  bool Setup(Thread &thread) {
+    ABI *abi = nullptr;
+    addr_t start, function;
+    return ConstructorSetup(thread, abi, start, function);
+  }
+
+private:
+  static EvaluateExpressionOptions Options() {
+    EvaluateExpressionOptions options;
+    options.SetTrapExceptions(false);
+    return options;
+  }
 };
 
 class Xbox360ABI : public testing::Test {
@@ -483,6 +522,173 @@ TEST_F(Xbox360ABI, TrivialCallReservesHomeArea) {
       abi->PrepareTrivialCall(*thread, 0x11000, 0x82001000, 0x82002000, {}));
   EXPECT_EQ(registers->Get("r1"), 0x10fb0u);
   EXPECT_EQ(abi->GetRedZoneSize(), 1344u);
+}
+
+TEST_F(Xbox360ABI, TrivialCallDoesNotUseTOCOrFunctionDescriptors) {
+  for (const char *triple : {"powerpc-ibm-xbox360", "powerpc64-ibm-xbox360"}) {
+    SCOPED_TRACE(triple);
+    auto selected = ABI::FindPlugin(process, ArchSpec(triple));
+    ASSERT_TRUE(selected);
+    ASSERT_EQ(selected->GetPluginName(), "xbox360");
+    registers->Set("r1", RegisterValue(uint64_t(0x11000)));
+    registers->Set("r2", RegisterValue(uint64_t(0x2222222222222222)));
+    registers->Set("r12", RegisterValue(uint64_t(0x1212121212121212)));
+    registers->Set("r13", RegisterValue(uint64_t(0x1313131313131313)));
+    registers->r2_reads = registers->r2_writes = 0;
+    registers->unreadable = registers->unwritable = "r2";
+    process->memory.fill(0xa5);
+    process->last_read = LLDB_INVALID_ADDRESS;
+
+    // Code lies outside the mock's readable memory. Xbox function pointers are
+    // entry addresses, not descriptors containing an entry point and a TOC.
+    ASSERT_TRUE(selected->PrepareTrivialCall(
+        *thread, 0x11000, 0x82001000, 0x82002000, {}));
+    EXPECT_EQ(registers->r2_reads, 0u);
+    EXPECT_EQ(registers->r2_writes, 0u);
+    EXPECT_EQ(process->last_read, LLDB_INVALID_ADDRESS);
+    EXPECT_EQ(registers->Get("pc"), 0x82001000u);
+    EXPECT_EQ(registers->Get("lr"), 0x82002000u);
+    EXPECT_EQ(registers->Get("r12"), 0x1212121212121212ull);
+    EXPECT_EQ(registers->Get("r13"), 0x1313131313131313ull);
+    const uint8_t *frame = process->memory.data() +
+                           registers->Get("r1") - TestProcess::base;
+    // SysV PPC64 saves TOC at +24 (ELFv2) or +40 (ELFv1). Both are unused
+    // argument home slots here, not reserved linkage slots.
+    EXPECT_EQ(llvm::support::endian::read64be(frame + 24), 0u);
+    EXPECT_EQ(llvm::support::endian::read64be(frame + 40), 0u);
+    registers->unreadable.clear();
+    registers->unwritable.clear();
+    EXPECT_EQ(registers->Get("r2"), 0x2222222222222222ull);
+  }
+}
+
+TEST_F(Xbox360ABI, TrivialCallInitializesEntireFrame) {
+  for (size_t count : {0u, 1u, 8u, 9u, 10u, 11u}) {
+    SCOPED_TRACE(count);
+    process->memory.fill(0xa5);
+    registers->Set("r1", RegisterValue(uint64_t(0x11000)));
+    std::vector<addr_t> args(count, 0x1234567887654321ull);
+    ASSERT_TRUE(abi->PrepareTrivialCall(*thread, 0x11000, 0x82001000,
+                                        0x82002000, args));
+    addr_t sp = registers->Get("r1");
+    const uint64_t size = (16 + std::max<size_t>(8, count) * 8 + 15) & ~15ull;
+    EXPECT_EQ(sp, 0x11000 - size);
+    EXPECT_EQ(sp % 16, 0u);
+    const uint8_t *frame = process->memory.data() + sp - TestProcess::base;
+    EXPECT_EQ(llvm::support::endian::read32be(frame), 0x11000u);
+    for (unsigned i = 4; i < 80; ++i)
+      EXPECT_EQ(frame[i], 0u);
+    for (size_t i = 8; i < count; ++i)
+      EXPECT_EQ(llvm::support::endian::read64be(frame + 16 + i * 8), args[i]);
+    for (size_t i = 16 + std::max<size_t>(8, count) * 8; i < size; ++i)
+      EXPECT_EQ(frame[i], 0u);
+    EXPECT_EQ(frame[-1], 0xa5u);
+    EXPECT_EQ(frame[size], 0xa5u);
+  }
+}
+
+TEST_F(Xbox360ABI, TrivialCallPreservesInterruptedRedZone) {
+  process->memory.fill(0xa5);
+  registers->Set("r1", RegisterValue(uint64_t(0xdeadbeef00011000)));
+  addr_t ceiling = 0x11000 - abi->GetRedZoneSize();
+  std::array<addr_t, 9> args = {1, 2, 3, 4, 5, 6, 7, 8, 0x1234567887654321ull};
+  ASSERT_TRUE(
+      abi->PrepareTrivialCall(*thread, ceiling, 0x82001000, 0x82002000, args));
+  addr_t sp = registers->Get("r1");
+  EXPECT_EQ(sp, ceiling - 96);
+  EXPECT_EQ(llvm::support::endian::read32be(process->memory.data() + sp -
+                                            TestProcess::base),
+            0x11000u);
+  for (addr_t address = ceiling; address < 0x11010; ++address)
+    EXPECT_EQ(process->memory[address - TestProcess::base], 0xa5u);
+
+  // The target may expose undefined upper halves of the GPR again on a stop.
+  registers->Set("r1", RegisterValue(uint64_t(0xdeadbeef00000000) | sp));
+  ValueList values;
+  for (unsigned i = 0; i < args.size(); ++i)
+    Add(values, eBasicTypeUnsignedLongLong);
+  ASSERT_TRUE(abi->GetArgumentValues(*thread, values));
+  for (unsigned i = 0; i < args.size(); ++i)
+    EXPECT_EQ(values.GetValueAtIndex(i)->GetScalar().ULongLong(), args[i]);
+}
+
+TEST_F(Xbox360ABI, TrivialCallRejectsInvalidStackBoundsBeforeWriting) {
+  for (addr_t current : {addr_t(0), addr_t(0x11008), LLDB_INVALID_ADDRESS}) {
+    SCOPED_TRACE(current);
+    registers->Set("r1", RegisterValue(current));
+    EXPECT_FALSE(
+        abi->PrepareTrivialCall(*thread, 0x11000, 0x82001000, 0x82002000, {}));
+  }
+  registers->Set("r1", RegisterValue(uint64_t(0x11000)));
+  registers->unreadable = "r1";
+  EXPECT_FALSE(
+      abi->PrepareTrivialCall(*thread, 0x11000, 0x82001000, 0x82002000, {}));
+  registers->unreadable.clear();
+  for (addr_t ceiling : {addr_t(0), addr_t(79), addr_t(80), addr_t(0x11010)}) {
+    SCOPED_TRACE(ceiling);
+    EXPECT_FALSE(
+        abi->PrepareTrivialCall(*thread, ceiling, 0x82001000, 0x82002000, {}));
+  }
+  std::vector<addr_t> too_many(0x11000 / 8, 1);
+  EXPECT_FALSE(abi->PrepareTrivialCall(*thread, 0x11000, 0x82001000, 0x82002000,
+                                       too_many));
+  EXPECT_EQ(process->write_count, 0u);
+  EXPECT_EQ(registers->Get("r1"), 0x11000u);
+}
+
+TEST_F(Xbox360ABI, TrivialCallRequiresWritableHomeArea) {
+  registers->Set("pc", RegisterValue(uint32_t(0x82003000)));
+  registers->Set("lr", RegisterValue(uint64_t(0x82004000)));
+  registers->Set("r3", RegisterValue(uint64_t(99)));
+  // The backchain is writable, but the last home slot is not.
+  process->unwritable_address = 0x10fff;
+  const addr_t argument = 42;
+  EXPECT_FALSE(abi->PrepareTrivialCall(*thread, 0x11000, 0x82001000, 0x82002000,
+                                       {argument}));
+  EXPECT_EQ(registers->Get("r1"), 0x11000u);
+  EXPECT_EQ(registers->Get("pc"), 0x82003000u);
+  EXPECT_EQ(registers->Get("lr"), 0x82004000u);
+  EXPECT_EQ(registers->Get("r3"), 99u);
+}
+
+TEST_F(Xbox360ABI, TrivialCallRejectsShortFrameWrite) {
+  process->write_budget = 4;
+  registers->Set("pc", RegisterValue(uint32_t(0x82003000)));
+  registers->Set("lr", RegisterValue(uint64_t(0x82004000)));
+  EXPECT_FALSE(
+      abi->PrepareTrivialCall(*thread, 0x11000, 0x82001000, 0x82002000, {}));
+  EXPECT_EQ(registers->Get("r1"), 0x11000u);
+  EXPECT_EQ(registers->Get("pc"), 0x82003000u);
+  EXPECT_EQ(registers->Get("lr"), 0x82004000u);
+}
+
+TEST_F(Xbox360ABI, CallPlanNormalizesStackBeforeReservingRedZone) {
+  registers->Set("r1", RegisterValue(uint64_t(0xdeadbeef00011000)));
+  TestCallPlan plan(*thread);
+  // This fixture has no executable entry point, so setup stops after the
+  // initial stack accessibility check.
+  EXPECT_FALSE(plan.Setup(*thread));
+  EXPECT_EQ(plan.GetFunctionStackPointer(), 0x11000 - 1344u);
+  const addr_t ceiling = 0x11000 - 1344u;
+  // Process memory reads may be expanded to cache-line boundaries.
+  ASSERT_LE(process->last_read, ceiling);
+  EXPECT_GE(process->last_read_size, ceiling - process->last_read + 4);
+}
+
+TEST_F(Xbox360ABI, CallPlanRejectsUnreadableOrUnderflowingStack) {
+  for (addr_t sp : {addr_t(0), addr_t(1344), LLDB_INVALID_ADDRESS}) {
+    registers->Set("r1", RegisterValue(sp));
+    TestCallPlan plan(*thread);
+    EXPECT_FALSE(plan.Setup(*thread));
+    StreamString error;
+    EXPECT_FALSE(plan.ValidatePlan(&error));
+    EXPECT_TRUE(error.GetString().contains("Cannot reserve the red zone"));
+    EXPECT_EQ(process->last_read, LLDB_INVALID_ADDRESS);
+  }
+  registers->unreadable = "r1";
+  TestCallPlan plan(*thread);
+  EXPECT_FALSE(plan.Setup(*thread));
+  EXPECT_EQ(process->last_read, LLDB_INVALID_ADDRESS);
 }
 
 TEST_F(Xbox360ABI, FailuresAreReported) {

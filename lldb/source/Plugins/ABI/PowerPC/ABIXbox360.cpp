@@ -28,6 +28,7 @@
 #include "clang/AST/Attr.h"
 #include "clang/AST/DeclCXX.h"
 #include "clang/AST/DeclTemplate.h"
+#include "llvm/Support/Endian.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/MathExtras.h"
 
@@ -37,6 +38,13 @@ using namespace lldb_private;
 LLDB_PLUGIN_DEFINE(ABIXbox360)
 
 namespace {
+namespace Stack {
+constexpr unsigned kAlignment = 16;
+constexpr unsigned kLinkageSize = 16;
+constexpr unsigned kHomeSlots = 8;
+constexpr unsigned kSlotSize = 8;
+} // namespace Stack
+
 bool Fail(llvm::StringRef message) {
   LLDB_LOG(GetLog(LLDBLog::Expressions), "Xbox 360 ABI: {0}", message);
   return false;
@@ -53,6 +61,10 @@ bool IsNumberedRegister(llvm::StringRef name, llvm::StringRef prefix,
 
 bool IsCodeAddressValid(addr_t pc) {
   return pc && pc <= UINT32_MAX && (pc & 3) == 0;
+}
+
+addr_t NormalizeAddress(addr_t address) {
+  return address == LLDB_INVALID_ADDRESS ? address : address & UINT32_MAX;
 }
 
 enum class ReturnKind { GPR, FPR, Vector, Memory };
@@ -294,13 +306,24 @@ bool ABIXbox360::PrepareTrivialCall(Thread &thread, addr_t sp,
   }
 
   // Eight doubleword home slots are mandatory even for register-only calls.
-  const uint64_t max_slots = (UINT32_MAX - 31ull) / 8;
+  const uint64_t max_slots =
+      (uint64_t(UINT32_MAX) - Stack::kLinkageSize - (Stack::kAlignment - 1)) /
+      Stack::kSlotSize;
   if (args.size() > max_slots)
     return Fail("argument area exceeds the address space");
-    
-  uint64_t frame_size =
-      llvm::alignTo(16 + std::max<size_t>(8, args.size()) * 8, 16);
-  sp = llvm::alignDown(sp, 16);
+
+  uint64_t frame_size = llvm::alignTo(
+      Stack::kLinkageSize +
+          std::max<size_t>(Stack::kHomeSlots, args.size()) * Stack::kSlotSize,
+      Stack::kAlignment);
+  sp = llvm::alignDown(sp, Stack::kAlignment);
+
+  addr_t original_sp = NormalizeAddress(reg_ctx->GetSP(LLDB_INVALID_ADDRESS));
+  if (!original_sp || original_sp > UINT32_MAX ||
+      original_sp % Stack::kAlignment)
+    return Fail("cannot read an aligned original stack pointer");
+  if (sp > original_sp)
+    return Fail("call stack would overwrite the active stack");
 
   if (sp <= frame_size)
     return Fail("insufficient stack space");
@@ -310,32 +333,35 @@ bool ABIXbox360::PrepareTrivialCall(Thread &thread, addr_t sp,
   const RegisterInfo *lr = reg_ctx->GetRegisterInfoByName("lr");
   const RegisterInfo *stack = reg_ctx->GetRegisterInfoByName("r1");
 
-  if (!pc || !lr || !stack)
-    return Fail("missing PC, LR or SP register");
+  if (!pc || (pc->byte_size != 4 && pc->byte_size != 8) || !lr ||
+      lr->byte_size != 8 || !stack || stack->byte_size != 8)
+    return Fail("missing or incorrectly sized PC, LR or SP register");
 
   std::vector<const RegisterInfo *> arg_regs;
-  for (size_t i = 0; i < std::min<size_t>(args.size(), 8); i++) {
+  for (size_t i = 0; i < std::min<size_t>(args.size(), Stack::kHomeSlots);
+       ++i) {
     const RegisterInfo *reg =
         reg_ctx->GetRegisterInfoByName("r" + std::to_string(3 + i));
 
-    if (!reg || reg->byte_size != 8)
+    if (!reg || reg->byte_size != Stack::kSlotSize)
       return Fail("missing full-width argument register");
 
     arg_regs.push_back(reg);
   }
 
-  uint64_t original_sp = reg_ctx->GetSP(LLDB_INVALID_ADDRESS);
-  if (original_sp > UINT32_MAX)
-    return Fail("cannot read the original stack pointer");
+  // The backchain is a word, not a GPR-width save. Reserve the complete linkage
+  // and home areas without borrowing any storage from the interrupted frame.
+  std::vector<uint8_t> frame(frame_size, 0);
+  llvm::support::endian::write32be(frame.data(), original_sp);
+  for (size_t i = Stack::kHomeSlots; i < args.size(); ++i)
+    llvm::support::endian::write64be(
+        frame.data() + Stack::kLinkageSize + i * Stack::kSlotSize, args[i]);
 
   Status error;
-  if (!process_sp->WriteScalarToMemory(sp, original_sp, 4, error))
-    return Fail("cannot write stack back chain");
-
-  for (size_t i = 8; i < args.size(); i++) {
-    if (!process_sp->WriteScalarToMemory(sp + 16 + i * 8, args[i], 8, error))
-      return Fail("cannot write stack argument");
-  }
+  if (process_sp->WriteMemory(sp, frame.data(), frame.size(), error) !=
+          frame.size() ||
+      error.Fail())
+    return Fail("cannot write the complete call stack frame");
 
   for (size_t i = 0; i < arg_regs.size(); ++i) {
     if (!reg_ctx->WriteRegisterFromUnsigned(arg_regs[i], args[i]))
@@ -358,11 +384,11 @@ bool ABIXbox360::GetArgumentValues(Thread &thread, ValueList &values) const {
   if (!reg_ctx || !process_sp)
     return Fail("missing register context or process");
 
-  addr_t sp = reg_ctx->GetSP(LLDB_INVALID_ADDRESS);
-  if (sp == LLDB_INVALID_ADDRESS || sp > UINT32_MAX)
+  addr_t sp = NormalizeAddress(reg_ctx->GetSP(LLDB_INVALID_ADDRESS));
+  if (!sp || sp > UINT32_MAX || sp % Stack::kAlignment)
     return Fail("cannot read the stack pointer");
 
-  uint64_t offset = 16;
+  uint64_t offset = Stack::kLinkageSize;
   uint64_t non_gpr_bytes = 0;
   unsigned fpr = 1, vr = 1;
   ValueList result;
@@ -391,13 +417,16 @@ bool ABIXbox360::GetArgumentValues(Thread &thread, ValueList &values) const {
       return Fail("unsupported argument type; aggregate/C++ lowering requires "
                   "function ABI metadata");
 
-    uint64_t aligned_offset = llvm::alignTo(offset, vector ? 16 : 8);
+    uint64_t aligned_offset =
+        llvm::alignTo(offset, vector ? Stack::kAlignment : Stack::kSlotSize);
 
     if (vector)
       non_gpr_bytes += aligned_offset - offset;
 
     offset = aligned_offset;
-    unsigned gpr = std::min<uint64_t>((offset - 16 - non_gpr_bytes) / 8, 8);
+    unsigned gpr = std::min<uint64_t>(
+        (offset - Stack::kLinkageSize - non_gpr_bytes) / Stack::kSlotSize,
+        Stack::kHomeSlots);
     uint32_t size = (*bit_size + 7) / 8;
     uint8_t bytes[16] = {};
 
@@ -444,7 +473,7 @@ bool ABIXbox360::GetArgumentValues(Thread &thread, ValueList &values) const {
 
       value.SetValueType(Value::ValueType::Scalar);
     } else {
-      if (!vector && gpr < 8) {
+      if (!vector && gpr < Stack::kHomeSlots) {
         const RegisterInfo *reg =
             reg_ctx->GetRegisterInfoByName("r" + std::to_string(3 + gpr));
 
@@ -459,7 +488,7 @@ bool ABIXbox360::GetArgumentValues(Thread &thread, ValueList &values) const {
         }
       } else {
         // Scalars are right-justified in doubleword slots on big-endian Xbox.
-        uint64_t address = sp + offset + (vector ? 0 : 8 - size);
+        uint64_t address = sp + offset + (vector ? 0 : Stack::kSlotSize - size);
         if (address > UINT32_MAX || size - 1 > UINT32_MAX - address ||
             process_sp->ReadMemory(address, bytes, size, error) != size ||
             error.Fail()) 
@@ -519,9 +548,7 @@ bool ABIXbox360::CodeAddressIsValid(addr_t pc) {
   return IsCodeAddressValid(pc);
 }
 
-addr_t ABIXbox360::FixCodeAddress(addr_t pc) {
-  return pc == LLDB_INVALID_ADDRESS ? pc : pc & UINT32_MAX;
-}
+addr_t ABIXbox360::FixCodeAddress(addr_t pc) { return NormalizeAddress(pc); }
 
 addr_t ABIXbox360::FixDataAddress(addr_t address) {
   return FixCodeAddress(address);

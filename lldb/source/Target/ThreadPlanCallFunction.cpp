@@ -53,7 +53,17 @@ bool ThreadPlanCallFunction::ConstructorSetup(
 
   SetBreakpoints();
 
-  m_function_sp = thread.GetRegisterContext()->GetSP() - abi->GetRedZoneSize();
+  addr_t sp = thread.GetRegisterContext()->GetSP(LLDB_INVALID_ADDRESS);
+  if (sp != LLDB_INVALID_ADDRESS)
+    sp = abi->FixDataAddress(sp);
+  if (sp == LLDB_INVALID_ADDRESS || sp <= abi->GetRedZoneSize()) {
+    m_constructor_errors.Printf(
+        "Cannot reserve the red zone below the stack pointer.");
+    LLDB_LOGF(log, "ThreadPlanCallFunction(%p): %s.", static_cast<void *>(this),
+              m_constructor_errors.GetData());
+    return false;
+  }
+  m_function_sp = sp - abi->GetRedZoneSize();
   // If we can't read memory at the point of the process where we are planning
   // to put our function, we're not going to get any further...
   Status error;
