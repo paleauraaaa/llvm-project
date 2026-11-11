@@ -24,6 +24,9 @@ public:
 
   size_t GetRedZoneSize() const override { return 1344; }
 
+  /// Build a word-backchain frame below sp, which the call plan has already
+  /// lowered past the interrupted function's red zone. Arguments are integer
+  /// scalars in r3-r10 and doubleword stack slots, not typed ABI lowering.
   bool PrepareTrivialCall(lldb_private::Thread &thread, lldb::addr_t sp,
                           lldb::addr_t function_address,
                           lldb::addr_t return_address,
