@@ -95,6 +95,7 @@ public:
   uint32_t getNumberOfRegisterIndices() const override;
   uint32_t getNumberOfRows() const override;
   std::string getObjectFileName() const override;
+  SymIndexId getObjectPointerTypeId() const override;
   uint32_t getOemId() const override;
   SymIndexId getOemSymbolId() const override;
   uint32_t getOffsetInUdt() const override;

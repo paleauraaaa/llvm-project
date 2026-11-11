@@ -88,14 +88,15 @@ public:
   static_assert(sizeof(uint64_t) == sizeof(LocalVarDef));
 
 private:
-  bool isXbox360Target() const;
-
   MCStreamer &OS;
   BumpPtrAllocator Allocator;
   codeview::GlobalTypeTableBuilder TypeTable;
 
   /// Whether to emit type record hashes into .debug$H.
   bool EmitDebugGlobalHashes = false;
+
+  /// Older Xbox 360 readers cannot consume the modern CodeView ID records.
+  bool EmitLegacyXbox360CodeView = false;
 
   /// The codeview CPU type used by the translation unit.
   codeview::CPUType TheCPU;

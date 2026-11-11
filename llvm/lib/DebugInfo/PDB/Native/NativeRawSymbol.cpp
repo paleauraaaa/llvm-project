@@ -229,6 +229,8 @@ uint32_t NativeRawSymbol::getOemId() const {
   return 0;
 }
 
+SymIndexId NativeRawSymbol::getObjectPointerTypeId() const { return 0; }
+
 SymIndexId NativeRawSymbol::getOemSymbolId() const { return 0; }
 
 uint32_t NativeRawSymbol::getOffsetInUdt() const {

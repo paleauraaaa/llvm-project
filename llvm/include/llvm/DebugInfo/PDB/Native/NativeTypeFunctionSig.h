@@ -39,6 +39,7 @@ public:
   findChildren(PDB_SymType Type) const override;
 
   SymIndexId getClassParentId() const override;
+  SymIndexId getObjectPointerTypeId() const override;
   PDB_CallingConv getCallingConvention() const override;
   uint32_t getCount() const override;
   SymIndexId getTypeId() const override;
