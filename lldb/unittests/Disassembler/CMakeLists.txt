@@ -6,6 +6,10 @@ if("X86" IN_LIST LLVM_TARGETS_TO_BUILD)
   add_subdirectory(x86)
 endif()
 
+if("PowerPC" IN_LIST LLVM_TARGETS_TO_BUILD)
+  add_subdirectory(PowerPC)
+endif()
+
 if("RISCV" IN_LIST LLVM_TARGETS_TO_BUILD)
 	add_subdirectory(RISCV)
 endif()
