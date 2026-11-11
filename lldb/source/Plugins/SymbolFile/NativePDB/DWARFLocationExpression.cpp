@@ -41,15 +41,17 @@ uint32_t GetGenericRegisterNumber(llvm::codeview::RegisterId register_id) {
   return LLDB_INVALID_REGNUM;
 }
 
-static uint32_t GetRegisterNumber(llvm::Triple::ArchType arch_type,
-                                  llvm::codeview::RegisterId register_id,
-                                  RegisterKind &register_kind) {
-  register_kind = eRegisterKindLLDB;
-  uint32_t reg_num = GetLLDBRegisterNumber(arch_type, register_id);
+static uint32_t
+GetLocationRegisterNumber(const ArchSpec &arch,
+                          llvm::codeview::RegisterId register_id,
+                          RegisterKind &register_kind) {
+  uint32_t reg_num = npdb::GetRegisterNumber(arch, register_id, register_kind);
   if (reg_num != LLDB_INVALID_REGNUM)
     return reg_num;
 
   register_kind = eRegisterKindGeneric;
+  if (arch.GetTriple().isOSXbox360())
+    return LLDB_INVALID_REGNUM;
   return GetGenericRegisterNumber(register_id);
 }
 
@@ -134,10 +136,15 @@ static DWARFExpression MakeLocationExpressionInternal(lldb::ModuleSP module,
 static bool MakeRegisterBasedLocationExpressionInternal(
     Stream &stream, llvm::codeview::RegisterId reg, RegisterKind &register_kind,
     std::optional<int32_t> relative_offset, lldb::ModuleSP module) {
-  uint32_t reg_num = GetRegisterNumber(module->GetArchitecture().GetMachine(),
-                                       reg, register_kind);
-  if (reg_num == LLDB_INVALID_REGNUM)
+  uint32_t reg_num =
+      GetLocationRegisterNumber(module->GetArchitecture(), reg, register_kind);
+  if (reg_num == LLDB_INVALID_REGNUM) {
+    LLDB_LOG(GetLog(LLDBLog::Symbols),
+             "Unsupported CodeView register {0} for {1}",
+             static_cast<unsigned>(reg),
+             module->GetArchitecture().GetTriple().str());
     return false;
+  }
 
   if (reg_num > 31) {
     llvm::dwarf::LocationAtom base =
@@ -150,8 +157,14 @@ static bool MakeRegisterBasedLocationExpressionInternal(
     stream.PutHex8(base + reg_num);
   }
 
-  if (relative_offset)
+  if (relative_offset) {
     stream.PutSLEB128(*relative_offset);
+    if (module->GetArchitecture().GetTriple().isOSXbox360()) {
+      stream.PutHex8(llvm::dwarf::DW_OP_constu);
+      stream.PutULEB128(UINT32_MAX);
+      stream.PutHex8(llvm::dwarf::DW_OP_and);
+    }
+  }
 
   return true;
 }
@@ -285,6 +298,7 @@ lldb_private::npdb::MakeEnregisteredLocationExpressionForComposite(
   return MakeLocationExpressionInternal(
       module, [&](Stream &stream, RegisterKind &register_kind) -> bool {
         size_t cur_offset = 0;
+        std::optional<RegisterKind> piece_register_kind;
         bool is_simple_type = offset_to_size.empty();
         // Iterate through offset_to_location because offset_to_size might be
         // empty if the variable is a simple type.
@@ -302,6 +316,12 @@ lldb_private::npdb::MakeEnregisteredLocationExpressionForComposite(
                   stream, (RegisterId)loc.reg_id, register_kind, offset,
                   module))
             return false;
+          if (piece_register_kind && *piece_register_kind != register_kind) {
+            LLDB_LOG(GetLog(LLDBLog::Symbols),
+                     "CodeView composite uses incompatible register kinds");
+            return false;
+          }
+          piece_register_kind = register_kind;
           if (!is_simple_type) {
             stream.PutHex8(llvm::dwarf::DW_OP_piece);
             stream.PutULEB128(offset_to_size[offset_loc.first]);

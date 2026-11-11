@@ -46,7 +46,9 @@ PdbIndex::create(llvm::pdb::PDBFile *file) {
   std::unique_ptr<PdbIndex> result(new PdbIndex());
   ASSIGN_PTR_OR_RETURN(result->m_dbi, file->getPDBDbiStream());
   ASSIGN_PTR_OR_RETURN(result->m_tpi, file->getPDBTpiStream());
-  ASSIGN_PTR_OR_RETURN(result->m_ipi, file->getPDBIpiStream());
+  // Older CodeView producers, including Xbox tools, do not emit an ID stream.
+  if (file->hasPDBIpiStream())
+    ASSIGN_PTR_OR_RETURN(result->m_ipi, file->getPDBIpiStream());
   ASSIGN_PTR_OR_RETURN(result->m_info, file->getPDBInfoStream());
   ASSIGN_PTR_OR_RETURN(result->m_publics, file->getPDBPublicsStream());
   ASSIGN_PTR_OR_RETURN(result->m_globals, file->getPDBGlobalsStream());

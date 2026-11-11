@@ -139,6 +139,7 @@ enum class PDB_Machine {
   MipsFpu16 = 0x466,
   PowerPC = 0x1F0,
   PowerPCFP = 0x1F1,
+  PowerPCBE = 0x1F2,
   R4000 = 0x166,
   SH3 = 0x1A2,
   SH3DSP = 0x1A3,

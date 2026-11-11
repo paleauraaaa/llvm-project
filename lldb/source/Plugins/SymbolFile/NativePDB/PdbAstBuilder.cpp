@@ -24,6 +24,8 @@
 #include "lldb/Core/Module.h"
 #include "lldb/Symbol/ObjectFile.h"
 #include "lldb/Utility/LLDBAssert.h"
+#include "lldb/Utility/LLDBLog.h"
+#include "lldb/Utility/Log.h"
 #include <optional>
 #include <string_view>
 
@@ -965,7 +967,12 @@ PdbAstBuilder::CreateFunctionDeclFromId(PdbTypeSymId func_tid,
   SymbolFileNativePDB *pdb = static_cast<SymbolFileNativePDB *>(
       m_clang.GetSymbolFile()->GetBackingSymbolFile());
   PdbIndex &index = pdb->GetIndex();
-  CVType func_cvt = index.ipi().getType(func_tid.index);
+  if (!index.ipi()) {
+    LLDB_LOG(GetLog(LLDBLog::Symbols),
+             "CodeView function ID references a missing IPI stream");
+    return nullptr;
+  }
+  CVType func_cvt = index.ipi()->getType(func_tid.index);
   llvm::StringRef func_name;
   TypeIndex func_ti;
   clang::DeclContext *parent = nullptr;
@@ -987,7 +994,7 @@ PdbAstBuilder::CreateFunctionDeclFromId(PdbTypeSymId func_tid,
     func_ti = fir.getFunctionType();
     parent = FromCompilerDeclContext(GetTranslationUnitDecl());
     if (!fir.ParentScope.isNoneType()) {
-      CVType parent_cvt = index.ipi().getType(fir.ParentScope);
+      CVType parent_cvt = index.ipi()->getType(fir.ParentScope);
       if (parent_cvt.kind() == LF_STRING_ID) {
         StringIdRecord sir;
         cantFail(

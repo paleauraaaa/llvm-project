@@ -24,6 +24,8 @@
 #include "llvm/Support/Path.h"
 
 #include "lldb/Utility/LLDBAssert.h"
+#include "lldb/Utility/LLDBLog.h"
+#include "lldb/Utility/Log.h"
 
 using namespace lldb;
 using namespace lldb_private;
@@ -65,7 +67,12 @@ static void ParseBuildInfo(PdbIndex &index, const CVSymbol &sym,
 
   // S_BUILDINFO just points to an LF_BUILDINFO in the IPI stream.  Let's do
   // a little extra work to pull out the LF_BUILDINFO.
-  LazyRandomTypeCollection &types = index.ipi().typeCollection();
+  if (!index.ipi()) {
+    LLDB_LOG(GetLog(LLDBLog::Symbols),
+             "CodeView S_BUILDINFO references a missing IPI stream");
+    return;
+  }
+  LazyRandomTypeCollection &types = index.ipi()->typeCollection();
   std::optional<CVType> cvt = types.tryGetType(bis.BuildId);
 
   if (!cvt || cvt->kind() != LF_BUILDINFO)
@@ -225,7 +232,7 @@ CompileUnitIndex::GetMainSourceFile(const CompilandIndexItem &item) const {
   if (item.m_build_info.size() < 3)
     return {""};
 
-  LazyRandomTypeCollection &types = m_index.ipi().typeCollection();
+  LazyRandomTypeCollection &types = m_index.ipi()->typeCollection();
 
   StringIdRecord working_dir;
   StringIdRecord file_name;

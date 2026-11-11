@@ -9,15 +9,25 @@
 #ifndef LLDB_SOURCE_PLUGINS_SYMBOLFILE_NATIVEPDB_CODEVIEWREGISTERMAPPING_H
 #define LLDB_SOURCE_PLUGINS_SYMBOLFILE_NATIVEPDB_CODEVIEWREGISTERMAPPING_H
 
+#include "lldb/lldb-enumerations.h"
 #include "llvm/DebugInfo/CodeView/CodeView.h"
 #include "llvm/TargetParser/Triple.h"
 
 namespace lldb_private {
+class ArchSpec;
 namespace npdb {
 
 uint32_t GetLLDBRegisterNumber(llvm::Triple::ArchType arch_type,
                                llvm::codeview::RegisterId register_id);
 uint32_t GetRegisterSize(llvm::codeview::RegisterId register_id);
+
+/// Map CodeView locations using stable numbering on Xbox and native LLDB
+/// numbering on targets with existing mappings.
+uint32_t GetRegisterNumber(const ArchSpec &arch,
+                           llvm::codeview::RegisterId register_id,
+                           lldb::RegisterKind &kind);
+uint32_t GetRegisterSize(const ArchSpec &arch,
+                         llvm::codeview::RegisterId register_id);
 
 } // namespace npdb
 } // namespace lldb_private

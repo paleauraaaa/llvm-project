@@ -1,4 +1,5 @@
 add_lldb_unittest(SymbolFileNativePDBTests
+  CodeViewRegisterMappingTests.cpp
   PdbFPOProgramToDWARFExpressionTests.cpp
   UdtRecordCompleterTests.cpp
 

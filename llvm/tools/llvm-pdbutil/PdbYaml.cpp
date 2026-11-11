@@ -45,6 +45,7 @@ template <> struct ScalarEnumerationTraits<llvm::pdb::PDB_Machine> {
     io.enumCase(Value, "MipsFpu", PDB_Machine::MipsFpu);
     io.enumCase(Value, "MipsFpu16", PDB_Machine::MipsFpu16);
     io.enumCase(Value, "PowerPCFP", PDB_Machine::PowerPCFP);
+    io.enumCase(Value, "PowerPCBE", PDB_Machine::PowerPCBE);
     io.enumCase(Value, "R4000", PDB_Machine::R4000);
     io.enumCase(Value, "SH3", PDB_Machine::SH3);
     io.enumCase(Value, "SH3DSP", PDB_Machine::SH3DSP);
