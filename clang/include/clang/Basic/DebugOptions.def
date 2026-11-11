@@ -125,6 +125,9 @@ DEBUGOPT(EmitCodeView, 1, 0)
 /// Whether to emit the .debug$H section containing hashes of CodeView types.
 DEBUGOPT(CodeViewGHash, 1, 0)
 
+/// Whether to use modern CodeView records instead of legacy Xbox 360 records.
+DEBUGOPT(CodeViewXbox360Modern, 1, 0)
+
 /// Whether to emit the compiler path and command line into the CodeView debug information.
 DEBUGOPT(CodeViewCommandLine, 1, 0)
 
