@@ -18,6 +18,7 @@
 #include "lldb/Utility/Log.h"
 #include "lldb/ValueObject/ValueObjectConstResult.h"
 #include "llvm/MC/TargetRegistry.h"
+#include "llvm/Support/FormatVariadic.h"
 #include <cctype>
 
 using namespace lldb;
@@ -42,6 +43,155 @@ ABI::FindPlugin(lldb::ProcessSP process_sp, const ArchSpec &arch) {
 }
 
 ABI::~ABI() = default;
+
+namespace {
+// Mirror Microsoft's exception constants without depending on Windows headers.
+enum class MicrosoftExceptionCode : uint32_t {
+  EXCEPTION_GUARD_PAGE = 0x80000001,
+  EXCEPTION_DATATYPE_MISALIGNMENT = 0x80000002,
+  EXCEPTION_BREAKPOINT = 0x80000003,
+  EXCEPTION_SINGLE_STEP = 0x80000004,
+  EXCEPTION_ACCESS_VIOLATION = 0xc0000005,
+  EXCEPTION_IN_PAGE_ERROR = 0xc0000006,
+  EXCEPTION_ILLEGAL_INSTRUCTION = 0xc000001d,
+  EXCEPTION_NONCONTINUABLE_EXCEPTION = 0xc0000025,
+  EXCEPTION_INVALID_DISPOSITION = 0xc0000026,
+  EXCEPTION_ARRAY_BOUNDS_EXCEEDED = 0xc000008c,
+  EXCEPTION_FLT_DENORMAL_OPERAND = 0xc000008d,
+  EXCEPTION_FLT_DIVIDE_BY_ZERO = 0xc000008e,
+  EXCEPTION_FLT_INEXACT_RESULT = 0xc000008f,
+  EXCEPTION_FLT_INVALID_OPERATION = 0xc0000090,
+  EXCEPTION_FLT_OVERFLOW = 0xc0000091,
+  EXCEPTION_FLT_STACK_CHECK = 0xc0000092,
+  EXCEPTION_FLT_UNDERFLOW = 0xc0000093,
+  EXCEPTION_INT_DIVIDE_BY_ZERO = 0xc0000094,
+  EXCEPTION_INT_OVERFLOW = 0xc0000095,
+  EXCEPTION_PRIV_INSTRUCTION = 0xc0000096,
+  EXCEPTION_STACK_OVERFLOW = 0xc00000fd,
+  EH_EXCEPTION_NUMBER = 0xe06d7363,
+};
+} // namespace
+
+std::string ABI::ExceptionRecord::GetDescription() const {
+  const char *name = "unknown exception";
+  auto exception_code = static_cast<MicrosoftExceptionCode>(code);
+
+  switch (exception_code) {
+  case MicrosoftExceptionCode::EXCEPTION_GUARD_PAGE:
+    name = "guard page violation";
+    break;
+  case MicrosoftExceptionCode::EXCEPTION_DATATYPE_MISALIGNMENT:
+    name = "datatype misalignment";
+    break;
+  case MicrosoftExceptionCode::EXCEPTION_BREAKPOINT:
+    name = "breakpoint";
+    break;
+  case MicrosoftExceptionCode::EXCEPTION_SINGLE_STEP:
+    name = "single step";
+    break;
+  case MicrosoftExceptionCode::EXCEPTION_ACCESS_VIOLATION:
+    name = "access violation";
+    break;
+  case MicrosoftExceptionCode::EXCEPTION_IN_PAGE_ERROR:
+    name = "in-page error";
+    break;
+  case MicrosoftExceptionCode::EXCEPTION_ILLEGAL_INSTRUCTION:
+    name = "illegal instruction";
+    break;
+  case MicrosoftExceptionCode::EXCEPTION_NONCONTINUABLE_EXCEPTION:
+    name = "noncontinuable exception";
+    break;
+  case MicrosoftExceptionCode::EXCEPTION_INVALID_DISPOSITION:
+    name = "invalid disposition";
+    break;
+  case MicrosoftExceptionCode::EXCEPTION_ARRAY_BOUNDS_EXCEEDED:
+    name = "array bounds exceeded";
+    break;
+  case MicrosoftExceptionCode::EXCEPTION_FLT_DENORMAL_OPERAND:
+    name = "floating-point denormal operand";
+    break;
+  case MicrosoftExceptionCode::EXCEPTION_FLT_DIVIDE_BY_ZERO:
+    name = "floating-point divide by zero";
+    break;
+  case MicrosoftExceptionCode::EXCEPTION_FLT_INEXACT_RESULT:
+    name = "floating-point inexact result";
+    break;
+  case MicrosoftExceptionCode::EXCEPTION_FLT_INVALID_OPERATION:
+    name = "floating-point invalid operation";
+    break;
+  case MicrosoftExceptionCode::EXCEPTION_FLT_OVERFLOW:
+    name = "floating-point overflow";
+    break;
+  case MicrosoftExceptionCode::EXCEPTION_FLT_STACK_CHECK:
+    name = "floating-point stack check";
+    break;
+  case MicrosoftExceptionCode::EXCEPTION_FLT_UNDERFLOW:
+    name = "floating-point underflow";
+    break;
+  case MicrosoftExceptionCode::EXCEPTION_INT_DIVIDE_BY_ZERO:
+    name = "integer divide by zero";
+    break;
+  case MicrosoftExceptionCode::EXCEPTION_INT_OVERFLOW:
+    name = "integer overflow";
+    break;
+  case MicrosoftExceptionCode::EXCEPTION_PRIV_INSTRUCTION:
+    name = "privileged instruction";
+    break;
+  case MicrosoftExceptionCode::EXCEPTION_STACK_OVERFLOW:
+    name = "stack overflow";
+    break;
+  case MicrosoftExceptionCode::EH_EXCEPTION_NUMBER:
+    name = "Microsoft C++ exception";
+    break;
+  }
+
+  std::string description =
+      llvm::formatv("{0} ({1:x8}) at {2:x8}", name, code, address).str();
+
+  if ((exception_code == MicrosoftExceptionCode::EXCEPTION_ACCESS_VIOLATION ||
+       exception_code == MicrosoftExceptionCode::EXCEPTION_IN_PAGE_ERROR) &&
+      parameters.size() >= 2) {
+    const char *operation = nullptr;
+    switch (parameters[0]) {
+    case 0:
+      operation = "read";
+      break;
+    case 1:
+      operation = "write";
+      break;
+    case 8:
+      operation = "execute";
+      break;
+    }
+    if (operation)
+      description +=
+          llvm::formatv(": {0} at {1:x8}", operation, parameters[1]).str();
+    else
+      description += llvm::formatv(": access operation {0:x} at {1:x8}",
+                                   parameters[0], parameters[1])
+                         .str();
+  }
+
+  if (flags & 1)
+    description += " (noncontinuable)";
+  return description;
+}
+
+StructuredData::DictionarySP ABI::ExceptionRecord::GetStructuredData() const {
+  auto info = std::make_shared<StructuredData::Dictionary>();
+  info->AddIntegerItem("code", code);
+  info->AddIntegerItem("flags", flags);
+  info->AddIntegerItem("record_address", record_address);
+  info->AddIntegerItem("address", address);
+  info->AddIntegerItem("next_record", next_record);
+  info->AddBooleanItem("continuable", !(flags & 1));
+  info->AddStringItem("description", GetDescription());
+  auto args = std::make_shared<StructuredData::Array>();
+  for (uint64_t parameter : parameters)
+    args->AddIntegerItem(parameter);
+  info->AddItem("parameters", args);
+  return info;
+}
 
 bool RegInfoBasedABI::GetRegisterInfoByName(llvm::StringRef name,
                                             RegisterInfo &info) {

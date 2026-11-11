@@ -55,6 +55,9 @@ public:
   bool RegisterIsVolatile(const lldb_private::RegisterInfo *reg_info) override;
   llvm::Expected<RuntimeTLS>
   GetRuntimeTLS(lldb_private::Thread &thread) override;
+  llvm::Expected<ExceptionRecord>
+  ReadExceptionRecord(lldb_private::Thread &thread,
+                      lldb::addr_t address) override;
   bool CallFrameAddressIsValid(lldb::addr_t cfa) override;
   bool CodeAddressIsValid(lldb::addr_t pc) override;
   lldb::addr_t FixCodeAddress(lldb::addr_t pc) override;

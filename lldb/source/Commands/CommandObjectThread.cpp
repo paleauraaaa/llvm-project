@@ -29,6 +29,7 @@
 #include "lldb/Target/ABI.h"
 #include "lldb/Target/Process.h"
 #include "lldb/Target/RegisterContext.h"
+#include "lldb/Target/StopInfo.h"
 #include "lldb/Target/SystemRuntime.h"
 #include "lldb/Target/Target.h"
 #include "lldb/Target/Thread.h"
@@ -1486,7 +1487,8 @@ public:
   CommandObjectThreadException(CommandInterpreter &interpreter)
       : CommandObjectIterateOverThreads(
             interpreter, "thread exception",
-            "Display the current exception object for a thread. Defaults to "
+            "Display the current exception event and exception object for a "
+            "thread. Defaults to "
             "the current thread.",
             "thread exception",
             eCommandRequiresProcess | eCommandTryTargetAPILock |
@@ -1512,6 +1514,15 @@ public:
     }
 
     Stream &strm = result.GetOutputStream();
+    auto stop_info = thread_sp->GetStopInfo();
+    if (stop_info && stop_info->GetStopReason() == eStopReasonException) {
+      strm.Format("thread #{0}: {1}\n", thread_sp->GetIndexID(),
+                  stop_info->GetDescription());
+      if (auto info = stop_info->GetExtendedInfo()) {
+        info->Dump(strm);
+        strm.EOL();
+      }
+    }
     ValueObjectSP exception_object_sp = thread_sp->GetCurrentException();
     if (exception_object_sp) {
       if (llvm::Error error = exception_object_sp->Dump(strm)) {
@@ -1530,6 +1541,54 @@ public:
     }
 
     return true;
+  }
+};
+
+class CommandObjectThreadExceptionRecord : public CommandObjectParsed {
+public:
+  CommandObjectThreadExceptionRecord(CommandInterpreter &interpreter)
+      : CommandObjectParsed(
+            interpreter, "thread exception-record",
+            "Read a guest exception record at an explicit address. Does not "
+            "change the current stop, follow record chains, or resume the "
+            "process. The address must be supplied by the user; no register "
+            "is assumed to hold an exception record.",
+            "thread exception-record <address>",
+            eCommandRequiresProcess | eCommandRequiresThread |
+                eCommandTryTargetAPILock | eCommandProcessMustBeLaunched |
+                eCommandProcessMustBePaused) 
+  {
+    AddSimpleArgumentList(eArgTypeAddress, eArgRepeatPlain);
+  }
+
+protected:
+  void DoExecute(Args &command, CommandReturnObject &result) override {
+    addr_t address;
+    if (command.GetArgumentCount() != 1 ||
+        llvm::StringRef(command.GetArgumentAtIndex(0))
+            .getAsInteger(0, address)) 
+    {
+      result.AppendError("expected one numeric guest exception record address");
+      return;
+    }
+
+    auto abi = m_exe_ctx.GetProcessPtr()->GetABI();
+    if (!abi) {
+      result.AppendError("missing target ABI");
+      return;
+    }
+
+    auto record = abi->ReadExceptionRecord(*m_exe_ctx.GetThreadPtr(), address);
+    if (!record) {
+      result.AppendError(llvm::toString(record.takeError()));
+      return;
+    }
+    
+    result.GetOutputStream().PutCString(record->GetDescription());
+    result.GetOutputStream().EOL();
+    record->GetStructuredData()->Dump(result.GetOutputStream());
+    result.GetOutputStream().EOL();
+    result.SetStatus(eReturnStatusSuccessFinishResult);
   }
 };
 
@@ -2688,6 +2747,9 @@ CommandObjectMultiwordThread::CommandObjectMultiwordThread(
                  CommandObjectSP(new CommandObjectThreadInfo(interpreter)));
   LoadSubCommand("exception", CommandObjectSP(new CommandObjectThreadException(
                                   interpreter)));
+  LoadSubCommand(
+      "exception-record",
+      CommandObjectSP(new CommandObjectThreadExceptionRecord(interpreter)));
   LoadSubCommand("siginfo",
                  CommandObjectSP(new CommandObjectThreadSiginfo(interpreter)));
   LoadSubCommand("step-in",

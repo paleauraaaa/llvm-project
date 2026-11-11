@@ -1,0 +1,4 @@
+# REQUIRES: powerpc
+# RUN: %python %S/Inputs/xbox360-exceptions.py powerpc-ibm-xbox360 packet %lldb
+# RUN: %python %S/Inputs/xbox360-exceptions.py powerpc64-ibm-xbox360 json %lldb
+# RUN: %python %S/Inputs/xbox360-exceptions.py powerpc-unknown-linux packet %lldb
