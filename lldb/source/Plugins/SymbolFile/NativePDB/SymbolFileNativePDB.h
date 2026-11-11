@@ -13,14 +13,16 @@
 #include "lldb/Symbol/SymbolFile.h"
 
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/StringMap.h"
 #include "llvm/DebugInfo/CodeView/CVRecord.h"
 #include "llvm/DebugInfo/CodeView/SymbolRecord.h"
 #include "llvm/DebugInfo/PDB/PDBTypes.h"
 
 #include "CompileUnitIndex.h"
-#include "PdbIndex.h"
 #include "PdbAstBuilder.h"
+#include "PdbIndex.h"
 #include <optional>
+#include <vector>
 
 namespace clang {
 class TagDecl;
@@ -262,6 +264,8 @@ private:
 
   lldb::addr_t m_obj_load_address = 0;
   bool m_done_full_type_scan = false;
+  std::optional<llvm::StringMap<std::vector<llvm::codeview::TypeIndex>>>
+      m_type_basename_index;
   // UID for anonymous union and anonymous struct as they don't have entities in
   // pdb debug info.
   lldb::user_id_t anonymous_id = LLDB_INVALID_UID - 1;

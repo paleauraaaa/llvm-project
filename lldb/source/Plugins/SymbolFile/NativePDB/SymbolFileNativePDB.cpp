@@ -14,16 +14,19 @@
 #include "Plugins/TypeSystem/Clang/TypeSystemClang.h"
 #include "lldb/Core/Module.h"
 #include "lldb/Core/PluginManager.h"
+#include "lldb/Core/Section.h"
 #include "lldb/Symbol/CompileUnit.h"
 #include "lldb/Symbol/LineTable.h"
 #include "lldb/Symbol/ObjectFile.h"
 #include "lldb/Symbol/SymbolContext.h"
 #include "lldb/Symbol/SymbolVendor.h"
+#include "lldb/Symbol/Symtab.h"
 #include "lldb/Symbol/Variable.h"
 #include "lldb/Symbol/VariableList.h"
 #include "lldb/Utility/LLDBLog.h"
 #include "lldb/Utility/Log.h"
 
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/DebugInfo/CodeView/CVRecord.h"
 #include "llvm/DebugInfo/CodeView/CVTypeVisitor.h"
 #include "llvm/DebugInfo/CodeView/DebugLinesSubsection.h"
@@ -38,6 +41,7 @@
 #include "llvm/DebugInfo/PDB/Native/ModuleDebugStream.h"
 #include "llvm/DebugInfo/PDB/Native/NativeSession.h"
 #include "llvm/DebugInfo/PDB/Native/PDBFile.h"
+#include "llvm/DebugInfo/PDB/Native/PublicsStream.h"
 #include "llvm/DebugInfo/PDB/Native/SymbolStream.h"
 #include "llvm/DebugInfo/PDB/Native/TpiStream.h"
 #include "llvm/DebugInfo/PDB/PDB.h"
@@ -1047,7 +1051,38 @@ lldb::LanguageType SymbolFileNativePDB::ParseLanguage(CompileUnit &comp_unit) {
   return TranslateLanguage(item->m_compile_opts->getLanguage());
 }
 
-void SymbolFileNativePDB::AddSymbols(Symtab &symtab) {}
+void SymbolFileNativePDB::AddSymbols(Symtab &symtab) {
+  std::lock_guard<std::recursive_mutex> guard(GetModuleMutex());
+  auto sections = m_objfile_sp->GetSectionList();
+  if (!sections)
+    return;
+
+  llvm::DenseSet<addr_t> addresses;
+  for (size_t i = 0; i < symtab.GetNumSymbols(); ++i)
+    addresses.insert(symtab.SymbolAtIndex(i)->GetFileAddress());
+
+  for (uint32_t offset : m_index->publics().getAddressMap()) {
+    CVSymbol record = m_index->symrecords().readRecord(offset);
+    auto pub = SymbolDeserializer::deserializeAs<PublicSym32>(record);
+    if (!pub) {
+      LLDB_LOG_ERROR(GetLog(LLDBLog::Symbols), pub.takeError(),
+                     "Unable to read PDB public symbol: {0}");
+      continue;
+    }
+    SectionSP section = sections->FindSectionByID(pub->Segment);
+    if (!section ||
+        !addresses.insert(section->GetFileAddress() + pub->Offset).second)
+      continue;
+    bool is_code =
+        (pub->Flags & (PublicSymFlags::Code | PublicSymFlags::Function)) !=
+        PublicSymFlags::None;
+    symtab.AddSymbol(Symbol(
+        toOpaqueUid(PdbGlobalSymId(offset, false)), pub->Name.str().c_str(),
+        is_code ? eSymbolTypeCode : eSymbolTypeData, true, false, false, false,
+        section, pub->Offset, 0, false, false, 0));
+  }
+  symtab.Finalize();
+}
 
 size_t SymbolFileNativePDB::ParseFunctions(CompileUnit &comp_unit) {
   std::lock_guard<std::recursive_mutex> guard(GetModuleMutex());
@@ -1660,9 +1695,18 @@ void SymbolFileNativePDB::FindGlobalVariables(
   std::lock_guard<std::recursive_mutex> guard(GetModuleMutex());
   using SymbolAndOffset = std::pair<uint32_t, llvm::codeview::CVSymbol>;
 
+  std::string qualified_name = name.GetStringRef().str();
+  if (parent_decl_ctx) {
+    auto scope = parent_decl_ctx.GetScopeQualifiedName().GetStringRef();
+    if (!scope.empty())
+      qualified_name = (scope + "::" + qualified_name).str();
+  }
   std::vector<SymbolAndOffset> results = m_index->globals().findRecordsByName(
-      name.GetStringRef(), m_index->symrecords());
+      qualified_name, m_index->symrecords());
+  uint32_t matches = 0;
   for (const SymbolAndOffset &result : results) {
+    if (max_matches && matches >= max_matches)
+      break;
     switch (result.second.kind()) {
     case SymbolKind::S_GDATA32:
     case SymbolKind::S_LDATA32:
@@ -1670,8 +1714,10 @@ void SymbolFileNativePDB::FindGlobalVariables(
     case SymbolKind::S_LTHREAD32:
     case SymbolKind::S_CONSTANT: {
       PdbGlobalSymId global(result.first, false);
-      if (VariableSP var = GetOrCreateGlobalVariable(global))
+      if (VariableSP var = GetOrCreateGlobalVariable(global)) {
         variables.AddVariable(var);
+        ++matches;
+      }
       break;
     }
     default:
@@ -1733,10 +1779,26 @@ void SymbolFileNativePDB::FindTypes(const lldb_private::TypeQuery &query,
 
   std::lock_guard<std::recursive_mutex> guard(GetModuleMutex());
 
-  std::vector<TypeIndex> matches =
-      m_index->tpi().findRecordsByName(query.GetTypeBasename().GetStringRef());
+  // TPI hashes fully qualified names, while LLDB queries index basenames.
+  if (!m_type_basename_index) {
+    m_type_basename_index.emplace();
+    TypeIndex ti{m_index->tpi().TypeIndexBegin()};
+    for (const CVType &cvt : m_index->tpi().typeArray()) {
+      if (IsTagRecord(cvt)) {
+        CVTagRecord tag = CVTagRecord::create(cvt);
+        auto basename =
+            MSVCUndecoratedNameParser::DropScope(tag.asTag().getName());
+        (*m_type_basename_index)[basename].push_back(ti);
+      }
+      ++ti;
+    }
+  }
+  auto matches =
+      m_type_basename_index->find(query.GetTypeBasename().GetStringRef());
+  if (matches == m_type_basename_index->end())
+    return;
 
-  for (TypeIndex type_idx : matches) {
+  for (TypeIndex type_idx : matches->second) {
     TypeSP type_sp = GetOrCreateType(type_idx);
     if (!type_sp)
       continue;
@@ -2175,6 +2237,22 @@ void SymbolFileNativePDB::GetTypes(lldb_private::SymbolContextScope *sc_scope,
 
 CompilerDeclContext SymbolFileNativePDB::FindNamespace(
     ConstString name, const CompilerDeclContext &parent_decl_ctx, bool) {
+  std::lock_guard<std::recursive_mutex> guard(GetModuleMutex());
+  auto ts_or_err = GetTypeSystemForLanguage(eLanguageTypeC_plus_plus);
+  if (!ts_or_err) {
+    LLDB_LOG_ERROR(GetLog(LLDBLog::Symbols), ts_or_err.takeError(),
+                   "Unable to find namespace {1}: {0}", name.AsCString());
+    return {};
+  }
+  auto *ast_builder = (*ts_or_err)->GetNativePDBParser();
+  if (!ast_builder)
+    return {};
+  if (parent_decl_ctx &&
+      parent_decl_ctx.GetTypeSystem() != &ast_builder->clang())
+    return {};
+  if (auto *ns =
+          ast_builder->FindNamespaceDecl(parent_decl_ctx, name.GetStringRef()))
+    return ast_builder->ToCompilerDeclContext(*ns);
   return {};
 }
 

@@ -1,0 +1,13 @@
+breakpoint set -f xbox360-pdb.cpp -l 101
+breakpoint list -v
+image lookup -v -n debug_entry
+type lookup game::Actor
+type lookup game::Actor::Position
+type lookup game::Kind
+type lookup game::Box<game::Actor *>
+target variable game::actor game::box
+expression -- sizeof(game::Actor)
+expression -- sizeof(game::actor.next)
+expression -- sizeof(game::Kind)
+expression -- sizeof(game::Actor::Position)
+quit
