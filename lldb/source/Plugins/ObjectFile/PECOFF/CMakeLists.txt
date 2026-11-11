@@ -16,6 +16,7 @@ lldb_tablegen(ObjectFilePECOFFPropertiesEnum.inc -gen-lldb-property-enum-defs
 add_lldb_library(lldbPluginObjectFilePECOFF PLUGIN
   ObjectFilePECOFF.cpp
   PECallFrameInfo.cpp
+  Xbox360CallFrameInfo.cpp
   WindowsMiniDump.cpp
 
   LINK_LIBS

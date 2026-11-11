@@ -12,21 +12,28 @@
 #include "Plugins/ABI/PowerPC/ABISysV_ppc.h"
 #include "Plugins/ABI/PowerPC/ABISysV_ppc64.h"
 #include "Plugins/ExpressionParser/Clang/ClangUtil.h"
+#include "Plugins/ObjectFile/PECOFF/ObjectFilePECOFF.h"
 #include "Plugins/Platform/Linux/PlatformLinux.h"
 #include "Plugins/ScriptInterpreter/None/ScriptInterpreterNone.h"
 #include "Plugins/TypeSystem/Clang/TypeSystemClang.h"
 #include "TestingSupport/SubsystemRAII.h"
 #include "TestingSupport/Symbol/ClangTestUtils.h"
+#include "TestingSupport/TestUtilities.h"
 #include "lldb/Core/Debugger.h"
+#include "lldb/Core/Module.h"
+#include "lldb/Core/Section.h"
 #include "lldb/Core/Value.h"
+#include "lldb/Expression/DWARFExpression.h"
 #include "lldb/Host/FileSystem.h"
 #include "lldb/Host/HostInfo.h"
+#include "lldb/Symbol/CallFrameInfo.h"
 #include "lldb/Symbol/CompilerDeclContext.h"
 #include "lldb/Symbol/UnwindPlan.h"
 #include "lldb/Target/Process.h"
 #include "lldb/Target/RegisterContext.h"
 #include "lldb/Target/Target.h"
 #include "lldb/Target/Thread.h"
+#include "lldb/Target/UnwindLLDB.h"
 #include "lldb/Target/Xbox360RegisterInfo.h"
 #include "lldb/Utility/Listener.h"
 #include "lldb/Utility/RegisterValue.h"
@@ -35,6 +42,7 @@
 #include "clang/AST/DeclCXX.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/TargetSelect.h"
+#include "llvm/Testing/Support/Error.h"
 #include "gtest/gtest.h"
 #include <array>
 
@@ -144,7 +152,7 @@ public:
 
 class Xbox360ABI : public testing::Test {
   SubsystemRAII<FileSystem, HostInfo, platform_linux::PlatformLinux,
-                ScriptInterpreterNone>
+                ObjectFilePECOFF, ScriptInterpreterNone>
       subsystems;
 
 protected:
@@ -568,6 +576,102 @@ TEST_F(Xbox360ABI, IntegerReturnWidthsAndSignedness) {
   EXPECT_EQ(value->GetValueAsUnsigned(0), 0x876543feu);
   registers->Set("r3", RegisterValue(uint64_t(0xdeadbeef00000001)));
   ExpectReturnBytes(Type(eBasicTypeBool), {1});
+}
+
+TEST_F(Xbox360ABI, UnwindAddressesUseLow32Bits) {
+  EXPECT_EQ(abi->FixCodeAddress(0xdeadbeef82001000), 0x82001000u);
+  EXPECT_EQ(abi->FixDataAddress(0xdeadbeef00011000), 0x11000u);
+  EXPECT_EQ(abi->FixCodeAddress(LLDB_INVALID_ADDRESS), LLDB_INVALID_ADDRESS);
+  EXPECT_EQ(abi->FixDataAddress(LLDB_INVALID_ADDRESS), LLDB_INVALID_ADDRESS);
+}
+
+TEST_F(Xbox360ABI, PackedUnwindExpressionsReadFourByteLRAndCRSaves) {
+  auto file = TestFile::fromYaml(R"(
+--- !COFF
+OptionalHeader:
+  ImageBase: 0x82000000
+  SectionAlignment: 4096
+  FileAlignment: 512
+  Subsystem: IMAGE_SUBSYSTEM_XBOX
+  ExceptionTable:
+    RelativeVirtualAddress: 8192
+    Size: 16
+header:
+  Machine: IMAGE_FILE_MACHINE_PPCBE
+  Characteristics: [ IMAGE_FILE_EXECUTABLE_IMAGE ]
+sections:
+  - Name: .text
+    VirtualAddress: 4096
+    VirtualSize: 60
+    Characteristics: [ IMAGE_SCN_CNT_CODE, IMAGE_SCN_MEM_READ, IMAGE_SCN_MEM_EXECUTE ]
+    SectionData: 7D8802A69181FFF87D8000269181FFF49421FF8048000101382100808181FFF87D8803A64E8000207D8802A69181FFF89421FF80600000004E800020
+  - Name: .pdata
+    VirtualAddress: 8192
+    VirtualSize: 16
+    Characteristics: [ IMAGE_SCN_CNT_INITIALIZED_DATA, IMAGE_SCN_MEM_READ ]
+    SectionData: 8200100040000A058200102840000503
+symbols: []
+...
+)");
+  ASSERT_THAT_EXPECTED(file, llvm::Succeeded());
+  auto module = std::make_shared<Module>(file->moduleSpec());
+  auto *object = module->GetObjectFile();
+  ASSERT_TRUE(object);
+  auto cfi = object->CreateCallFrameInfo();
+  ASSERT_TRUE(cfi);
+  UnwindPlan plan(eRegisterKindDWARF);
+  ASSERT_TRUE(cfi->GetUnwindPlan(Address(0x82001014), plan));
+  auto row = plan.GetRowForFunctionOffset(20);
+  ASSERT_TRUE(row);
+  registers->Set("r1", RegisterValue(uint64_t(0xdeadbeef00011000)));
+  EXPECT_EQ(abi->FixDataAddress(registers->Get("r1")) +
+                row->GetCFAValue().GetOffset(),
+            0x11080u);
+  // The bytes after the four-byte LR spill must not become part of the LR.
+  llvm::support::endian::write32be(process->memory.data() + 0x1078, 0x82001038);
+  llvm::support::endian::write32be(process->memory.data() + 0x107c, 0xdeadbeef);
+  llvm::support::endian::write32be(process->memory.data() + 0x1074, 0x12345678);
+  ExecutionContext context(thread.get());
+  Value cfa(Scalar(uint64_t(0x11080)));
+  cfa.SetValueType(Value::ValueType::LoadAddress);
+  for (auto [reg, expected] : {std::pair{65u, 0x82001038u},
+                               {70u, 3u},
+                               {71u, 4u},
+                               {72u, 5u},
+                               {73u, 6u}}) {
+    UnwindPlan::Row::AbstractRegisterLocation location;
+    ASSERT_TRUE(row->GetRegisterInfo(reg, location));
+    ASSERT_TRUE(location.IsDWARFExpression());
+    const uint8_t *bytes;
+    uint16_t size;
+    location.GetDWARFExpr(&bytes, size);
+    DataExtractor expression(bytes, size, eByteOrderBig, 4);
+    auto result =
+        DWARFExpression::Evaluate(&context, registers.get(), {}, expression,
+                                  nullptr, eRegisterKindDWARF, &cfa, nullptr);
+    ASSERT_THAT_EXPECTED(result, llvm::Succeeded());
+    EXPECT_EQ(result->GetScalar().ULongLong(), expected);
+  }
+
+  target->GetImages().Append(module);
+  auto text = object->GetSectionList()->FindSectionByName(ConstString(".text"));
+  ASSERT_TRUE(text);
+  ASSERT_TRUE(target->SetSectionLoadAddress(text, 0x82001000));
+  registers->Set("lr", RegisterValue(uint64_t(0xdeadbeef82001038)));
+  registers->Set("r12", RegisterValue(uint64_t(0xdeadbeef82001038)));
+  for (uint32_t offset : {4u, 8u, 20u, 24u, 28u, 32u, 36u}) {
+    registers->Set("pc", RegisterValue(uint32_t(0x82001000 + offset)));
+    registers->Set("r1", RegisterValue(uint64_t(
+        offset < 20 || offset >= 28 ? 0xdeadbeef00011080 : 0xdeadbeef00011000)));
+    UnwindLLDB unwinder(*thread);
+    addr_t frame_cfa, pc;
+    bool zeroth;
+    ASSERT_TRUE(unwinder.GetFrameInfoAtIndex(0, frame_cfa, pc, zeroth));
+    EXPECT_EQ(frame_cfa, 0x11080u);
+    ASSERT_TRUE(unwinder.GetFrameInfoAtIndex(1, frame_cfa, pc, zeroth));
+    EXPECT_EQ(pc, 0x82001038u);
+    EXPECT_EQ(frame_cfa, 0x11100u);
+  }
 }
 
 TEST_F(Xbox360ABI, PointerReferenceAndEnumReturns) {

@@ -44,6 +44,25 @@
 using namespace lldb;
 using namespace lldb_private;
 
+namespace {
+bool ResolveUnwindScope(Address address, SymbolContext &context,
+                        AddressRange &range) {
+  bool resolved = address.ResolveFunctionScope(context, &range);
+  if (auto module = address.GetModule()) {
+    auto *info = module->GetUnwindTable().GetObjectFileUnwindInfo();
+    AddressRange unwind_range;
+    if (info && info->GetAddressRange(address, unwind_range)) {
+      // Packed unwind records may split a symbol into multiple funclets, and
+      // also provide function boundaries when symbols have been stripped.
+      context.module_sp = module;
+      range = unwind_range;
+      return true;
+    }
+  }
+  return resolved;
+}
+} // namespace
+
 static ConstString GetSymbolOrFunctionName(const SymbolContext &sym_ctx) {
   if (sym_ctx.symbol)
     return sym_ctx.symbol->GetName();
@@ -159,7 +178,7 @@ void RegisterContextUnwind::InitializeZerothFrame() {
   }
 
   AddressRange addr_range;
-  m_sym_ctx_valid = m_current_pc.ResolveFunctionScope(m_sym_ctx, &addr_range);
+  m_sym_ctx_valid = ResolveUnwindScope(m_current_pc, m_sym_ctx, addr_range);
 
   if (m_sym_ctx.symbol) {
     UnwindLogMsg("with pc value of 0x%" PRIx64 ", symbol name is '%s'",
@@ -498,7 +517,7 @@ void RegisterContextUnwind::InitializeNonZerothFrame() {
   }
 
   AddressRange addr_range;
-  m_sym_ctx_valid = m_current_pc.ResolveFunctionScope(m_sym_ctx, &addr_range);
+  m_sym_ctx_valid = ResolveUnwindScope(m_current_pc, m_sym_ctx, addr_range);
 
   if (m_sym_ctx.symbol) {
     UnwindLogMsg("with pc value of 0x%" PRIx64 ", symbol name is '%s'", pc,
@@ -557,7 +576,7 @@ void RegisterContextUnwind::InitializeNonZerothFrame() {
     Address temporary_pc;
     temporary_pc.SetLoadAddress(pc - 1, &process->GetTarget());
     m_sym_ctx.Clear(false);
-    m_sym_ctx_valid = temporary_pc.ResolveFunctionScope(m_sym_ctx, &addr_range);
+    m_sym_ctx_valid = ResolveUnwindScope(temporary_pc, m_sym_ctx, addr_range);
 
     UnwindLogMsg("Symbol is now %s",
                  GetSymbolOrFunctionName(m_sym_ctx).AsCString(""));
@@ -1951,7 +1970,7 @@ void RegisterContextUnwind::PropagateTrapHandlerFlagFromUnwindPlan(
     m_current_offset_backed_up_one = m_current_offset;
 
     AddressRange addr_range;
-    m_sym_ctx_valid = m_current_pc.ResolveFunctionScope(m_sym_ctx, &addr_range);
+    m_sym_ctx_valid = ResolveUnwindScope(m_current_pc, m_sym_ctx, addr_range);
 
     UnwindLogMsg("Symbol is now %s",
                  GetSymbolOrFunctionName(m_sym_ctx).AsCString(""));
