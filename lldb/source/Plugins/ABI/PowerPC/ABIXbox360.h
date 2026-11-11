@@ -37,6 +37,10 @@ public:
   bool GetArgumentValues(lldb_private::Thread &thread,
                          lldb_private::ValueList &values) const override;
 
+  std::optional<lldb::addr_t>
+  GetThreadLocalData(lldb_private::Thread &thread, const lldb::ModuleSP &module,
+                     lldb::addr_t tls_offset) override;
+
   lldb_private::Status
   SetReturnValueObject(lldb::StackFrameSP &frame_sp,
                        lldb::ValueObjectSP &new_value) override;

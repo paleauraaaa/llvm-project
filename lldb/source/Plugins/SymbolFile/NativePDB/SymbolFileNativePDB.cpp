@@ -907,7 +907,9 @@ VariableSP SymbolFileNativePDB::CreateGlobalVariable(PdbGlobalSymId var_id) {
 
   ModuleSP module_sp = GetObjectFile()->GetModule();
   DWARFExpressionList location(
-      module_sp, MakeGlobalLocationExpression(section, offset, module_sp),
+      module_sp,
+      MakeGlobalLocationExpression(section, offset, module_sp,
+                                   scope == eValueTypeVariableThreadLocal),
       nullptr);
 
   std::string global_name("::");

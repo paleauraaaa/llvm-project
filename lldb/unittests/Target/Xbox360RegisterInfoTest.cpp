@@ -41,6 +41,7 @@ TEST(Xbox360RegisterInfo, CompleteDescription) {
     EXPECT_EQ(reg.encoding, eEncodingVector);
     EXPECT_EQ(reg.regnum_dwarf, i < 32 ? 77 + i : 1268 + i);
   }
+  EXPECT_EQ(registers[13].regnum_generic, LLDB_REGNUM_GENERIC_TP);
   EXPECT_EQ(registers[192].name, ConstString("pc"));
   EXPECT_EQ(registers[192].byte_size, 4u);
   EXPECT_EQ(registers[193].name, ConstString("lr"));
@@ -103,6 +104,22 @@ TEST(Xbox360RegisterInfo, DoesNotChangeOtherTargets) {
     EXPECT_FALSE(AugmentXbox360RegisterInfo(ArchSpec(triple), registers));
     EXPECT_EQ(registers[0].regnum_dwarf, LLDB_INVALID_REGNUM);
   }
+}
+
+TEST(Xbox360RegisterInfo, AugmentsThreadPointerWithoutChangingWireLayout) {
+  DynamicRegisterInfo::Register reg;
+  reg.name = ConstString("r13");
+  reg.byte_size = 8;
+  reg.byte_offset = 104;
+  reg.regnum_remote = 13;
+  std::vector<DynamicRegisterInfo::Register> registers{reg};
+  ASSERT_TRUE(
+      AugmentXbox360RegisterInfo(ArchSpec("powerpc-ibm-xbox360"), registers));
+  EXPECT_EQ(registers[0].regnum_generic, LLDB_REGNUM_GENERIC_TP);
+  EXPECT_EQ(registers[0].regnum_dwarf, 13u);
+  EXPECT_EQ(registers[0].byte_size, 8u);
+  EXPECT_EQ(registers[0].byte_offset, 104u);
+  EXPECT_EQ(registers[0].regnum_remote, 13u);
 }
 
 TEST(Xbox360RegisterInfo, FullWidthBigEndianValues) {

@@ -15,6 +15,7 @@
 #include "Plugins/ObjectFile/PECOFF/ObjectFilePECOFF.h"
 #include "Plugins/Platform/Linux/PlatformLinux.h"
 #include "Plugins/ScriptInterpreter/None/ScriptInterpreterNone.h"
+#include "Plugins/SymbolFile/NativePDB/DWARFLocationExpression.h"
 #include "Plugins/TypeSystem/Clang/TypeSystemClang.h"
 #include "TestingSupport/SubsystemRAII.h"
 #include "TestingSupport/Symbol/ClangTestUtils.h"
@@ -327,6 +328,7 @@ TEST_F(Xbox360ABI, Selection) {
     auto selected = ABI::FindPlugin({}, arch);
     ASSERT_TRUE(selected);
     EXPECT_NE(selected->GetPluginName(), "xbox360");
+    EXPECT_FALSE(selected->GetThreadLocalData(*thread, {}, 0).has_value());
   }
 }
 
@@ -789,6 +791,128 @@ TEST_F(Xbox360ABI, UnwindAddressesUseLow32Bits) {
   EXPECT_EQ(abi->FixDataAddress(0xdeadbeef00011000), 0x11000u);
   EXPECT_EQ(abi->FixCodeAddress(LLDB_INVALID_ADDRESS), LLDB_INVALID_ADDRESS);
   EXPECT_EQ(abi->FixDataAddress(LLDB_INVALID_ADDRESS), LLDB_INVALID_ADDRESS);
+}
+
+TEST_F(Xbox360ABI, StaticTLSIsThreadRelativeAndBigEndian) {
+  auto file = TestFile::fromYaml(R"(
+--- !COFF
+OptionalHeader:
+  ImageBase: 0x82000000
+  SectionAlignment: 4096
+  FileAlignment: 512
+  Subsystem: IMAGE_SUBSYSTEM_XBOX
+header:
+  Machine: IMAGE_FILE_MACHINE_PPCBE
+  Characteristics: [ IMAGE_FILE_EXECUTABLE_IMAGE ]
+sections:
+  - Name: .tls
+    VirtualAddress: 4096
+    VirtualSize: 64
+    Characteristics: [ IMAGE_SCN_CNT_INITIALIZED_DATA, IMAGE_SCN_MEM_READ, IMAGE_SCN_MEM_WRITE ]
+    SectionData: '00000000'
+symbols: []
+...
+)");
+  ASSERT_THAT_EXPECTED(file, llvm::Succeeded());
+  auto module = std::make_shared<Module>(file->moduleSpec());
+  ASSERT_TRUE(module->GetObjectFile());
+  target->SetExecutableModule(module, eLoadDependentsNo);
+  auto tls = module->GetSectionList()->FindSectionByName(ConstString(".tls"));
+  ASSERT_TRUE(tls);
+  // Deliberately relocate the image: TLS is not an ordinary static address.
+  ASSERT_TRUE(target->SetSectionLoadAddress(tls, 0x83001000));
+
+  auto second = std::make_shared<TestThread>(*process);
+  second->registers->Set("r13", RegisterValue(uint64_t(0xdeadbeef00010010)));
+  registers->Set("r13", RegisterValue(uint64_t(0xdeadbeef00010000)));
+  EXPECT_EQ(registers->GetThreadPointer(), 0xdeadbeef00010000ull);
+  llvm::support::endian::write32be(process->memory.data(), 0x12000);
+  llvm::support::endian::write32be(process->memory.data() + 4, 0xdeadbeef);
+  llvm::support::endian::write32be(process->memory.data() + 0x10, 0x13000);
+  EXPECT_EQ(thread->GetThreadLocalData(module, 0), 0x12000u);
+  EXPECT_EQ(thread->GetThreadLocalData(module, 12), 0x1200cu);
+  EXPECT_EQ(second->GetThreadLocalData(module, 12), 0x1300cu);
+  EXPECT_EQ(thread->GetThreadLocalData(module, 63), 0x1203fu);
+
+  auto expression = npdb::MakeGlobalLocationExpression(
+      tls->GetID(), 12, module, /*is_thread_local=*/true);
+  ExecutionContext context(thread.get());
+  DataExtractor expression_data;
+  ASSERT_TRUE(expression.GetExpressionData(expression_data));
+  auto result = DWARFExpression::Evaluate(&context, registers.get(), module,
+                                          expression_data, nullptr,
+                                          eRegisterKindDWARF, nullptr, nullptr);
+  ASSERT_THAT_EXPECTED(result, llvm::Succeeded());
+  EXPECT_EQ(result->GetValueType(), Value::ValueType::LoadAddress);
+  EXPECT_EQ(result->GetScalar().ULongLong(), 0x1200cu);
+  ExecutionContext second_context(second.get());
+  auto second_result = DWARFExpression::Evaluate(
+      &second_context, second->registers.get(), module, expression_data,
+      nullptr, eRegisterKindDWARF, nullptr, nullptr);
+  ASSERT_THAT_EXPECTED(second_result, llvm::Succeeded());
+  EXPECT_EQ(second_result->GetScalar().ULongLong(), 0x1300cu);
+  for (uint8_t op : {llvm::dwarf::DW_OP_form_tls_address,
+                     llvm::dwarf::DW_OP_GNU_push_tls_address}) {
+    const uint8_t bytes[] = {llvm::dwarf::DW_OP_constu, 12, op};
+    DataExtractor data(bytes, sizeof(bytes), eByteOrderBig, 4);
+    auto address = DWARFExpression::Evaluate(&context, registers.get(), module,
+                                             data, nullptr, eRegisterKindDWARF,
+                                             nullptr, nullptr);
+    ASSERT_THAT_EXPECTED(address, llvm::Succeeded());
+    EXPECT_EQ(address->GetScalar().ULongLong(), 0x1200cu);
+  }
+
+  auto other = npdb::MakeGlobalLocationExpression(tls->GetID(), 12, module);
+  ASSERT_TRUE(other.GetExpressionData(expression_data));
+  auto global = DWARFExpression::Evaluate(&context, registers.get(), module,
+                                          expression_data, nullptr,
+                                          eRegisterKindDWARF, nullptr, nullptr);
+  ASSERT_THAT_EXPECTED(global, llvm::Succeeded());
+  EXPECT_EQ(global->GetValueType(), Value::ValueType::FileAddress);
+  EXPECT_EQ(global->GetScalar().ULongLong(), 0x8200100cu);
+  EXPECT_FALSE(npdb::MakeGlobalLocationExpression(tls->GetID(), 64, module,
+                                                  /*is_thread_local=*/true)
+                   .IsValid());
+  EXPECT_FALSE(npdb::MakeGlobalLocationExpression(99, 0, module,
+                                                  /*is_thread_local=*/true)
+                   .IsValid());
+
+  // The block pointer is read again after a stop, never cached per module.
+  const uint8_t replacement[] = {0, 1, 0x30, 0};
+  Status error;
+  ASSERT_EQ(
+      process->WriteMemory(0x10000, replacement, sizeof(replacement), error),
+      sizeof(replacement));
+  EXPECT_EQ(thread->GetThreadLocalData(module, 12), 0x1300cu);
+
+  EXPECT_EQ(thread->GetThreadLocalData(module, 64), LLDB_INVALID_ADDRESS);
+  EXPECT_EQ(thread->GetThreadLocalData(module, LLDB_INVALID_ADDRESS),
+            LLDB_INVALID_ADDRESS);
+  EXPECT_EQ(thread->GetThreadLocalData({}, 0), LLDB_INVALID_ADDRESS);
+  auto different_module = std::make_shared<Module>(file->moduleSpec());
+  EXPECT_EQ(thread->GetThreadLocalData(different_module, 0),
+            LLDB_INVALID_ADDRESS);
+  for (addr_t value :
+       {addr_t(0), addr_t(0x10001), addr_t(0x100000), LLDB_INVALID_ADDRESS}) {
+    registers->Set("r13", RegisterValue(value));
+    EXPECT_EQ(thread->GetThreadLocalData(module, 0), LLDB_INVALID_ADDRESS);
+  }
+  registers->Set("r13", RegisterValue(uint64_t(0x10000)));
+  registers->unreadable = "r13";
+  EXPECT_EQ(thread->GetThreadLocalData(module, 0), LLDB_INVALID_ADDRESS);
+  registers->unreadable.clear();
+  registers->Set("r13", RegisterValue(uint64_t(0x10400)));
+  process->fail_memory = true;
+  EXPECT_EQ(thread->GetThreadLocalData(module, 0), LLDB_INVALID_ADDRESS);
+  process->fail_memory = false;
+  registers->Set("r13", RegisterValue(uint64_t(0x10000)));
+  for (uint32_t block : {0u, 0x12001u, 0xfffffffcu}) {
+    uint8_t bytes[4];
+    llvm::support::endian::write32be(bytes, block);
+    ASSERT_EQ(process->WriteMemory(0x10000, bytes, sizeof(bytes), error),
+              sizeof(bytes));
+    EXPECT_EQ(thread->GetThreadLocalData(module, 12), LLDB_INVALID_ADDRESS);
+  }
 }
 
 TEST_F(Xbox360ABI, PackedUnwindExpressionsReadFourByteLRAndCRSaves) {
