@@ -146,8 +146,9 @@ public:
                            lldb::ValueObjectSP return_valobj_sp,
                            lldb::ExpressionVariableSP expression_variable_sp);
 
-  static lldb::StopInfoSP
-  CreateStopReasonWithException(Thread &thread, const char *description);
+  static lldb::StopInfoSP CreateStopReasonWithException(
+      Thread &thread, const char *description,
+      StructuredData::ObjectSP extended_info = nullptr);
 
   static lldb::StopInfoSP CreateStopReasonWithExec(Thread &thread);
 

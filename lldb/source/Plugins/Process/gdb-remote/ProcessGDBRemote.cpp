@@ -1732,6 +1732,25 @@ ThreadSP ProcessGDBRemote::SetThreadStopInfo(
     if (ThreadSP memory_thread_sp = m_thread_list.GetBackingThread(thread_sp))
       thread_sp = memory_thread_sp;
 
+      StructuredData::DictionarySP info;
+      const auto &triple = GetTarget().GetArchitecture().GetTriple();
+      if (triple.isOSXbox360() && (triple.getArch() == llvm::Triple::ppc ||
+                                   triple.getArch() == llvm::Triple::ppc64)) 
+      {
+        info = std::make_shared<StructuredData::Dictionary>();
+        info->AddStringItem("type", "xbox360");
+        info->AddIntegerItem("signal", signo);
+        info->AddIntegerItem("thread_id", thread_sp->GetID());
+        info->AddStringItem("description", description);
+        addr_t pc = thread_sp->GetRegisterContext()->GetPC();
+        if (pc != LLDB_INVALID_ADDRESS)
+          info->AddIntegerItem("pc", pc & UINT32_MAX);
+        // The standard stop reply supplies no guest exception code or chance.
+      }
+
+      StopInfoSP stop = StopInfo::CreateStopReasonWithException(
+          *thread_sp, description.c_str(), std::move(info));
+
     if (exc_type != 0) {
       // For thread plan async interrupt, creating stop info on the
       // original async interrupt request thread instead. If interrupt thread
@@ -1861,8 +1880,7 @@ ThreadSP ProcessGDBRemote::SetThreadStopInfo(
               *thread_sp, watch_id, silently_continue));
           handled = true;
         } else if (reason == "exception") {
-          thread_sp->SetStopInfo(StopInfo::CreateStopReasonWithException(
-              *thread_sp, description.c_str()));
+          thread_sp->SetStopInfo(stop);
           handled = true;
         } else if (reason == "exec") {
           did_exec = true;
@@ -1960,8 +1978,8 @@ ThreadSP ProcessGDBRemote::SetThreadStopInfo(
           if (interrupt_thread)
             thread_sp = interrupt_thread;
           else
-            thread_sp->SetStopInfo(StopInfo::CreateStopReasonWithSignal(
-                *thread_sp, signo, description.c_str()));
+              thread_sp->SetStopInfo(StopInfo::CreateStopReasonWithSignal(
+                  *thread_sp, signo, description.c_str()));
         }
       }
 
@@ -1972,8 +1990,7 @@ ThreadSP ProcessGDBRemote::SetThreadStopInfo(
           if (!stop_info_desc || !stop_info_desc[0])
             stop_info_sp->SetDescription(description.c_str());
         } else {
-          thread_sp->SetStopInfo(StopInfo::CreateStopReasonWithException(
-              *thread_sp, description.c_str()));
+          thread_sp->SetStopInfo(stop);
         }
       }
     }

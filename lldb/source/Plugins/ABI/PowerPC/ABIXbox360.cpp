@@ -640,6 +640,60 @@ llvm::Expected<ABI::RuntimeTLS> ABIXbox360::GetRuntimeTLS(Thread &thread) {
   return RuntimeTLS{*slots, kSlotCount, kSlotSize};
 }
 
+llvm::Expected<ABI::ExceptionRecord>
+ABIXbox360::ReadExceptionRecord(Thread &thread, addr_t address) {
+  constexpr uint32_t kHeaderSize = 20;
+  constexpr uint32_t kMaxParameters = 15;
+  constexpr uint32_t kParameterSize = 4;
+  if (!address || address % 4 || address > UINT32_MAX - (kHeaderSize - 1))
+    return llvm::createStringError("invalid Xbox 360 exception record address");
+
+  auto process = thread.GetProcess();
+  if (!process)
+    return llvm::createStringError("missing Xbox 360 exception process");
+
+  uint8_t bytes[kHeaderSize + kMaxParameters * kParameterSize];
+  auto read = [&](addr_t location, uint8_t *buffer,
+                  size_t size) -> llvm::Error {
+    Status error;
+    if (process->ReadMemory(location, buffer, size, error) != size ||
+        error.Fail())
+      return llvm::createStringError(
+          "cannot read Xbox 360 exception record at 0x%" PRIx64, location);
+    return llvm::Error::success();
+  };
+
+  if (auto error = read(address, bytes, kHeaderSize))
+    return std::move(error);
+
+  auto word = [&](uint32_t offset) {
+    return llvm::support::endian::read32be(bytes + offset);
+  };
+
+  uint32_t count = word(16);
+  if (count > kMaxParameters) {
+    return llvm::createStringError(
+        "Xbox 360 exception record has too many parameters");
+  }
+
+  uint32_t size = kHeaderSize + count * kParameterSize;
+  if (address > UINT32_MAX - (size - 1))
+    return llvm::createStringError("Xbox 360 exception record overflows");
+
+  if (count) {
+    if (auto error = read(address + kHeaderSize, bytes + kHeaderSize,
+                          count * kParameterSize)) {
+      return std::move(error);
+    }
+  }
+
+  ExceptionRecord record{word(0), word(4), address, word(12), word(8), {}};
+  for (uint32_t i = 0; i < count; ++i)
+    record.parameters.push_back(word(kHeaderSize + i * kParameterSize));
+
+  return record;
+}
+
 bool ABIXbox360::CreateDefaultUnwindPlan(UnwindPlan &unwind_plan) {
   unwind_plan.Clear();
   return false;

@@ -9,6 +9,7 @@
 #include "lldb/Target/ThreadPlanRunToAddress.h"
 #include "lldb/Target/Process.h"
 #include "lldb/Target/RegisterContext.h"
+#include "lldb/Target/StopInfo.h"
 #include "lldb/Target/Target.h"
 #include "lldb/Target/Thread.h"
 #include "lldb/Utility/LLDBLog.h"
@@ -190,6 +191,10 @@ bool ThreadPlanRunToAddress::MischiefManaged() {
 }
 
 bool ThreadPlanRunToAddress::AtOurAddress() {
+  // An exception at the destination is not a successful run-to-address stop.
+  auto stop_info = GetPrivateStopInfo();
+  if (stop_info && stop_info->GetStopReason() == eStopReasonException)
+    return false;
   lldb::addr_t current_address = GetThread().GetRegisterContext()->GetPC();
   bool found_it = false;
   size_t num_addresses = m_addresses.size();

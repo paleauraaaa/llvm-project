@@ -13,6 +13,7 @@
 #include "lldb/Symbol/UnwindPlan.h"
 #include "lldb/Target/DynamicRegisterInfo.h"
 #include "lldb/Utility/Status.h"
+#include "lldb/Utility/StructuredData.h"
 #include "lldb/lldb-private.h"
 
 #include "llvm/ADT/ArrayRef.h"
@@ -135,6 +136,27 @@ public:
     return llvm::createStringError(
         llvm::inconvertibleErrorCode(),
         "runtime TLS inspection is not supported by this ABI");
+  }
+
+  /// A frozen Windows-style guest exception record, independent of host layout.
+  struct ExceptionRecord {
+    uint32_t code;
+    uint32_t flags;
+    lldb::addr_t record_address;
+    lldb::addr_t address;
+    lldb::addr_t next_record;
+    std::vector<uint64_t> parameters;
+
+    std::string GetDescription() const;
+    StructuredData::DictionarySP GetStructuredData() const;
+  };
+
+  /// Read one guest exception record without following its chain or running
+  /// code.
+  virtual llvm::Expected<ExceptionRecord>
+  ReadExceptionRecord(Thread &thread, lldb::addr_t address) {
+    return llvm::createStringError(
+        "guest exception record inspection is not supported by this ABI");
   }
 
   virtual bool CreateFunctionEntryUnwindPlan(UnwindPlan &unwind_plan) = 0;

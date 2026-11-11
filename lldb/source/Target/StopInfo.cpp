@@ -1227,10 +1227,12 @@ public:
 
 class StopInfoException : public StopInfo {
 public:
-  StopInfoException(Thread &thread, const char *description)
+  StopInfoException(Thread &thread, const char *description,
+                    StructuredData::ObjectSP extended_info)
       : StopInfo(thread, LLDB_INVALID_UID) {
     if (description)
       SetDescription(description);
+    m_extended_info = std::move(extended_info);
   }
 
   ~StopInfoException() override = default;
@@ -1486,9 +1488,11 @@ StopInfoSP StopInfo::CreateStopReasonWithPlan(
                                            expression_variable_sp));
 }
 
-StopInfoSP StopInfo::CreateStopReasonWithException(Thread &thread,
-                                                   const char *description) {
-  return StopInfoSP(new StopInfoException(thread, description));
+StopInfoSP StopInfo::CreateStopReasonWithException(
+    Thread &thread, const char *description,
+    StructuredData::ObjectSP extended_info) {
+  return StopInfoSP(
+      new StopInfoException(thread, description, std::move(extended_info)));
 }
 
 StopInfoSP StopInfo::CreateStopReasonProcessorTrace(Thread &thread,

@@ -33,9 +33,11 @@
 #include "lldb/Target/Process.h"
 #include "lldb/Target/RegisterContext.h"
 #include "lldb/Target/StackFrame.h"
+#include "lldb/Target/StopInfo.h"
 #include "lldb/Target/Target.h"
 #include "lldb/Target/Thread.h"
 #include "lldb/Target/ThreadPlanCallFunction.h"
+#include "lldb/Target/ThreadPlanRunToAddress.h"
 #include "lldb/Target/UnwindLLDB.h"
 #include "lldb/Target/Xbox360RegisterInfo.h"
 #include "lldb/Utility/Listener.h"
@@ -191,8 +193,15 @@ public:
 
 class TestCallPlan : public ThreadPlanCallFunction {
 public:
-  TestCallPlan(Thread &thread)
-      : ThreadPlanCallFunction(thread, Address(), Options()) {}
+  TestCallPlan(Thread &thread, bool unwind_on_error = true)
+      : ThreadPlanCallFunction(thread, Address(), Options(unwind_on_error)) {}
+
+  void SetReturnAddress(addr_t address) {
+    m_subplan_sp =
+        std::make_shared<ThreadPlanRunToAddress>(GetThread(), address, true);
+  }
+
+  bool ExplainStop() { return DoPlanExplainsStop(nullptr); }
 
   bool Setup(Thread &thread) {
     ABI *abi = nullptr;
@@ -201,9 +210,10 @@ public:
   }
 
 private:
-  static EvaluateExpressionOptions Options() {
+  static EvaluateExpressionOptions Options(bool unwind_on_error) {
     EvaluateExpressionOptions options;
     options.SetTrapExceptions(false);
+    options.SetUnwindOnError(unwind_on_error);
     return options;
   }
 };
@@ -368,6 +378,8 @@ TEST_F(Xbox360ABI, Selection) {
     EXPECT_NE(selected->GetPluginName(), "xbox360");
     EXPECT_FALSE(selected->GetThreadLocalData(*thread, {}, 0).has_value());
     EXPECT_THAT_EXPECTED(selected->GetRuntimeTLS(*thread), llvm::Failed());
+    EXPECT_THAT_EXPECTED(selected->ReadExceptionRecord(*thread, 0x10000),
+                         llvm::Failed());
   }
 }
 
@@ -911,6 +923,137 @@ TEST_F(Xbox360ABI, CodeViewRegisterAndStackLocations) {
   EXPECT_FALSE(npdb::MakeEnregisteredLocationExpressionForComposite(
                    pieces, sizes, 16, module)
                    .IsValid());
+}
+
+TEST_F(Xbox360ABI, ExceptionRecordIsBigEndianAndFrozen) {
+  const uint32_t words[] = {0xc0000005, 1, 0x10000,    0x82001234,
+                            3,          1, 0xdeadbeef, 0x80000000};
+  for (size_t i = 0; i < std::size(words); ++i)
+    llvm::support::endian::write32be(process->memory.data() + i * 4, words[i]);
+  auto record = abi->ReadExceptionRecord(*thread, 0x10000);
+  ASSERT_THAT_EXPECTED(record, llvm::Succeeded());
+  EXPECT_EQ(record->code, 0xc0000005u);
+  EXPECT_EQ(record->flags, 1u);
+  EXPECT_EQ(record->address, 0x82001234u);
+  EXPECT_EQ(record->next_record, 0x10000u);
+  EXPECT_EQ(record->parameters,
+            (std::vector<uint64_t>{1, 0xdeadbeef, 0x80000000}));
+  EXPECT_EQ(record->GetDescription(),
+            "access violation (0xc0000005) at 0x82001234: write at "
+            "0xdeadbeef (noncontinuable)");
+  auto info = record->GetStructuredData();
+  uint64_t code;
+  ASSERT_TRUE(info->GetValueForKeyAsInteger("code", code));
+  EXPECT_EQ(code, 0xc0000005u);
+  EXPECT_FALSE(info->HasKey("first_chance"));
+  EXPECT_FALSE(info->HasKey("context_address"));
+  Status error;
+  const uint8_t zero[32] = {};
+  ASSERT_EQ(process->WriteMemory(0x10000, zero, sizeof(zero), error),
+            sizeof(zero));
+  EXPECT_EQ(record->parameters[1], 0xdeadbeefu);
+  // A self-referential chain above is preserved, never traversed.
+  EXPECT_EQ(record->next_record, 0x10000u);
+}
+
+TEST_F(Xbox360ABI, ExceptionRecordBoundsAndFailures) {
+  for (addr_t address : {addr_t(0), addr_t(1), addr_t(UINT32_MAX - 15),
+                         addr_t(0x100000000ull), LLDB_INVALID_ADDRESS})
+    EXPECT_THAT_EXPECTED(abi->ReadExceptionRecord(*thread, address),
+                         llvm::Failed());
+  EXPECT_THAT_EXPECTED(abi->ReadExceptionRecord(*thread, 0x20000),
+                       llvm::Failed());
+  for (uint32_t count : {0u, 15u, 16u, UINT32_MAX}) {
+    uint8_t bytes[80] = {};
+    llvm::support::endian::write32be(bytes + 16, count);
+    Status error;
+    ASSERT_EQ(process->WriteMemory(0x10000, bytes, sizeof(bytes), error),
+              sizeof(bytes));
+    auto record = abi->ReadExceptionRecord(*thread, 0x10000);
+    if (count > 15) {
+      EXPECT_THAT_EXPECTED(record, llvm::Failed());
+    } else {
+      ASSERT_THAT_EXPECTED(record, llvm::Succeeded());
+      EXPECT_EQ(record->parameters.size(), count);
+    }
+  }
+  uint8_t header[20] = {};
+  llvm::support::endian::write32be(header + 16, 1);
+  Status error;
+  ASSERT_EQ(process->WriteMemory(0x13fec, header, sizeof(header), error),
+            sizeof(header));
+  EXPECT_THAT_EXPECTED(abi->ReadExceptionRecord(*thread, 0x13fec),
+                       llvm::Failed());
+}
+
+TEST_F(Xbox360ABI, ExceptionDescriptionsPreserveUnknownCodesAndFlags) {
+  ABI::ExceptionRecord record{0x12345678, 2, 0x10000, 0x82001000, 0, {}};
+  EXPECT_EQ(record.GetDescription(),
+            "unknown exception (0x12345678) at 0x82001000");
+  for (auto [code, name] : {std::pair{0x80000003u, "breakpoint"},
+                            {0x80000004u, "single step"},
+                            {0xc000001du, "illegal instruction"},
+                            {0xc0000094u, "integer divide by zero"},
+                            {0xc00000fdu, "stack overflow"},
+                            {0xe06d7363u, "Microsoft C++ exception"}}) {
+    record.code = code;
+    EXPECT_EQ(record.GetDescription().find(name), 0u);
+  }
+  record.code = 0xc0000005;
+  for (auto [operation, name] :
+       {std::pair{0u, "read"}, {1u, "write"}, {8u, "execute"}}) {
+    record.parameters = {operation, 0x12000};
+    EXPECT_NE(
+        record.GetDescription().find(std::string(name) + " at 0x00012000"),
+        std::string::npos);
+  }
+  record.parameters = {9, 0x12000};
+  EXPECT_NE(record.GetDescription().find("access operation 0x9"),
+            std::string::npos);
+}
+
+TEST_F(Xbox360ABI, ExceptionStopInfoPreservesMetadataWithoutInventingCode) {
+  auto info = std::make_shared<StructuredData::Dictionary>();
+  info->AddIntegerItem("signal", 11);
+  auto stop =
+      StopInfo::CreateStopReasonWithException(*thread, "guest exception", info);
+  EXPECT_EQ(stop->GetStopReason(), eStopReasonException);
+  EXPECT_EQ(stop->GetValue(), LLDB_INVALID_UID);
+  EXPECT_STREQ(stop->GetDescription(), "guest exception");
+  EXPECT_EQ(stop->GetExtendedInfo(), info);
+  EXPECT_TRUE(stop->ShouldStopSynchronous(nullptr));
+  auto legacy = StopInfo::CreateStopReasonWithException(*thread, nullptr);
+  EXPECT_EQ(legacy->GetStopReason(), eStopReasonException);
+  EXPECT_STREQ(legacy->GetDescription(), "exception");
+  EXPECT_FALSE(legacy->GetExtendedInfo());
+}
+
+TEST_F(Xbox360ABI, ExceptionAtCallReturnAddressIsNotSuccessfulCompletion) {
+  registers->Set("pc", RegisterValue(uint32_t(0x82001000)));
+  auto stop = StopInfo::CreateStopReasonWithException(*thread,
+                                                      "guest access violation");
+  thread->SetStopInfo(stop);
+  {
+    ThreadPlanRunToAddress plan(*thread, addr_t(0x82001000), true);
+    EXPECT_FALSE(plan.PlanExplainsStop(nullptr));
+    EXPECT_FALSE(plan.ShouldStop(nullptr));
+    EXPECT_FALSE(plan.MischiefManaged());
+    EXPECT_FALSE(plan.IsPlanComplete());
+  }
+  for (bool unwind : {false, true}) {
+    TestCallPlan plan(*thread, unwind);
+    plan.SetReturnAddress(0x82001000);
+    EXPECT_EQ(plan.ExplainStop(), unwind);
+    EXPECT_EQ(plan.IsPlanComplete(), unwind);
+    if (plan.IsPlanComplete())
+      EXPECT_FALSE(plan.PlanSucceeded());
+    EXPECT_EQ(plan.GetRealStopInfo(), stop);
+  }
+  thread->SetStopInfo(StopInfo::CreateStopReasonToTrace(*thread));
+  ThreadPlanRunToAddress completed(*thread, addr_t(0x82001000), true);
+  EXPECT_TRUE(completed.PlanExplainsStop(nullptr));
+  EXPECT_TRUE(completed.MischiefManaged());
+  EXPECT_TRUE(completed.PlanSucceeded());
 }
 
 TEST_F(Xbox360ABI, RuntimeTLSUsesKernelThreadInsteadOfStaticBlock) {
