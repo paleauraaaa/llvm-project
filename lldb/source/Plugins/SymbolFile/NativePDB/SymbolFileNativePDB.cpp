@@ -142,18 +142,6 @@ loadMatchingPDBFile(std::string exe_path, llvm::BumpPtrAllocator &allocator) {
   return pdb;
 }
 
-static bool IsFunctionPrologue(const CompilandIndexItem &cci,
-                               lldb::addr_t addr) {
-  // FIXME: Implement this.
-  return false;
-}
-
-static bool IsFunctionEpilogue(const CompilandIndexItem &cci,
-                               lldb::addr_t addr) {
-  // FIXME: Implement this.
-  return false;
-}
-
 static llvm::StringRef GetSimpleTypeName(SimpleTypeKind kind) {
   switch (kind) {
   case SimpleTypeKind::Boolean128:
@@ -1263,6 +1251,29 @@ bool SymbolFileNativePDB::ParseLineTable(CompileUnit &comp_unit) {
   // entries with same addres, the later is always more accurate than the
   // former.
   std::set<LineTable::Entry, LineTableEntryComparator> line_set;
+  std::set<addr_t> prologue_ends;
+  std::set<addr_t> epilogue_begins;
+  const CVSymbolArray &syms = cii->m_debug_stream.getSymbolArray();
+  // Procedure debug offsets bound the source-debuggable code range. A 0/0
+  // pair carries no boundary information.
+  for (const CVSymbol &sym : syms) {
+    if (sym.kind() != S_GPROC32 && sym.kind() != S_LPROC32)
+      continue;
+
+    ProcSym proc(static_cast<SymbolRecordKind>(sym.kind()));
+    cantFail(SymbolDeserializer::deserializeAs<ProcSym>(sym, proc));
+    if (proc.DbgEnd <= proc.DbgStart || proc.DbgEnd > proc.CodeSize)
+      continue;
+
+    addr_t function_start =
+        m_index->MakeVirtualAddress(proc.Segment, proc.CodeOffset);
+    if (function_start == LLDB_INVALID_ADDRESS)
+      continue;
+
+    prologue_ends.insert(function_start + proc.DbgStart);
+    if (proc.DbgEnd < proc.CodeSize)
+      epilogue_begins.insert(function_start + proc.DbgEnd);
+  }
 
   // This is basically a copy of the .debug$S subsections from all original COFF
   // object files merged together with address relocations applied.  We are
@@ -1303,8 +1314,8 @@ bool SymbolFileNativePDB::ParseLineTable(CompileUnit &comp_unit) {
         uint64_t addr = virtual_addr + entry.Offset;
 
         bool is_statement = cur_info.isStatement();
-        bool is_prologue = IsFunctionPrologue(*cii, addr);
-        bool is_epilogue = IsFunctionEpilogue(*cii, addr);
+        bool is_prologue = prologue_ends.count(addr);
+        bool is_epilogue = epilogue_begins.count(addr);
 
         uint32_t lno = cur_info.getStartLine();
 
@@ -1337,7 +1348,6 @@ bool SymbolFileNativePDB::ParseLineTable(CompileUnit &comp_unit) {
   cii->m_global_line_table.Sort();
 
   // Parse all S_INLINESITE in this CU.
-  const CVSymbolArray &syms = cii->m_debug_stream.getSymbolArray();
   for (auto iter = syms.begin(); iter != syms.end();) {
     if (iter->kind() != S_LPROC32 && iter->kind() != S_GPROC32) {
       ++iter;

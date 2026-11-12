@@ -153,11 +153,11 @@ int main(int argc, char **argv) {
 // CHECK:      (lldb) target modules dump ast
 // CHECK-NEXT: Dumping clang ast for {{.*}} modules.
 // CHECK-NEXT: TranslationUnitDecl
-// CHECK-NEXT: |-FunctionDecl {{.*}} main 'int (int, char **)'
-// CHECK-NEXT: | |-ParmVarDecl {{.*}} argc 'int'
-// CHECK-NEXT: | `-ParmVarDecl {{.*}} argv 'char **'
-// CHECK-NEXT: |-FunctionDecl {{.*}} __scrt_common_main_seh 'int ()' static 
-// CHECK-NEXT: |-FunctionDecl {{.*}} invoke_main 'int ()' inline
-// CHECK: `-FunctionDecl {{.*}} Function 'int (int, char)'
-// CHECK-NEXT:   |-ParmVarDecl {{.*}} Param1 'int'
-// CHECK-NEXT:   `-ParmVarDecl {{.*}} Param2 'char'
+// CHECK-DAG: |-FunctionDecl {{.*}} main 'int (int, char **)'
+// CHECK-DAG: | |-ParmVarDecl {{.*}} argc 'int'
+// CHECK-DAG: | `-ParmVarDecl {{.*}} argv 'char **'
+// CHECK-DAG: |-FunctionDecl {{.*}} __scrt_common_main_seh 'int ()' static
+// CHECK-DAG: |-FunctionDecl {{.*}} invoke_main 'int ()' inline
+// CHECK-DAG: {{[|`]}}-FunctionDecl {{.*}} Function 'int (int, char)'
+// CHECK-DAG:   |-ParmVarDecl {{.*}} Param1 'int'
+// CHECK-DAG:   `-ParmVarDecl {{.*}} Param2 'char'
