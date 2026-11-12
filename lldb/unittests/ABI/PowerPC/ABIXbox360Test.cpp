@@ -46,6 +46,9 @@
 #include "lldb/ValueObject/ValueObjectConstResult.h"
 #include "clang/AST/Attr.h"
 #include "clang/AST/DeclCXX.h"
+#include "llvm/ADT/APFloat.h"
+#include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/LLVMContext.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Testing/Support/Error.h"
@@ -568,6 +571,176 @@ TEST_F(Xbox360ABI, TrivialCallPlacement) {
   ASSERT_TRUE(abi->GetArgumentValues(*thread, values));
   for (unsigned i = 0; i != args.size(); ++i)
     EXPECT_EQ(values.GetValueAtIndex(i)->GetScalar().ULongLong(), args[i]);
+}
+
+TEST_F(Xbox360ABI, TypedCallLowersScalarVectorAndVariadicArguments) {
+  llvm::LLVMContext context;
+  llvm::Type *i32 = llvm::Type::getInt32Ty(context);
+  llvm::Type *i64 = llvm::Type::getInt64Ty(context);
+  llvm::Type *float_type = llvm::Type::getFloatTy(context);
+  llvm::Type *double_type = llvm::Type::getDoubleTy(context);
+  llvm::Type *vector_type = llvm::FixedVectorType::get(i32, 4);
+  llvm::FunctionType *prototype = llvm::FunctionType::get(
+      llvm::Type::getVoidTy(context), {i32, float_type, vector_type, i64},
+      /*isVarArg=*/true);
+
+  auto target_arg = [](llvm::Type *type, size_t size, uint64_t value) {
+    ABI::CallArgument arg = {};
+    arg.type = ABI::CallArgument::TargetValue;
+    arg.size = size;
+    arg.value = value;
+    arg.value_type = type;
+    return arg;
+  };
+  std::vector<ABI::CallArgument> args;
+  args.push_back(target_arg(i32, 4, 0x12345678));
+  args.push_back(target_arg(
+      float_type, 4, llvm::APFloat(1.25f).bitcastToAPInt().getZExtValue()));
+  ABI::CallArgument vector_arg = {};
+  vector_arg.type = ABI::CallArgument::HostPointer;
+  vector_arg.size = 16;
+  vector_arg.data_up = std::make_unique<uint8_t[]>(16);
+  vector_arg.value_type = vector_type;
+  for (uint8_t i = 0; i != 16; ++i)
+    vector_arg.data_up[i] = i;
+  args.push_back(std::move(vector_arg));
+  args.push_back(target_arg(i64, 8, 0x1122334455667788ull));
+  args.push_back(target_arg(
+      double_type, 8, llvm::APFloat(-3.5).bitcastToAPInt().getZExtValue()));
+  for (uint64_t i = 5; i != 10; ++i)
+    args.push_back(target_arg(i32, 4, i));
+
+  registers->Set("r4", RegisterValue(uint64_t(0x4444444444444444)));
+  registers->Set("r6", RegisterValue(uint64_t(0x6666666666666666)));
+  ASSERT_TRUE(abi->PrepareTrivialCall(*thread, 0x11000, 0x82001000, 0x82002000,
+                                      *prototype, args));
+
+  EXPECT_EQ(registers->Get("r1"), 0x10f90u);
+  EXPECT_EQ(registers->Get("r3"), 0x12345678u);
+  EXPECT_EQ(registers->Get("r4"), 0x4444444444444444ull);
+  EXPECT_EQ(registers->Get("r5"), 0x1122334455667788ull);
+  EXPECT_EQ(registers->Get("r6"), 0x6666666666666666ull);
+  EXPECT_EQ(registers->Get("r7"), 5u);
+  EXPECT_EQ(registers->Get("r10"), 8u);
+  EXPECT_EQ(registers->Get("f1"),
+            llvm::APFloat(1.25).bitcastToAPInt().getZExtValue());
+  EXPECT_EQ(registers->Get("f2"),
+            llvm::APFloat(-3.5).bitcastToAPInt().getZExtValue());
+
+  const RegisterInfo *vector_reg = registers->GetRegisterInfoByName("v1");
+  RegisterValue vector_value;
+  ASSERT_TRUE(registers->ReadRegister(vector_reg, vector_value));
+  std::array<uint8_t, 16> vector_bytes = {};
+  Status error;
+  ASSERT_EQ(vector_value.GetAsMemoryData(*vector_reg, vector_bytes.data(),
+                                         vector_bytes.size(), eByteOrderBig,
+                                         error),
+            vector_bytes.size());
+  ASSERT_TRUE(error.Success());
+  for (uint8_t i = 0; i != vector_bytes.size(); ++i)
+    EXPECT_EQ(vector_bytes[i], i);
+
+  const uint8_t *frame =
+      process->memory.data() + registers->Get("r1") - TestProcess::base;
+  EXPECT_EQ(llvm::support::endian::read32be(frame + 100), 9u);
+}
+
+TEST_F(Xbox360ABI, TypedCallStagesHostPointersAndIndirectAggregates) {
+  llvm::LLVMContext context;
+  llvm::Type *pointer_type = llvm::PointerType::getUnqual(context);
+  llvm::Type *i32 = llvm::Type::getInt32Ty(context);
+  llvm::Type *record_type = llvm::StructType::get(context, {i32, i32, i32});
+  llvm::FunctionType *prototype = llvm::FunctionType::get(
+      llvm::Type::getVoidTy(context), {pointer_type, record_type},
+      /*isVarArg=*/false);
+
+  ABI::CallArgument string_arg = {};
+  string_arg.type = ABI::CallArgument::HostPointer;
+  string_arg.size = 3;
+  string_arg.data_up = std::make_unique<uint8_t[]>(3);
+  string_arg.data_up[0] = 'a';
+  string_arg.data_up[1] = 'b';
+  string_arg.data_up[2] = '\0';
+  string_arg.value_type = pointer_type;
+
+  ABI::CallArgument record_arg = {};
+  record_arg.type = ABI::CallArgument::HostPointer;
+  record_arg.size = 12;
+  record_arg.data_up = std::make_unique<uint8_t[]>(12);
+  record_arg.value_type = record_type;
+  for (uint8_t i = 0; i != 12; ++i)
+    record_arg.data_up[i] = i + 1;
+  std::array<ABI::CallArgument, 2> args = {std::move(string_arg),
+                                           std::move(record_arg)};
+
+  ASSERT_TRUE(abi->PrepareTrivialCall(*thread, 0x11000, 0x82001000, 0x82002000,
+                                      *prototype, args));
+  addr_t sp = registers->Get("r1");
+  EXPECT_EQ(registers->Get("r3"), sp + 80);
+  EXPECT_EQ(registers->Get("r4"), sp + 96);
+  const uint8_t *frame = process->memory.data() + sp - TestProcess::base;
+  EXPECT_EQ(frame[80], 'a');
+  EXPECT_EQ(frame[81], 'b');
+  EXPECT_EQ(frame[82], '\0');
+  for (uint8_t i = 0; i != 12; ++i)
+    EXPECT_EQ(frame[96 + i], i + 1);
+}
+
+TEST_F(Xbox360ABI, TypedCallSpillsFloatingPointAndVectorOverflow) {
+  llvm::LLVMContext context;
+  llvm::Type *float_type = llvm::Type::getFloatTy(context);
+  llvm::Type *vector_type =
+      llvm::FixedVectorType::get(llvm::Type::getInt32Ty(context), 4);
+  std::vector<llvm::Type *> parameter_types(14, float_type);
+  parameter_types.insert(parameter_types.end(), 14, vector_type);
+  llvm::FunctionType *prototype = llvm::FunctionType::get(
+      llvm::Type::getVoidTy(context), parameter_types, /*isVarArg=*/false);
+
+  std::vector<ABI::CallArgument> args;
+  for (unsigned i = 0; i != 14; ++i) {
+    ABI::CallArgument arg = {};
+    arg.type = ABI::CallArgument::TargetValue;
+    arg.size = 4;
+    arg.value = llvm::APFloat(static_cast<float>(i + 0.5))
+                    .bitcastToAPInt()
+                    .getZExtValue();
+    args.push_back(std::move(arg));
+  }
+  for (unsigned i = 0; i != 14; ++i) {
+    ABI::CallArgument arg = {};
+    arg.type = ABI::CallArgument::HostPointer;
+    arg.size = 16;
+    arg.data_up = std::make_unique<uint8_t[]>(16);
+    for (unsigned byte = 0; byte != 16; ++byte)
+      arg.data_up[byte] = static_cast<uint8_t>(i * 16 + byte);
+    args.push_back(std::move(arg));
+  }
+
+  ASSERT_TRUE(abi->PrepareTrivialCall(*thread, 0x11000, 0x82001000, 0x82002000,
+                                      *prototype, args));
+  addr_t sp = registers->Get("r1");
+  EXPECT_EQ(sp, 0x10ea0u);
+  EXPECT_EQ(registers->Get("f13"),
+            llvm::APFloat(12.5).bitcastToAPInt().getZExtValue());
+
+  const uint8_t *frame = process->memory.data() + sp - TestProcess::base;
+  EXPECT_EQ(llvm::support::endian::read32be(frame + 124),
+            llvm::APFloat(13.5f).bitcastToAPInt().getZExtValue());
+  for (unsigned byte = 0; byte != 16; ++byte)
+    EXPECT_EQ(frame[336 + byte], 13 * 16 + byte);
+
+  const RegisterInfo *vector_reg = registers->GetRegisterInfoByName("v13");
+  RegisterValue vector_value;
+  ASSERT_TRUE(registers->ReadRegister(vector_reg, vector_value));
+  std::array<uint8_t, 16> vector_bytes = {};
+  Status error;
+  ASSERT_EQ(vector_value.GetAsMemoryData(*vector_reg, vector_bytes.data(),
+                                         vector_bytes.size(), eByteOrderBig,
+                                         error),
+            vector_bytes.size());
+  ASSERT_TRUE(error.Success());
+  for (unsigned byte = 0; byte != vector_bytes.size(); ++byte)
+    EXPECT_EQ(vector_bytes[byte], 12 * 16 + byte);
 }
 
 TEST_F(Xbox360ABI, TrivialCallReservesHomeArea) {

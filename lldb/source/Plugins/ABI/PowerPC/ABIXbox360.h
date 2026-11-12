@@ -12,7 +12,7 @@
 
 #include "lldb/Target/ABI.h"
 
-/// Xbox's 32-bit pointer ABI with 64-bit GPRs and VMX128 registers.
+/// The Xbox 360 32-bit pointer ABI with 64-bit GPRs and VMX128 registers.
 class ABIXbox360 : public lldb_private::ABI {
 public:
   static void Initialize();
@@ -26,11 +26,19 @@ public:
 
   /// Build a word-backchain frame below sp, which the call plan has already
   /// lowered past the interrupted function's red zone. Arguments are integer
-  /// scalars in r3-r10 and doubleword stack slots, not typed ABI lowering.
+  /// scalars in r3-r10 and doubleword stack slots.
   bool PrepareTrivialCall(lldb_private::Thread &thread, lldb::addr_t sp,
                           lldb::addr_t function_address,
                           lldb::addr_t return_address,
                           llvm::ArrayRef<lldb::addr_t> args) const override;
+
+  /// Lower typed debugger-injected call arguments into Xbox 360 argument
+  /// registers, VMX128/FPR registers, and the outgoing stack frame.
+  bool PrepareTrivialCall(
+      lldb_private::Thread &thread, lldb::addr_t sp,
+      lldb::addr_t function_address, lldb::addr_t return_address,
+      llvm::Type &prototype,
+      llvm::ArrayRef<lldb_private::ABI::CallArgument> args) const override;
 
   /// Decode standard prototyped scalar and vector arguments at function entry.
   /// ValueList does not describe varargs, hidden arguments or C++ ABI lowering.
