@@ -20,6 +20,7 @@ class XboxTLSResponder(MockGDBServerResponder):
     def __init__(self):
         super().__init__()
         self.thread = 1
+        self.failed_runtime_tls_read = False
         self.memory = bytearray(0x4000)
         self.put32(0x10000, 0x13800)
         self.put32(0x10100, 0x11000)
@@ -84,6 +85,12 @@ class XboxTLSResponder(MockGDBServerResponder):
     def readMemory(self, addr, length):
         if 0x82001000 <= addr < 0x82002000:
             return (bytes.fromhex("4e800020") * ((length + 3) // 4))[:length].hex()
+        if (
+            not self.failed_runtime_tls_read
+            and addr <= 0x13008 < addr + length
+        ):
+            self.failed_runtime_tls_read = True
+            return "E01"
         if addr < 0x10000 or addr + length > 0x14000:
             return "E01"
         return self.memory[addr - 0x10000 : addr - 0x10000 + length].hex()
@@ -107,13 +114,23 @@ commands = [
     "thread tls 255",
     "thread tls 256",
     "thread tls -1",
+    "thread tls list 0 2",
+    "thread tls list 255",
+    "thread tls list 256",
+    "thread tls list 0 0",
     "thread tls bind tls",
     "thread tls bind $tls",
     "thread tls bind $tls",
+    "thread tls bind $bad_slot 256",
+    "thread tls bind $tls_slot 1",
+    "expression -j false -- *$tls_slot",
+    "expression -j false -- *$tls_slot = 0x11223344",
     "expression -j false -- $tls[0]",
     "expression -j false -- $tls[1] = 0x87654321",
+    "thread tls list 1 1",
     "thread tls 1",
     "thread select 2",
+    "thread tls list 0 2",
     "thread tls 0",
     "thread tls bind $tls2",
     "expression -j false -- $tls2[0]",
@@ -132,18 +149,25 @@ try:
     )
     print(completed.stdout)
     assert completed.returncode == 0
-    assert completed.stdout.count("error:") == 4
+    assert completed.stdout.count("error:") == 8
     assert completed.stdout.count("305419896") == 2
     for expected in [
         "256 four-byte slots",
         "TLS[0] = 0x12345678",
         "TLS[255] = 0xfedcba98",
         "slot index must be less than 256",
+        "starting slot index must be less than 256",
+        "slot count must be between 1 and 256",
+        "memory read failed",
         "expected a slot index",
         "expected a persistent variable",
         "bound to thread #1",
+        "TLS slots [0, 2) for thread #1:",
+        "TLS slots [255, 256) for thread #1:",
+        "$tls_slot = 0x12004 (TLS[1]; bound to thread #1)",
         "persistent variable already exists",
         "305419896",
+        "TLS slots [1, 2) for thread #1:",
         "TLS[1] = 0x87654321",
         "TLS[0] = 0xaabbccdd",
         "bound to thread #2",

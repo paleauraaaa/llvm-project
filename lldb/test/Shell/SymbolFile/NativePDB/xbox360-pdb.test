@@ -2,6 +2,7 @@
 # RUN: %clang -target powerpc64-ibm-xbox360 -mcpu=xenon -std=c++17 -g -gcodeview -O0 -c %S/Inputs/xbox360-pdb.cpp -o %t.obj
 # RUN: lld-link /machine:ppcbe /subsystem:xbox /entry:debug_entry /nodefaultlib /debug:full /out:%t.exe /pdb:%t.pdb %t.obj
 # RUN: %lldb -b -f %S/Inputs/xbox360-linker-owned-global.pe -o "target variable global_data" -o "target variable item" | FileCheck %s --check-prefix=LINKER-GLOBAL
+# RUN: env LLDB_USE_NATIVE_PDB_READER=1 %lldb -b -f %S/Inputs/xbox360-linker-owned-global.pe -o "breakpoint set --file pdb-probe-real.c --line 7" -o "breakpoint set --file pdb-probe-real.c --line 8" -o "breakpoint set --file pdb-probe-real.c --line 9" -o "breakpoint set --file pdb-probe-real.c --line 10" -o "breakpoint set --file pdb-probe-real.c --line 11" -o "breakpoint set --file pdb-probe-real.c --line 12" -o "breakpoint set --file pdb-probe-real.c --line 13" -o "breakpoint set --file pdb-probe-real.c --line 11 --skip-prologue false" -o "breakpoint set --file pdb-probe-real.c --line 14" | FileCheck %s --check-prefix=PRODUCER-BP
 # RUN: %lldb -b -f %t.exe -s %S/Inputs/xbox360-pdb.lldbinit | FileCheck %s
 # RUN: %python %S/Inputs/xbox360-pdb-remote.py %t.exe %lldb
 # RUN: %clang -target powerpc64-ibm-xbox360 -mcpu=xenon -std=c++17 -g -gcodeview -gcodeview-xbox360-modern -O0 -c %S/Inputs/xbox360-pdb.cpp -o %t.modern.obj
@@ -12,6 +13,16 @@
 
 # LINKER-GLOBAL: (int) global_data = 7
 # LINKER-GLOBAL: (Record) item = (key = 5, value = 3)
+
+# PRODUCER-BP: Breakpoint 1: where = {{.*}}calculate at pdb-probe-real.c:7, address = 0x82011200
+# PRODUCER-BP: Breakpoint 2: where = {{.*}}calculate + 4 at pdb-probe-real.c:8, address = 0x82011204
+# PRODUCER-BP: Breakpoint 3: where = {{.*}}calculate + 24 at pdb-probe-real.c:9, address = 0x82011218
+# PRODUCER-BP: Breakpoint 4: where = {{.*}}calculate + 40 at pdb-probe-real.c:10, address = 0x82011228
+# PRODUCER-BP: Breakpoint 5: where = {{.*}}main + 12 at pdb-probe-real.c:12, address = 0x8201123c
+# PRODUCER-BP: Breakpoint 6: where = {{.*}}main + 12 at pdb-probe-real.c:12, address = 0x8201123c
+# PRODUCER-BP: Breakpoint 7: where = {{.*}}main + 24 at pdb-probe-real.c:13, address = 0x82011248
+# PRODUCER-BP: Breakpoint 8: where = {{.*}}main at pdb-probe-real.c:11, address = 0x82011230
+# PRODUCER-BP: Breakpoint 9: no locations (pending).
 
 # CHECK: Breakpoint 1:
 # CHECK-SAME: debug_entry

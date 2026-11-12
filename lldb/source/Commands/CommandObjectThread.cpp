@@ -1241,31 +1241,63 @@ public:
   CommandObjectThreadTLS(CommandInterpreter &interpreter)
       : CommandObjectParsed(
             interpreter, "thread tls",
-            "Inspect runtime TLS slots in the selected thread, or bind their "
-            "address to a new persistent expression pointer. A binding is a "
-            "snapshot of this thread's slot-array address, not a "
-            "thread-relative "
-            "variable. Slot allocation state is not checked.",
-            "thread tls [<slot-index> | bind <$variable>]",
+            "Inspect runtime TLS slots in the selected thread, or bind the "
+            "slot array or one slot to a persistent expression pointer. A "
+            "binding is a snapshot of this thread's address, not a "
+            "thread-relative variable. Slot allocation state is not checked.",
+            "thread tls [<slot-index> | list [<start> [<count>]] | "
+            "bind <$variable> [<slot-index>]]",
             eCommandRequiresThread | eCommandRequiresProcess |
                 eCommandTryTargetAPILock | eCommandProcessMustBeLaunched |
-                eCommandProcessMustBePaused) 
-  {
+                eCommandProcessMustBePaused) {
     AddSimpleArgumentList(eArgTypeExpression, eArgRepeatStar);
   }
 
 protected:
   void DoExecute(Args &command, CommandReturnObject &result) override {
-    bool bind = command.GetArgumentCount() == 2 &&
-                command.GetArgumentAtIndex(0) == llvm::StringRef("bind");
+    const unsigned argc = command.GetArgumentCount();
+    const llvm::StringRef first =
+        argc ? llvm::StringRef(command.GetArgumentAtIndex(0))
+             : llvm::StringRef();
+    const bool bind = first == "bind";
+    const bool list = first == "list";
     uint32_t index = 0;
-
-    if (!bind && (command.GetArgumentCount() > 1 ||
-                  (command.GetArgumentCount() == 1 &&
-                   llvm::StringRef(command.GetArgumentAtIndex(0))
-                       .getAsInteger(0, index)))) 
-    {
-      result.AppendError("expected a slot index or 'bind <$variable>'");
+    uint32_t start = 0;
+    uint32_t count = 0;
+    if (bind) {
+      if (argc < 2 || argc > 3) {
+        result.AppendError("expected 'bind <$variable> [<slot-index>]'");
+        return;
+      }
+      if (argc == 3 &&
+          llvm::StringRef(command.GetArgumentAtIndex(2))
+              .getAsInteger(0, index)) {
+        result.AppendError("expected a non-negative slot index");
+        return;
+      }
+    } else if (list) {
+      if (argc > 3) {
+        result.AppendError("expected 'list [<start> [<count>]]'");
+        return;
+      }
+      if (argc >= 2 &&
+          llvm::StringRef(command.GetArgumentAtIndex(1))
+              .getAsInteger(0, start)) {
+        result.AppendError("expected a non-negative starting slot index");
+        return;
+      }
+      if (argc == 3 &&
+          llvm::StringRef(command.GetArgumentAtIndex(2))
+              .getAsInteger(0, count)) {
+        result.AppendError("expected a positive slot count");
+        return;
+      }
+    } else if (argc > 1 ||
+               (argc == 1 &&
+                first.getAsInteger(0, index))) {
+      result.AppendError(
+          "expected a slot index, 'list [<start> [<count>]]', or "
+          "'bind <$variable> [<slot-index>]'");
       return;
     }
 
@@ -1286,14 +1318,35 @@ protected:
       return;
     }
 
+    if (bind && argc == 3 && index >= tls->slot_count) {
+      result.AppendErrorWithFormat("slot index must be less than %u",
+                                   tls->slot_count);
+      return;
+    }
+
+    if (list) {
+      if (start >= tls->slot_count) {
+        result.AppendErrorWithFormat("starting slot index must be less than %u",
+                                     tls->slot_count);
+        return;
+      }
+      if (argc < 3)
+        count = tls->slot_count - start;
+      if (count == 0 || count > tls->slot_count - start) {
+        result.AppendErrorWithFormat(
+            "slot count must be between 1 and %u",
+            tls->slot_count - start);
+        return;
+      }
+    }
+
     if (bind) {
       llvm::StringRef name(command.GetArgumentAtIndex(1));
       llvm::StringRef identifier = name;
       if (!identifier.consume_front("$") || identifier.empty() ||
           !(llvm::isAlpha(identifier.front()) || identifier.front() == '_') ||
           !llvm::all_of(identifier,
-                        [](char c) { return llvm::isAlnum(c) || c == '_'; })) 
-      {
+                        [](char c) { return llvm::isAlnum(c) || c == '_'; })) {
         result.AppendError("expected a persistent variable such as $tls");
         return;
       }
@@ -1305,9 +1358,11 @@ protected:
         return;
       }
 
+      const addr_t address =
+          tls->address + (argc == 3 ? index * tls->slot_size : 0);
       std::string expression =
           llvm::formatv("unsigned int *{0} = (unsigned int *){1:x};", name,
-                        tls->address)
+                        address)
               .str();
 
       EvaluateExpressionOptions options;
@@ -1325,14 +1380,38 @@ protected:
         return;
       }
 
-      result.GetOutputStream().Format(
-          "{0} = {1:x} ({2} slots; bound to thread #{3})\n", name, tls->address,
-          tls->slot_count, m_exe_ctx.GetThreadPtr()->GetIndexID());
+      if (argc == 3) {
+        result.GetOutputStream().Format(
+            "{0} = {1:x} (TLS[{2}]; bound to thread #{3})\n", name, address,
+            index, m_exe_ctx.GetThreadPtr()->GetIndexID());
+      } else {
+        result.GetOutputStream().Format(
+            "{0} = {1:x} ({2} slots; bound to thread #{3})\n", name,
+            tls->address, tls->slot_count,
+            m_exe_ctx.GetThreadPtr()->GetIndexID());
+      }
     } else if (command.GetArgumentCount() == 0) {
       result.GetOutputStream().Format(
           "Runtime TLS: {0:x}, {1} four-byte slots. Use 'thread tls <index>' "
-          "to read or 'thread tls bind $tls' for expression access.\n",
+          "to read, 'thread tls list' to inspect slots, or 'thread tls bind "
+          "$tls' for expression access.\n",
           tls->address, tls->slot_count);
+    } else if (list) {
+      result.GetOutputStream().Format(
+          "TLS slots [{0}, {1}) for thread #{2}:\n", start, start + count,
+          m_exe_ctx.GetThreadPtr()->GetIndexID());
+      for (uint32_t slot = start; slot < start + count; ++slot) {
+        Status error;
+        uint64_t value =
+            m_exe_ctx.GetProcessPtr()->ReadUnsignedIntegerFromMemory(
+                tls->address + slot * tls->slot_size, tls->slot_size, 0,
+                error);
+        if (error.Fail()) {
+          result.AppendError(error.AsCString());
+          return;
+        }
+        result.GetOutputStream().Format("TLS[{0}] = {1:x8}\n", slot, value);
+      }
     } else {
       if (index >= tls->slot_count) {
         result.AppendErrorWithFormat("slot index must be less than %u",
@@ -1348,7 +1427,7 @@ protected:
         result.AppendError(error.AsCString());
         return;
       }
-      
+
       result.GetOutputStream().Format("TLS[{0}] = {1:x8}\n", index, value);
     }
     result.SetStatus(eReturnStatusSuccessFinishResult);

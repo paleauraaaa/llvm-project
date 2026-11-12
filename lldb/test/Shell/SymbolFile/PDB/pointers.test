@@ -30,7 +30,8 @@ MAIN-SAME:    (int ST::*), scope = local
 MAIN:     Variable{{.*}}, name = "p_member_method"
 MAIN-SAME:    (int (ST::*)(int){{( __attribute__\(\(thiscall\)\))?}}), scope = local
 
-F:   Function{[[FID2:.*]]}, demangled = {{.*}}f(int)
+F: Type{{.*}}name = "f", decl = PointerTypeTest.cpp:8, compiler_type = {{.*}} int (int){{( __attribute__\(\(thiscall\)\))?}}
+F:   Function{[[FID2:.*]]}, demangled = {{.*}}f, type = {{.*}}
 F-NEXT:  Block{[[FID2]]}
 F:     Variable{{.*}}, name = "this"
 F-SAME:    (ST *), scope = parameter, location = {{(DW_OP.*)|(<empty>)}}, artificial
