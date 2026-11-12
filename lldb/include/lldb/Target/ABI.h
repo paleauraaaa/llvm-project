@@ -38,6 +38,8 @@ public:
 
     lldb::addr_t value;                 /* literal value */
     std::unique_ptr<uint8_t[]> data_up; /* host data pointer */
+    /// LLVM call-operand type, required to classify variadic and aggregate args.
+    llvm::Type *value_type = nullptr;
   };
 
   ~ABI() override;

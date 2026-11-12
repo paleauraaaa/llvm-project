@@ -32,10 +32,15 @@
 #include "clang/AST/Attr.h"
 #include "clang/AST/DeclCXX.h"
 #include "clang/AST/DeclTemplate.h"
+#include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/IR/Type.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/MathExtras.h"
+
+#include <array>
+#include <cstring>
 
 using namespace lldb;
 using namespace lldb_private;
@@ -314,6 +319,7 @@ bool ABIXbox360::PrepareTrivialCall(Thread &thread, addr_t sp,
   const uint64_t max_slots =
       (uint64_t(UINT32_MAX) - Stack::kLinkageSize - (Stack::kAlignment - 1)) /
       Stack::kSlotSize;
+
   if (args.size() > max_slots)
     return Fail("argument area exceeds the address space");
 
@@ -321,12 +327,14 @@ bool ABIXbox360::PrepareTrivialCall(Thread &thread, addr_t sp,
       Stack::kLinkageSize +
           std::max<size_t>(Stack::kHomeSlots, args.size()) * Stack::kSlotSize,
       Stack::kAlignment);
+
   sp = llvm::alignDown(sp, Stack::kAlignment);
 
   addr_t original_sp = NormalizeAddress(reg_ctx->GetSP(LLDB_INVALID_ADDRESS));
   if (!original_sp || original_sp > UINT32_MAX ||
       original_sp % Stack::kAlignment)
     return Fail("cannot read an aligned original stack pointer");
+    
   if (sp > original_sp)
     return Fail("call stack would overwrite the active stack");
 
@@ -358,19 +366,343 @@ bool ABIXbox360::PrepareTrivialCall(Thread &thread, addr_t sp,
   // and home areas without borrowing any storage from the interrupted frame.
   std::vector<uint8_t> frame(frame_size, 0);
   llvm::support::endian::write32be(frame.data(), original_sp);
-  for (size_t i = Stack::kHomeSlots; i < args.size(); ++i)
+  for (size_t i = Stack::kHomeSlots; i < args.size(); ++i) {
     llvm::support::endian::write64be(
         frame.data() + Stack::kLinkageSize + i * Stack::kSlotSize, args[i]);
+  }
 
   Status error;
   if (process_sp->WriteMemory(sp, frame.data(), frame.size(), error) !=
           frame.size() ||
       error.Fail())
+  {
     return Fail("cannot write the complete call stack frame");
+  }   
 
   for (size_t i = 0; i < arg_regs.size(); ++i) {
     if (!reg_ctx->WriteRegisterFromUnsigned(arg_regs[i], args[i]))
       return Fail("cannot write argument register");
+  }
+
+  if (!reg_ctx->WriteRegisterFromUnsigned(lr, return_address) ||
+      !reg_ctx->WriteRegisterFromUnsigned(stack, sp) ||
+      !reg_ctx->WriteRegisterFromUnsigned(pc, function_address))
+  {
+    return Fail("cannot write call control registers");
+  }
+
+  return true;
+}
+
+bool ABIXbox360::PrepareTrivialCall(
+    Thread &thread, addr_t sp, addr_t function_address, addr_t return_address,
+    llvm::Type &prototype, llvm::ArrayRef<ABI::CallArgument> args) const {
+  auto reg_ctx = thread.GetRegisterContext();
+  auto process_sp = thread.GetProcess();
+  if (!reg_ctx || !process_sp)
+    return Fail("missing register context or process");
+
+  if (!prototype.isFunctionTy() ||
+      args.size() < prototype.getFunctionNumParams() ||
+      (!prototype.isFunctionVarArg() &&
+       args.size() != prototype.getFunctionNumParams()))
+  {
+    return Fail("call arguments do not match the function prototype");
+  }
+
+  if (sp > UINT32_MAX || !IsCodeAddressValid(function_address) ||
+      !IsCodeAddressValid(return_address))
+  {
+    return Fail("invalid call address");
+  }
+
+  struct LoweredArgument {
+    enum class Kind { GPR, FPR, Vector, Stack };
+    Kind kind;
+    uint64_t value = 0;
+    uint64_t fpr_value = 0;
+    uint32_t size = 0;
+    uint64_t stack_offset = 0;
+    const RegisterInfo *reg = nullptr;
+    std::array<uint8_t, 16> bytes = {};
+  };
+
+  struct HostPayload {
+    size_t argument_index;
+    uint64_t offset;
+  };
+
+  llvm::SmallVector<LoweredArgument, 16> lowered;
+  llvm::SmallVector<HostPayload, 8> payloads;
+  uint64_t stack_offset = Stack::kLinkageSize;
+  unsigned gpr = 0, fpr = 1, vr = 1;
+
+  auto add_payload = [&](size_t index) -> bool {
+    const ABI::CallArgument &arg = args[index];
+    if (!arg.data_up || !arg.size)
+      return false;
+    payloads.push_back({index, 0});
+    return true;
+  };
+
+  for (size_t i = 0; i < args.size(); ++i) {
+    const ABI::CallArgument &arg = args[i];
+    llvm::Type *type = i < prototype.getFunctionNumParams()
+                           ? prototype.getFunctionParamType(i)
+                           : arg.value_type;
+    if (!type || (arg.value_type && i < prototype.getFunctionNumParams() &&
+                  type != arg.value_type))
+    {
+      return Fail("missing or inconsistent call argument type");
+    }
+
+    LoweredArgument current;
+    uint64_t gpr_index = gpr;
+    bool is_vector = type->isVectorTy();
+    bool is_float = type->isFloatTy() || type->isDoubleTy();
+    bool is_aggregate = type->isAggregateType();
+
+    if (type->isIntegerTy()) {
+      unsigned bit_width = type->getIntegerBitWidth();
+      if (!bit_width || bit_width > 64 ||
+          arg.type != ABI::CallArgument::TargetValue ||
+          arg.size != (bit_width + 7) / 8)
+      {
+        return Fail("unsupported or malformed integer argument");
+      }
+
+      current.value = arg.value;
+      current.size = arg.size;
+    } else if (type->isPointerTy()) {
+      current.size = 4;
+      if (arg.type == ABI::CallArgument::HostPointer) {
+        if (!add_payload(i))
+          return Fail("missing host data for pointer argument");
+      } else {
+        if (arg.size != current.size)
+          return Fail("malformed pointer argument");
+
+        current.value = arg.value & UINT32_MAX;
+      }
+    } else if (is_float) {
+      current.size = type->isFloatTy() ? 4 : 8;
+      if (arg.type != ABI::CallArgument::TargetValue ||
+          arg.size != current.size)
+      {
+        return Fail("unsupported or malformed floating-point argument");
+      }
+
+      llvm::APFloat value(type->isFloatTy() ? llvm::APFloat::IEEEsingle()
+                                            : llvm::APFloat::IEEEdouble(),
+                          llvm::APInt(current.size * 8, arg.value));
+
+      current.value = arg.value;
+
+      if (type->isFloatTy()) {
+        bool loses_info = false;
+        value.convert(llvm::APFloat::IEEEdouble(),
+                      llvm::APFloat::rmNearestTiesToEven, &loses_info);
+      }
+
+      current.fpr_value = value.bitcastToAPInt().getZExtValue();
+    } else if (is_vector) {
+      const auto *vector_type = llvm::dyn_cast<llvm::VectorType>(type);
+
+      if (!vector_type || vector_type->getElementCount().isScalable() ||
+          type->getPrimitiveSizeInBits().getFixedValue() != 128 ||
+          arg.type != ABI::CallArgument::HostPointer || !arg.data_up ||
+          arg.size != 16)
+      {
+        return Fail("unsupported or malformed vector argument");
+      }
+
+      current.kind = vr <= 13 ? LoweredArgument::Kind::Vector
+                              : LoweredArgument::Kind::Stack;
+      current.size = 16;
+      std::memcpy(current.bytes.data(), arg.data_up.get(), current.size);
+    } else if (is_aggregate) {
+      if (arg.type != ABI::CallArgument::HostPointer || !arg.data_up ||
+          !arg.size)
+      {
+        return Fail("aggregate argument requires host data");
+      }
+
+      current.size = arg.size;
+      if (arg.size > 8) {
+        if (!add_payload(i))
+          return Fail("missing host data for indirect aggregate argument");
+
+        current.value = 0;
+        current.size = 4;
+      } else {
+        for (size_t byte = 0; byte < arg.size; ++byte)
+          current.value = (current.value << 8) | arg.data_up[byte];
+      }
+    } else {
+      return Fail("unsupported call argument type");
+    }
+
+    if (is_vector) {
+      if (stack_offset > UINT32_MAX - (Stack::kAlignment - 1))
+        return Fail("argument area exceeds the address space");
+
+      stack_offset = llvm::alignTo(stack_offset, Stack::kAlignment);
+      current.stack_offset = stack_offset;
+
+      if (stack_offset > UINT32_MAX - current.size)
+        return Fail("argument area exceeds the address space");
+      stack_offset += current.size;
+
+      if (current.kind == LoweredArgument::Kind::Vector) {
+        std::string name = "v" + std::to_string(vr);
+        current.reg = reg_ctx->GetRegisterInfoByName(name);
+
+        if (!current.reg) {
+          name = "vr" + std::to_string(vr);
+          current.reg = reg_ctx->GetRegisterInfoByName(name);
+        }
+
+        if (!current.reg || current.reg->byte_size != 16)
+          return Fail("missing vector argument register");
+      }
+      ++vr;
+    } else {
+      if (stack_offset > UINT32_MAX - Stack::kSlotSize)
+        return Fail("argument area exceeds the address space");
+
+      current.stack_offset = stack_offset;
+      stack_offset += Stack::kSlotSize;
+
+      if (is_float) {
+        if (fpr <= 13) {
+          current.kind = LoweredArgument::Kind::FPR;
+          current.reg =
+              reg_ctx->GetRegisterInfoByName("f" + std::to_string(fpr));
+          if (!current.reg || current.reg->byte_size != Stack::kSlotSize)
+            return Fail("missing floating-point argument register");
+        } else {
+          current.kind = LoweredArgument::Kind::Stack;
+        }
+        ++fpr;
+      } else if (gpr_index < Stack::kHomeSlots) {
+        current.kind = LoweredArgument::Kind::GPR;
+        current.reg =
+            reg_ctx->GetRegisterInfoByName("r" + std::to_string(3 + gpr_index));
+
+        if (!current.reg || current.reg->byte_size != Stack::kSlotSize)
+          return Fail("missing full-width argument register");
+      } else {
+        current.kind = LoweredArgument::Kind::Stack;
+      }
+      ++gpr;
+    }
+
+    lowered.push_back(current);
+  }
+
+  uint64_t frame_size = std::max<uint64_t>(
+      stack_offset, Stack::kLinkageSize + Stack::kHomeSlots * Stack::kSlotSize);
+      
+  if (frame_size > UINT32_MAX - (Stack::kAlignment - 1))
+    return Fail("argument area exceeds the address space");
+  frame_size = llvm::alignTo(frame_size, Stack::kAlignment);
+  
+  for (HostPayload &payload : payloads) {
+    if (frame_size > UINT32_MAX - (Stack::kAlignment - 1))
+      return Fail("host argument data exceeds the address space");
+
+    frame_size = llvm::alignTo(frame_size, Stack::kAlignment);
+    payload.offset = frame_size;
+    size_t size = args[payload.argument_index].size;
+
+    if (size > UINT32_MAX - frame_size)
+      return Fail("host argument data exceeds the address space");
+    frame_size += size;
+  }
+
+  if (frame_size > UINT32_MAX - (Stack::kAlignment - 1))
+    return Fail("host argument data exceeds the address space");
+  frame_size = llvm::alignTo(frame_size, Stack::kAlignment);
+
+  sp = llvm::alignDown(sp, Stack::kAlignment);
+  addr_t original_sp = NormalizeAddress(reg_ctx->GetSP(LLDB_INVALID_ADDRESS));
+  if (!original_sp || original_sp > UINT32_MAX ||
+      original_sp % Stack::kAlignment)
+  {
+    return Fail("cannot read an aligned original stack pointer");
+  }
+
+  if (sp > original_sp)
+    return Fail("call stack would overwrite the active stack");
+
+  if (sp <= frame_size)
+    return Fail("insufficient stack space");
+
+  sp -= frame_size;
+
+  std::vector<uint8_t> frame(frame_size, 0);
+  llvm::support::endian::write32be(frame.data(), original_sp);
+
+  for (const HostPayload &payload : payloads) {
+    const ABI::CallArgument &arg = args[payload.argument_index];
+    std::memcpy(frame.data() + payload.offset, arg.data_up.get(), arg.size);
+    lowered[payload.argument_index].value = sp + payload.offset;
+  }
+
+  for (const LoweredArgument &arg : lowered) {
+    uint8_t *slot = frame.data() + arg.stack_offset;
+    switch (arg.kind) {
+    case LoweredArgument::Kind::GPR:
+    case LoweredArgument::Kind::FPR:
+      break;
+    case LoweredArgument::Kind::Vector:
+      break;
+    case LoweredArgument::Kind::Stack:
+      if (arg.size == 16) {
+        std::memcpy(slot, arg.bytes.data(), arg.size);
+      } else {
+        uint64_t value = arg.value;
+        if (arg.size < Stack::kSlotSize)
+          slot += Stack::kSlotSize - arg.size;
+
+        for (uint32_t byte = 0; byte < arg.size; ++byte) {
+          slot[arg.size - byte - 1] = static_cast<uint8_t>(value);
+          value >>= 8;
+        }
+      }
+      break;
+    }
+  }
+
+  const RegisterInfo *pc = reg_ctx->GetRegisterInfoByName("pc");
+  const RegisterInfo *lr = reg_ctx->GetRegisterInfoByName("lr");
+  const RegisterInfo *stack = reg_ctx->GetRegisterInfoByName("r1");
+  if (!pc || (pc->byte_size != 4 && pc->byte_size != 8) || !lr ||
+      lr->byte_size != 8 || !stack || stack->byte_size != 8)
+    return Fail("missing or incorrectly sized PC, LR or SP register");
+
+  Status error;
+  if (process_sp->WriteMemory(sp, frame.data(), frame.size(), error) !=
+          frame.size() ||
+      error.Fail())
+  {
+    return Fail("cannot write the complete call stack frame");
+  }
+
+  for (const LoweredArgument &arg : lowered) {
+    if (arg.kind == LoweredArgument::Kind::GPR) {
+      if (!reg_ctx->WriteRegisterFromUnsigned(arg.reg, arg.value))
+        return Fail("cannot write integer argument register");
+    } else if (arg.kind == LoweredArgument::Kind::FPR) {
+      RegisterValue value(arg.fpr_value);
+      if (!reg_ctx->WriteRegister(arg.reg, value))
+        return Fail("cannot write floating-point argument register");
+    } else if (arg.kind == LoweredArgument::Kind::Vector) {
+      RegisterValue value(llvm::ArrayRef(arg.bytes.data(), arg.size),
+                          eByteOrderBig);
+      if (!reg_ctx->WriteRegister(arg.reg, value))
+        return Fail("cannot write vector argument register");
+    }
   }
 
   if (!reg_ctx->WriteRegisterFromUnsigned(lr, return_address) ||

@@ -1457,52 +1457,129 @@ bool IRInterpreter::Interpret(llvm::Module &module, llvm::Function &function,
         // Get details of this argument
         llvm::Value *arg_op = call_inst->getArgOperand(i);
         llvm::Type *arg_ty = arg_op->getType();
+        rawArgs[i].data_up.reset();
+        rawArgs[i].size = 0;
+        rawArgs[i].value = 0;
+        rawArgs[i].value_type = arg_ty;
 
-        // Ensure that this argument is an supported type
-        if (!arg_ty->isIntegerTy() && !arg_ty->isPointerTy()) {
-          error = lldb_private::Status::FromErrorStringWithFormat(
-              "argument %d must be integer type", i);
-          return false;
-        }
+        if (arg_ty->isIntegerTy()) {
+          unsigned bit_width = arg_ty->getIntegerBitWidth();
 
-        // Extract the arguments value
-        lldb_private::Scalar tmp_op = 0;
-        if (!frame.EvaluateValue(tmp_op, arg_op, module)) {
-          error = lldb_private::Status::FromErrorStringWithFormat(
-              "unable to evaluate argument %d", i);
-          return false;
-        }
+          if (!bit_width || bit_width > 64) {
+            error = lldb_private::Status::FromErrorStringWithFormat(
+                "integer argument %d is wider than 64 bits", i);
+            return false;
+          }
 
-        // Check if this is a string literal or constant string pointer
-        if (arg_ty->isPointerTy()) {
-          lldb::addr_t addr = tmp_op.ULongLong();
-          size_t dataSize = 0;
+          lldb_private::Scalar value;
+          if (!frame.EvaluateValue(value, arg_op, module)) {
+            error = lldb_private::Status::FromErrorStringWithFormat(
+                "unable to evaluate argument %d", i);
+            return false;
+          }
 
-          bool Success = execution_unit.GetAllocSize(addr, dataSize);
-          UNUSED_IF_ASSERT_DISABLED(Success);
-          assert(Success &&
-                 "unable to locate host data for transfer to device");
-          // Create the required buffer
-          rawArgs[i].size = dataSize;
-          rawArgs[i].data_up.reset(new uint8_t[dataSize + 1]);
-
-          // Read string from host memory
-          execution_unit.ReadMemory(rawArgs[i].data_up.get(), addr, dataSize,
-                                    error);
-          assert(!error.Fail() &&
-                 "we have failed to read the string from memory");
-
-          // Add null terminator
-          rawArgs[i].data_up[dataSize] = '\0';
-          rawArgs[i].type = lldb_private::ABI::CallArgument::HostPointer;
-        } else /* if ( arg_ty->isPointerTy() ) */
-        {
           rawArgs[i].type = lldb_private::ABI::CallArgument::TargetValue;
-          // Get argument size in bytes
-          rawArgs[i].size = arg_ty->getIntegerBitWidth() / 8;
-          // Push value into argument list for thread plan
-          rawArgs[i].value = tmp_op.ULongLong();
+          rawArgs[i].size = (bit_width + 7) / 8;
+          rawArgs[i].value = value.ULongLong();
+          continue;
         }
+
+        if (arg_ty->isFloatTy() || arg_ty->isDoubleTy()) {
+          lldb_private::Scalar value;
+          if (!frame.EvaluateValue(value, arg_op, module)) {
+            error = lldb_private::Status::FromErrorStringWithFormat(
+                "unable to evaluate floating-point argument %d", i);
+            return false;
+          }
+
+          rawArgs[i].type = lldb_private::ABI::CallArgument::TargetValue;
+          rawArgs[i].size = arg_ty->isFloatTy() ? 4 : 8;
+          rawArgs[i].value = value.GetAPFloat().bitcastToAPInt().getZExtValue();
+          continue;
+        }
+
+        if (arg_ty->isPointerTy()) {
+          lldb_private::Scalar value;
+          if (!frame.EvaluateValue(value, arg_op, module)) {
+            error = lldb_private::Status::FromErrorStringWithFormat(
+                "unable to evaluate pointer argument %d", i);
+            return false;
+          }
+
+          lldb::addr_t address = value.ULongLong();
+          size_t data_size = 0;
+          rawArgs[i].size =
+              data_layout.getPointerSize(arg_ty->getPointerAddressSpace());
+          if (execution_unit.GetAllocSize(address, data_size)) {
+            if (!data_size || data_size > UINT32_MAX) {
+              error = lldb_private::Status::FromErrorStringWithFormat(
+                  "pointer argument %d refers to an unsupported allocation", i);
+              return false;
+            }
+
+            rawArgs[i].data_up = std::make_unique<uint8_t[]>(data_size);
+            lldb_private::Status read_error;
+            execution_unit.ReadMemory(rawArgs[i].data_up.get(), address,
+                                      data_size, read_error);
+
+            if (read_error.Fail()) {
+              error = lldb_private::Status::FromErrorStringWithFormat(
+                  "unable to read pointer argument %d", i);
+              return false;
+            }
+
+            rawArgs[i].type = lldb_private::ABI::CallArgument::HostPointer;
+            rawArgs[i].size = data_size;
+          } else {
+            rawArgs[i].type = lldb_private::ABI::CallArgument::TargetValue;
+            rawArgs[i].value = address;
+          }
+          continue;
+        }
+
+        if (arg_ty->isVectorTy() || arg_ty->isAggregateType()) {
+          if (auto *vector_ty = llvm::dyn_cast<llvm::VectorType>(arg_ty)) {
+            if (vector_ty->getElementCount().isScalable()) {
+              error = lldb_private::Status::FromErrorStringWithFormat(
+                  "scalable vector argument %d is not supported", i);
+              return false;
+            }
+          }
+
+          if (!arg_ty->isSized()) {
+            error = lldb_private::Status::FromErrorStringWithFormat(
+                "unsized aggregate argument %d is not supported", i);
+            return false;
+          }
+
+          size_t data_size = data_layout.getTypeStoreSize(arg_ty);
+          lldb::addr_t address = frame.ResolveValue(arg_op, module);
+          if (!data_size || data_size > UINT32_MAX ||
+              address == LLDB_INVALID_ADDRESS) {
+            error = lldb_private::Status::FromErrorStringWithFormat(
+                "unable to resolve aggregate argument %d", i);
+            return false;
+          }
+
+          rawArgs[i].data_up = std::make_unique<uint8_t[]>(data_size);
+          lldb_private::Status read_error;
+          execution_unit.ReadMemory(rawArgs[i].data_up.get(), address,
+                                    data_size, read_error);
+
+          if (read_error.Fail()) {
+            error = lldb_private::Status::FromErrorStringWithFormat(
+                "unable to read aggregate argument %d", i);
+            return false;
+          }
+          
+          rawArgs[i].type = lldb_private::ABI::CallArgument::HostPointer;
+          rawArgs[i].size = data_size;
+          continue;
+        }
+
+        error = lldb_private::Status::FromErrorStringWithFormat(
+            "argument %d has an unsupported type", i);
+        return false;
       }
 
       // Pack the arguments into an llvm::array
