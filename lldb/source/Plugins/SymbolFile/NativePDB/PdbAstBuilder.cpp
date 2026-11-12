@@ -179,8 +179,11 @@ PdbAstBuilder::CreateDeclInfoForType(const TagRecord &record, TypeIndex ti) {
   llvm::ms_demangle::Demangler demangler;
   std::string_view sv(record.UniqueName.begin(), record.UniqueName.size());
   llvm::ms_demangle::TagTypeNode *ttn = demangler.parseTagUniqueName(sv);
-  if (demangler.Error)
+  if (demangler.Error) {
+    if (!record.Name.empty())
+      return CreateDeclInfoForUndecoratedName(record.Name);
     return {m_clang.GetTranslationUnitDecl(), std::string(record.UniqueName)};
+  }
 
   llvm::ms_demangle::IdentifierNode *idn =
       ttn->QualifiedName->getUnqualifiedIdentifier();

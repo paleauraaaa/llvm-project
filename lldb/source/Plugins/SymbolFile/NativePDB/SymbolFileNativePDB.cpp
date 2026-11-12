@@ -894,19 +894,50 @@ VariableSP SymbolFileNativePDB::CreateGlobalVariable(PdbGlobalSymId var_id) {
 
   CompUnitSP comp_unit;
   std::optional<uint16_t> modi = m_index->GetModuleIndexForVa(addr);
-  // Some globals has modi points to the linker module, ignore them.
-  if (!modi || modi >= GetNumCompileUnits())
+  if (modi && *modi < GetNumCompileUnits()) {
+    CompilandIndexItem &cci =
+        m_index->compilands().GetOrCreateCompiland(*modi);
+    comp_unit = GetOrCreateCompileUnit(cci);
+    if (comp_unit->GetLanguage() != eLanguageTypeC &&
+        comp_unit->GetLanguage() != eLanguageTypeC_plus_plus &&
+        comp_unit->GetLanguage() != eLanguageTypeUnknown)
+      comp_unit.reset();
+  }
+  if (!comp_unit) {
+    // Data contributions may belong to the linker module, not a source CU.
+    CompUnitSP c_unit;
+    CompUnitSP unknown_unit;
+    for (uint32_t i = 0; i < GetNumCompileUnits(); ++i) {
+      CompUnitSP candidate = GetCompileUnitAtIndex(i);
+      if (!candidate)
+        continue;
+      if (candidate->GetLanguage() == eLanguageTypeC_plus_plus) {
+        comp_unit = std::move(candidate);
+        break;
+      }
+      if (candidate->GetLanguage() == eLanguageTypeC)
+        c_unit = std::move(candidate);
+      else if (candidate->GetLanguage() == eLanguageTypeUnknown &&
+               !unknown_unit)
+        unknown_unit = std::move(candidate);
+    }
+    if (!comp_unit)
+      comp_unit = c_unit ? std::move(c_unit) : std::move(unknown_unit);
+  }
+  if (!comp_unit)
     return nullptr;
 
-  CompilandIndexItem &cci = m_index->compilands().GetOrCreateCompiland(*modi);
-  comp_unit = GetOrCreateCompileUnit(cci);
-
+  lldb::LanguageType language = comp_unit->GetLanguage();
+  if (language == eLanguageTypeUnknown) {
+    // Legacy compile records may omit language while still describing C/C++.
+    language = eLanguageTypeC_plus_plus;
+  }
   Declaration decl;
   PdbTypeSymId tid(ti, false);
   SymbolFileTypeSP type_sp =
       std::make_shared<SymbolFileType>(*this, toOpaqueUid(tid));
   Variable::RangeList ranges;
-  auto ts_or_err = GetTypeSystemForLanguage(comp_unit->GetLanguage());
+  auto ts_or_err = GetTypeSystemForLanguage(language);
   if (auto err = ts_or_err.takeError())
     return nullptr;
   auto ts = *ts_or_err;

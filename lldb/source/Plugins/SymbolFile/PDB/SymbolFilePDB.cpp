@@ -1132,8 +1132,7 @@ void SymbolFilePDB::FindGlobalVariables(
         name.GetStringRef() != MSVCUndecoratedNameParser::DropScope(full_name))
       continue;
 
-    sc.comp_unit = ParseCompileUnitForUID(GetCompilandId(*pdb_data)).get();
-    // FIXME: We are not able to determine the compile unit.
+    sc.comp_unit = GetCompileUnitForGlobal(*pdb_data).get();
     if (sc.comp_unit == nullptr)
       continue;
 
@@ -1171,8 +1170,7 @@ void SymbolFilePDB::FindGlobalVariables(
     sc.module_sp = m_objfile_sp->GetModule();
     lldbassert(sc.module_sp.get());
 
-    sc.comp_unit = ParseCompileUnitForUID(GetCompilandId(*pdb_data)).get();
-    // FIXME: We are not able to determine the compile unit.
+    sc.comp_unit = GetCompileUnitForGlobal(*pdb_data).get();
     if (sc.comp_unit == nullptr)
       continue;
 
@@ -2036,4 +2034,25 @@ uint32_t SymbolFilePDB::GetCompilandId(const llvm::pdb::PDBSymbolData &data) {
   }
 
   return 0;
+}
+
+lldb::CompUnitSP
+SymbolFilePDB::GetCompileUnitForGlobal(const llvm::pdb::PDBSymbolData &data) {
+  if (CompUnitSP comp_unit =
+          ParseCompileUnitForUID(GetCompilandId(data)))
+    return comp_unit;
+
+  // Linker-owned contributions have no source compiland; use a source CU to
+  // provide the language and AST context needed to materialize the variable.
+  CompUnitSP c_unit;
+  for (uint32_t i = 0; i < GetNumCompileUnits(); ++i) {
+    CompUnitSP candidate = ParseCompileUnitAtIndex(i);
+    if (!candidate)
+      continue;
+    if (candidate->GetLanguage() == eLanguageTypeC_plus_plus)
+      return candidate;
+    if (candidate->GetLanguage() == eLanguageTypeC)
+      c_unit = std::move(candidate);
+  }
+  return c_unit;
 }
