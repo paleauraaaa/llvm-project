@@ -1,6 +1,7 @@
 # REQUIRES: system-windows, lld, powerpc
 # RUN: %clang -target powerpc64-ibm-xbox360 -mcpu=xenon -std=c++17 -g -gcodeview -O0 -c %S/../NativePDB/Inputs/xbox360-pdb.cpp -o %t.obj
 # RUN: lld-link /machine:ppcbe /subsystem:xbox /entry:debug_entry /nodefaultlib /debug:full /out:%t.exe /pdb:%t.pdb %t.obj
+# RUN: %lldb -b -f %S/../NativePDB/Inputs/xbox360-linker-owned-global.pe -o "target variable global_data" -o "target variable item" | FileCheck %S/../NativePDB/xbox360-pdb.test --check-prefix=LINKER-GLOBAL
 # RUN: %lldb -b -f %t.exe -s %S/../NativePDB/Inputs/xbox360-pdb.lldbinit | FileCheck %S/../NativePDB/xbox360-pdb.test
 # RUN: %python %S/../NativePDB/Inputs/xbox360-pdb-remote.py %t.exe %lldb
 # RUN: %clang -target powerpc64-ibm-xbox360 -mcpu=xenon -std=c++17 -g -gcodeview -gcodeview-xbox360-modern -O0 -c %S/../NativePDB/Inputs/xbox360-pdb.cpp -o %t.modern.obj

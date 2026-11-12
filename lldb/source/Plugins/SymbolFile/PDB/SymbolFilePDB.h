@@ -232,6 +232,8 @@ private:
       const lldb_private::CompilerDeclContext &decl_ctx);
 
   uint32_t GetCompilandId(const llvm::pdb::PDBSymbolData &data);
+  lldb::CompUnitSP
+  GetCompileUnitForGlobal(const llvm::pdb::PDBSymbolData &data);
 
   llvm::DenseMap<uint32_t, lldb::CompUnitSP> m_comp_units;
   llvm::DenseMap<uint32_t, lldb::TypeSP> m_types;
