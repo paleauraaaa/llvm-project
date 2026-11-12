@@ -977,6 +977,16 @@ TEST_F(Xbox360ABI, DoesNotUseSysVUnwindOrReturnRules) {
   UnwindPlan plan(eRegisterKindDWARF);
   EXPECT_TRUE(abi->CreateFunctionEntryUnwindPlan(plan));
   EXPECT_EQ(plan.GetRegisterKind(), eRegisterKindGeneric);
+  EXPECT_EQ(plan.GetReturnAddressRegister(), LLDB_REGNUM_GENERIC_RA);
+  ASSERT_EQ(plan.GetRowCount(), 1u);
+  auto row = plan.GetRowAtIndex(0);
+  ASSERT_TRUE(row);
+  EXPECT_EQ(row->GetCFAValue().GetRegisterNumber(), LLDB_REGNUM_GENERIC_SP);
+  EXPECT_EQ(row->GetCFAValue().GetOffset(), 0);
+  UnwindPlan::Row::AbstractRegisterLocation pc;
+  ASSERT_TRUE(row->GetRegisterInfo(LLDB_REGNUM_GENERIC_PC, pc));
+  ASSERT_TRUE(pc.IsInOtherRegister());
+  EXPECT_EQ(pc.GetRegisterNumber(), LLDB_REGNUM_GENERIC_RA);
   EXPECT_FALSE(abi->CreateDefaultUnwindPlan(plan));
   StackFrameSP frame;
   ValueObjectSP value;
@@ -1502,6 +1512,111 @@ symbols: []
     EXPECT_EQ(pc, 0x82001038u);
     EXPECT_EQ(frame_cfa, 0x11100u);
   }
+}
+
+TEST_F(Xbox360ABI, PackedUnwindRestoresNonvolatileRegistersAcrossDynamicStack) {
+  auto file = TestFile::fromYaml(R"(
+--- !COFF
+OptionalHeader:
+  ImageBase: 0x82000000
+  SectionAlignment: 4096
+  FileAlignment: 512
+  Subsystem: IMAGE_SUBSYSTEM_XBOX
+  ExceptionTable:
+    RelativeVirtualAddress: 8192
+    Size: 8
+header:
+  Machine: IMAGE_FILE_MACHINE_PPCBE
+  Characteristics: [ IMAGE_FILE_EXECUTABLE_IMAGE ]
+sections:
+  - Name: .text
+    VirtualAddress: 4096
+    VirtualSize: 52
+    Characteristics: [ IMAGE_SCN_CNT_CODE, IMAGE_SCN_MEM_READ, IMAGE_SCN_MEM_EXECUTE ]
+    SectionData: 7D8802A69181FFF8FBE1FFF0DBE1FFE87D8000269181FFE49421FF807C3F0B783960002013E159CF3821FFC02C0300004E800020
+  - Name: .pdata
+    VirtualAddress: 8192
+    VirtualSize: 8
+    Characteristics: [ IMAGE_SCN_CNT_INITIALIZED_DATA, IMAGE_SCN_MEM_READ ]
+    SectionData: 8200100040000D0A
+symbols: []
+...
+)");
+  ASSERT_THAT_EXPECTED(file, llvm::Succeeded());
+  auto module = std::make_shared<Module>(file->moduleSpec());
+  auto *object = module->GetObjectFile();
+  ASSERT_TRUE(object);
+  auto cfi = object->CreateCallFrameInfo();
+  ASSERT_TRUE(cfi);
+  UnwindPlan plan(eRegisterKindDWARF);
+  ASSERT_TRUE(cfi->GetUnwindPlan(Address(0x8200102c), plan));
+  auto body_row = plan.GetRowForFunctionOffset(44);
+  ASSERT_TRUE(body_row);
+  EXPECT_EQ(body_row->GetCFAValue().GetRegisterNumber(), 31u);
+  EXPECT_EQ(body_row->GetCFAValue().GetOffset(), 128);
+  target->GetImages().Append(module);
+  auto text = object->GetSectionList()->FindSectionByName(ConstString(".text"));
+  ASSERT_TRUE(text);
+  ASSERT_TRUE(target->SetSectionLoadAddress(text, 0x82001000));
+
+  constexpr addr_t cfa = 0x11000;
+  registers->Set("pc", RegisterValue(uint32_t(0x8200102c)));
+  registers->Set("r1", RegisterValue(uint64_t(0xdeadbeef00010f40)));
+  registers->Set("r31", RegisterValue(uint64_t(0xdeadbeef00010f80)));
+
+  llvm::support::endian::write32be(process->memory.data() + 0x0ff8, 0x82001004);
+  llvm::support::endian::write64be(process->memory.data() + 0x0ff0,
+                                   0x1122334455667788);
+  llvm::support::endian::write64be(process->memory.data() + 0x0fe8,
+                                   0x400921fb54442d18);
+  llvm::support::endian::write32be(process->memory.data() + 0x0fe4, 0x12345678);
+  for (uint8_t byte = 0; byte != 16; ++byte)
+    process->memory[0x0fa0 + byte] = 0xa0 + byte;
+
+  UnwindLLDB unwinder(*thread);
+  addr_t frame_cfa, pc;
+  bool zeroth;
+  ASSERT_TRUE(unwinder.GetFrameInfoAtIndex(0, frame_cfa, pc, zeroth));
+  ASSERT_TRUE(unwinder.GetFrameInfoAtIndex(1, frame_cfa, pc, zeroth));
+  EXPECT_EQ(frame_cfa, cfa);
+  EXPECT_EQ(pc, 0x82001004u);
+
+  StackFrame caller_frame(thread, 1, 1, frame_cfa, true, pc,
+                          StackFrame::Kind::Regular, false, nullptr);
+  RegisterContextSP caller_registers =
+      unwinder.CreateRegisterContextForFrame(&caller_frame);
+  ASSERT_TRUE(caller_registers);
+
+  auto read_register = [&](llvm::StringRef name) {
+    const RegisterInfo *reg = caller_registers->GetRegisterInfoByName(name);
+    EXPECT_NE(reg, nullptr) << name;
+    if (!reg)
+      return RegisterValue();
+    RegisterValue value;
+    EXPECT_TRUE(caller_registers->ReadRegister(reg, value)) << name;
+    return value;
+  };
+  EXPECT_EQ(read_register("r1").GetAsUInt64(), cfa);
+  EXPECT_EQ(read_register("r31").GetAsUInt64(), 0x1122334455667788ull);
+  EXPECT_DOUBLE_EQ(read_register("f31").GetAsDouble(), 3.141592653589793);
+  EXPECT_EQ(read_register("cr2").GetAsUInt64(), 3u);
+  EXPECT_EQ(read_register("cr3").GetAsUInt64(), 4u);
+  EXPECT_EQ(read_register("cr4").GetAsUInt64(), 5u);
+  EXPECT_EQ(read_register("cr5").GetAsUInt64(), 6u);
+
+  const RegisterInfo *vector = caller_registers->GetRegisterInfoByName("v127");
+  ASSERT_NE(vector, nullptr);
+  RegisterValue vector_value;
+  ASSERT_TRUE(caller_registers->ReadRegister(vector, vector_value));
+  std::array<uint8_t, 16> vector_bytes = {};
+  Status error;
+  ASSERT_EQ(vector_value.GetAsMemoryData(*vector, vector_bytes.data(),
+                                         vector_bytes.size(), eByteOrderBig,
+                                         error),
+            vector_bytes.size());
+  ASSERT_TRUE(error.Success());
+  for (uint8_t byte = 0; byte != vector_bytes.size(); ++byte)
+    EXPECT_EQ(vector_bytes[byte], 0xa0 + byte);
 }
 
 TEST_F(Xbox360ABI, PointerReferenceAndEnumReturns) {
