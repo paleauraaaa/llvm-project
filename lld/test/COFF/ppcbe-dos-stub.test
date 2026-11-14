@@ -1,0 +1,24 @@
+# RUN: split-file %s %t.dir
+# RUN: llvm-mc -triple=powerpc64-ibm-xbox360 -filetype=obj %t.dir/main.s -o %t.obj
+# RUN: lld-link /machine:ppcbe /subsystem:xbox /entry:main /nodefaultlib /out:%t.exe %t.obj
+# RUN: llvm-readobj --file-headers %t.exe | FileCheck %s --check-prefix=DEFAULT
+# RUN: lld-link /machine:ppcbe /subsystem:xbox /entry:main /nodefaultlib /stub:%p/Inputs/stub68mz /out:%t.stub.exe %t.obj
+# RUN: llvm-readobj --file-headers %t.stub.exe | FileCheck %s --check-prefix=CUSTOM
+
+# DEFAULT: DOSHeader {
+# DEFAULT-NEXT: Magic: MZ
+# DEFAULT-NEXT: UsedBytesInTheLastPage: 144
+# DEFAULT-NEXT: FileSizeInPages: 1
+# DEFAULT: AddressOfNewExeHeader: 144
+
+# CUSTOM: DOSHeader {
+# CUSTOM-NEXT: Magic: MZ
+# CUSTOM-NEXT: UsedBytesInTheLastPage: 144
+# CUSTOM-NEXT: FileSizeInPages: 3
+# CUSTOM: AddressOfNewExeHeader: 72
+
+#--- main.s
+.text
+.globl main
+main:
+  blr

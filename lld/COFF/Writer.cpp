@@ -79,6 +79,11 @@ static_assert(sizeof(dosProgram) % 8 == 0,
 static_assert((sizeof(dos_header) + sizeof(dosProgram)) % 8 == 0,
               "DOSStub size must be multiple of 8");
 
+// Xbox 360 image consumers expect the DOS header to begin with 4D 5A 90 00.
+static constexpr uint32_t xbox360DosStubSize = 144;
+static_assert(xbox360DosStubSize >= sizeof(dos_header) + sizeof(dosProgram) &&
+              xbox360DosStubSize % 8 == 0);
+
 static const int numberOfDataDirectory = 16;
 
 namespace {
@@ -1042,6 +1047,8 @@ void Writer::sortSections() {
 void Writer::calculateStubDependentSizes() {
   if (ctx.config.dosStub)
     dosStubSize = alignTo(ctx.config.dosStub->getBufferSize(), 8);
+  else if (ctx.config.machine == PPCBE)
+    dosStubSize = xbox360DosStubSize;
   else
     dosStubSize = sizeof(dos_header) + sizeof(dosProgram);
 
@@ -1744,7 +1751,9 @@ template <typename PEHeaderTy> void Writer::writeHeader() {
     dos->AddressOfNewExeHeader = dosStubSize;
 
     memcpy(buf, dosProgram, sizeof(dosProgram));
-    buf += sizeof(dosProgram);
+    std::memset(buf + sizeof(dosProgram), 0,
+                dosStubSize - sizeof(dos_header) - sizeof(dosProgram));
+    buf = buffer->getBufferStart() + dosStubSize;
   }
 
   // Make sure DOS stub is aligned to 8 bytes at this point
