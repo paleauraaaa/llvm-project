@@ -49,7 +49,7 @@ DynamicLoader *DynamicLoaderWindowsDYLD::CreateInstance(Process *process,
   if (!should_create) {
     const llvm::Triple &triple_ref =
         process->GetTarget().GetArchitecture().GetTriple();
-    if (triple_ref.getOS() == llvm::Triple::Win32)
+    if (triple_ref.getOS() == llvm::Triple::Win32 || triple_ref.getOS() == llvm::Triple::Xbox360)
       should_create = true;
   }
 

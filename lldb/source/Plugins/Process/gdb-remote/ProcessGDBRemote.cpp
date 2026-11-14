@@ -5175,6 +5175,10 @@ llvm::Error ProcessGDBRemote::LoadModules() {
       link_map = LLDB_INVALID_ADDRESS;
 
     FileSpec file(mod_name);
+    // Map the guest image name before resolving it as a host filesystem path.
+    if (std::optional<FileSpec> mapped_file =
+            GetTarget().GetObjectPathMap().RemapPath(file.GetPath(), true))
+      file = *mapped_file;
     FileSystem::Instance().Resolve(file);
     lldb::ModuleSP module_sp =
         LoadModuleAtAddress(file, link_map, mod_base, mod_base_is_offset);
@@ -5216,8 +5220,11 @@ llvm::Error ProcessGDBRemote::LoadModules() {
       if (obj->GetType() != ObjectFile::Type::eTypeExecutable)
         return true;
 
-      lldb::ModuleSP module_copy_sp = module_sp;
-      target.SetExecutableModule(module_copy_sp, eLoadDependentsNo);
+      // Re-setting the executable clears its section load addresses.
+      if (module_sp.get() != target.GetExecutableModulePointer()) {
+        lldb::ModuleSP module_copy_sp = module_sp;
+        target.SetExecutableModule(module_copy_sp, eLoadDependentsNo);
+      }
       return false;
     });
 

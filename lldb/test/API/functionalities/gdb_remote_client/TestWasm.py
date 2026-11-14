@@ -1,5 +1,6 @@
 import lldb
 import binascii
+import os
 from lldbsuite.test.lldbtest import *
 from lldbsuite.test.decorators import *
 from lldbsuite.test.gdbclientutils import *
@@ -91,6 +92,44 @@ class MyResponder(MockGDBServerResponder):
 
 
 class TestWasm(GDBRemoteTestBase):
+    @skipIfAsan
+    @skipIfXmlSupportMissing
+    def test_remote_library_object_map_before_host_resolution(self):
+        """Map a guest filename even when that filename exists locally."""
+        obj_path = self.getBuildArtifact("mapped-library.wasm")
+        self.yaml2obj("test_wasm_embedded_debug_sections.yaml", obj_path)
+        guest_name = "guest-library.xex"
+        self.yaml2obj(
+            "test_wasm_embedded_debug_sections.yaml",
+            self.getBuildArtifact(guest_name),
+        )
+        self.server.responder = MyResponder(obj_path, guest_name)
+        target = self.dbg.CreateTarget("")
+        self.runCmd(
+            'settings set target.object-map "{}" "{}"'.format(
+                guest_name, obj_path
+            )
+        )
+
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(self.getBuildDir())
+            process = self.connect(target)
+            lldbutil.expect_state_changes(
+                self, self.dbg.GetListener(), process, [lldb.eStateStopped]
+            )
+        finally:
+            os.chdir(old_cwd)
+
+        self.assertEqual(target.GetNumModules(), 1)
+        module = target.GetModuleAtIndex(0)
+        self.assertTrue(os.path.samefile(module.GetFileSpec().fullpath, obj_path))
+        code_section = module.GetSectionAtIndex(0)
+        self.assertEqual(
+            load_address | code_section.GetFileOffset(),
+            code_section.GetLoadAddress(target),
+        )
+
     @skipIfAsan
     @skipIfXmlSupportMissing
     def test_load_module_with_embedded_symbols_from_remote(self):
