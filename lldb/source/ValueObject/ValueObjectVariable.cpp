@@ -373,7 +373,8 @@ bool ValueObjectVariable::SetValueFromCString(const char *value_str,
       error = Status::FromErrorString("unable to retrieve register info");
       return false;
     }
-    error = reg_value.SetValueFromString(reg_info, llvm::StringRef(value_str));
+    error = reg_value.SetValueFromString(reg_info, llvm::StringRef(value_str),
+                                        reg_ctx->GetByteOrder());
     if (error.Fail())
       return false;
     if (reg_ctx->WriteRegister(reg_info, reg_value)) {

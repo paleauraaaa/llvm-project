@@ -243,10 +243,13 @@ public:
 
   bool SignExtend(uint32_t sign_bitpos);
 
+  /// Parse vector bytes in target byte order; scalar parsing is endian-neutral.
   Status SetValueFromString(const RegisterInfo *reg_info,
-                            llvm::StringRef value_str);
+                           llvm::StringRef value_str,
+                           lldb::ByteOrder byte_order);
   Status SetValueFromString(const RegisterInfo *reg_info,
-                            const char *value_str) = delete;
+                           const char *value_str,
+                           lldb::ByteOrder byte_order) = delete;
 
   Status SetValueFromData(const RegisterInfo &reg_info, DataExtractor &data,
                           lldb::offset_t offset, bool partial_data_ok);

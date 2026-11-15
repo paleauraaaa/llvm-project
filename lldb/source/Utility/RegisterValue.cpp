@@ -246,6 +246,7 @@ Status RegisterValue::SetValueFromData(const RegisterInfo &reg_info,
 static bool ParseVectorEncoding(const RegisterInfo *reg_info,
                                 llvm::StringRef vector_str,
                                 const uint32_t byte_size,
+                                lldb::ByteOrder byte_order,
                                 RegisterValue *reg_value) {
   // Example: vector_str = "{0x2c 0x4b 0x2a 0x3e 0xd0 0x4f 0x2a 0x3e 0xac 0x4a
   // 0x2a 0x3e 0x84 0x4f 0x2a 0x3e}".
@@ -277,7 +278,7 @@ static bool ParseVectorEncoding(const RegisterInfo *reg_info,
   if (bytes.size() != byte_size)
     return false;
 
-  reg_value->SetBytes(&(bytes.front()), byte_size, eByteOrderLittle);
+  reg_value->SetBytes(&(bytes.front()), byte_size, byte_order);
   return true;
 }
 
@@ -311,7 +312,8 @@ static bool SInt64ValueIsValidForByteSize(int64_t sval64,
 }
 
 Status RegisterValue::SetValueFromString(const RegisterInfo *reg_info,
-                                         llvm::StringRef value_str) {
+                                        llvm::StringRef value_str,
+                                        lldb::ByteOrder byte_order) {
   Status error;
   if (reg_info == nullptr) {
     error = Status::FromErrorString("Invalid register info argument.");
@@ -424,7 +426,7 @@ Status RegisterValue::SetValueFromString(const RegisterInfo *reg_info,
     break;
   }
   case eEncodingVector:
-    if (!ParseVectorEncoding(reg_info, value_str, byte_size, this))
+    if (!ParseVectorEncoding(reg_info, value_str, byte_size, byte_order, this))
       error =
           Status::FromErrorString("unrecognized vector encoding string value.");
     break;

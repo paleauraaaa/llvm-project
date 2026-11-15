@@ -265,8 +265,8 @@ bool ValueObjectRegister::UpdateValue() {
 bool ValueObjectRegister::SetValueFromCString(const char *value_str,
                                               Status &error) {
   // The new value will be in the m_data.  Copy that into our register value.
-  error =
-      m_reg_value.SetValueFromString(&m_reg_info, llvm::StringRef(value_str));
+  error = m_reg_value.SetValueFromString(&m_reg_info, llvm::StringRef(value_str),
+                                       m_reg_ctx_sp->GetByteOrder());
   if (!error.Success())
     return false;
 

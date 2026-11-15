@@ -7,7 +7,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "lldb/Utility/RegisterValue.h"
+#include "lldb/lldb-private-types.h"
 #include "gtest/gtest.h"
+#include <array>
 #include <optional>
 
 using namespace lldb_private;
@@ -53,4 +55,28 @@ TEST(RegisterValueTest, GetScalarValue) {
                    lldb::eByteOrderBig)),
             Scalar((APInt(128, 0xffeeddccbbaa9988ull) << 64) |
                    APInt(128, 0x7766554433221100)));
+}
+
+TEST(RegisterValueTest, SetVectorValueFromString) {
+  RegisterInfo reg_info{};
+  reg_info.byte_size = 16;
+  reg_info.encoding = lldb::eEncodingVector;
+  const std::array<uint8_t, 16> expected = {
+      0xf0, 0xe0, 0xd0, 0xc0, 0xb0, 0xa0, 0x90, 0x80,
+      0x70, 0x60, 0x50, 0x40, 0x30, 0x20, 0x10, 0x00};
+  for (auto byte_order : {lldb::eByteOrderLittle, lldb::eByteOrderBig}) {
+    RegisterValue value;
+    Status error = value.SetValueFromString(
+        &reg_info,
+        llvm::StringRef("{0xf0 0xe0 0xd0 0xc0 0xb0 0xa0 0x90 0x80 "
+                        "0x70 0x60 0x50 0x40 0x30 0x20 0x10 0x00}"),
+        byte_order);
+    ASSERT_TRUE(error.Success()) << error.AsCString();
+    std::array<uint8_t, 16> actual{};
+    ASSERT_EQ(actual.size(),
+              value.GetAsMemoryData(reg_info, actual.data(), actual.size(),
+                                    byte_order, error));
+    ASSERT_TRUE(error.Success()) << error.AsCString();
+    EXPECT_EQ(expected, actual);
+  }
 }
