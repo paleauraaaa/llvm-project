@@ -192,10 +192,14 @@ const char *TargetThreadWindows::GetName() {
   if (SUCCEEDED(GetThreadDescription(
           m_host_thread.GetNativeThread().GetSystemHandle(), &pszThreadName))) {
     LLDB_LOGF(log, "GetThreadDescription: %ls", pszThreadName);
-    llvm::convertUTF16ToUTF8String(
-        llvm::ArrayRef(reinterpret_cast<char *>(pszThreadName),
-                       wcslen(pszThreadName) * sizeof(wchar_t)),
-        m_name);
+    std::string name;
+    if (llvm::convertUTF16ToUTF8String(
+            llvm::ArrayRef(reinterpret_cast<char *>(pszThreadName),
+                           wcslen(pszThreadName) * sizeof(wchar_t)),
+            name))
+      m_name = std::move(name);
+    else
+      LLDB_LOGF(log, "Failed to convert thread description to UTF-8");
     ::LocalFree(pszThreadName);
   }
 

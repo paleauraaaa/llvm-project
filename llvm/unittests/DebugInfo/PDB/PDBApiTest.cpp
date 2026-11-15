@@ -57,6 +57,22 @@ using namespace llvm::pdb;
 
 namespace {
 
+TEST(PDBVariantTest, SignedAndUnsignedIntegers) {
+  auto checkSigned = [](Variant value, int64_t expected) {
+    APSInt integer = value.toAPSInt();
+    EXPECT_TRUE(integer.isSigned());
+    EXPECT_EQ(integer.getSExtValue(), expected);
+  };
+  checkSigned(Variant(int8_t(-128)), -128);
+  checkSigned(Variant(int16_t(-32768)), -32768);
+  checkSigned(Variant(int32_t(-2147483647 - 1)), -2147483647 - 1);
+  checkSigned(Variant(int64_t(-1)), -1);
+
+  APSInt integer = Variant(uint32_t(0xffffffff)).toAPSInt();
+  EXPECT_TRUE(integer.isUnsigned());
+  EXPECT_EQ(integer.getZExtValue(), 0xffffffffu);
+}
+
 #define MOCK_SYMBOL_ACCESSOR(Func)                                             \
   decltype(std::declval<IPDBRawSymbol>().Func()) Func() const override {       \
     typedef decltype(IPDBRawSymbol::Func()) ReturnType;                        \
