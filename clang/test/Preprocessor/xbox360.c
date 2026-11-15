@@ -1,4 +1,5 @@
 // RUN: %clang_cc1 -E -dM -ffreestanding -triple=ppc64-ibm-xbox360 %s | FileCheck %s
+// RUN: %clang_cc1 -E -dM -ffreestanding -triple=ppc64-unknown-xbox360 %s | FileCheck %s
 
 // CHECK: #define __BYTE_ORDER__ __ORDER_BIG_ENDIAN__
 // CHECK: #define __LDBL_MANT_DIG__ 53

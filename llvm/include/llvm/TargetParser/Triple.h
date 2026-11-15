@@ -785,9 +785,7 @@ public:
   }
 
   bool isXbox360() const {
-    return getArch() == Triple::ppc64 &&
-           getVendor() == Triple::IBM &&
-           getOS() == Triple::Xbox360;
+    return getArch() == Triple::ppc64 && getOS() == Triple::Xbox360;
   }
 
   /// Tests whether the target is the PS4 platform.

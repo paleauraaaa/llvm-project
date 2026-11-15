@@ -1378,6 +1378,29 @@ static std::string Join(StringRef A, StringRef B, StringRef C, StringRef D) {
   return Str;
 }
 
+TEST(TripleTest, Xbox360VendorIndependent) {
+  for (const char *Name : {"powerpc64-unknown-xbox360",
+                           "powerpc64-unknown-xbox360-msvc",
+                           "powerpc64-ibm-xbox360",
+                           "powerpc64-pc-xbox360"}) {
+    Triple T(Name);
+    EXPECT_TRUE(T.isXbox360()) << Name;
+    EXPECT_EQ(Triple::COFF, T.getObjectFormat()) << Name;
+  }
+
+  for (const char *Name : {"powerpc-unknown-xbox360",
+                           "powerpc64le-unknown-xbox360",
+                           "x86_64-unknown-xbox360",
+                           "powerpc64-unknown-linux"}) {
+    EXPECT_FALSE(Triple(Name).isXbox360()) << Name;
+  }
+
+  EXPECT_EQ("powerpc64-unknown-xbox360-msvc",
+            Triple::normalize("powerpc64-unknown-xbox360"));
+  EXPECT_EQ("powerpc64-ibm-xbox360-msvc",
+            Triple::normalize("powerpc64-ibm-xbox360"));
+}
+
 TEST(TripleTest, Normalization) {
 
   EXPECT_EQ("unknown", Triple::normalize(""));
