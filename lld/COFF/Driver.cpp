@@ -802,9 +802,11 @@ void LinkerDriver::addLibSearchPaths() {
 }
 
 uint64_t LinkerDriver::getDefaultImageBase() {
+  if (ctx.config.machine == PPCBE)
+    return ctx.config.align == 4096 ? 0x92000000 : 0x82000000;
   if (ctx.config.is64())
     return ctx.config.dll ? 0x180000000 : 0x140000000;
-  return ctx.config.dll ? 0x10000000 : ctx.config.machine == IMAGE_FILE_MACHINE_PPCBE ? 0x82000000 : 0x400000;
+  return ctx.config.dll ? 0x10000000 : 0x400000;
 }
 
 static std::string rewritePath(StringRef s) {
@@ -2205,6 +2207,13 @@ void LinkerDriver::linkerMain(ArrayRef<const char *> argsArr) {
   if (config->machine == IMAGE_FILE_MACHINE_UNKNOWN) {
     Warn(ctx) << "/machine is not specified. x64 is assumed";
     setMachine(AMD64);
+  }
+  if (config->machine == PPCBE) {
+    if (!args.hasArg(OPT_align))
+      config->align = 65536;
+    else if (config->align != 4096 && config->align != 65536)
+      Err(ctx) << "/align: Xbox 360 images require 4096 or 65536, got "
+               << config->align;
   }
   config->wordsize = config->is64() ? 8 : 4;
 

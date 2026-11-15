@@ -2,7 +2,7 @@
 # RUN: llvm-mc -filetype=obj -triple=ppc64-ibm-xbox360 %t.dir/dll.s -o %t.dll.obj
 # RUN: lld-link /machine:ppcbe /dll /noentry /out:%t.dll /implib:%t.lib /export:impfunc %t.dll.obj
 # RUN: llvm-mc -filetype=obj -triple=ppc64-ibm-xbox360 %t.dir/main.s -o %t.main.obj
-# RUN: lld-link /machine:ppcbe /entry:main /subsystem:console /base:0x10000 /out:%t.exe %t.main.obj %t.lib
+# RUN: lld-link /machine:ppcbe /entry:main /subsystem:console /align:4096 /base:0x10000 /out:%t.exe %t.main.obj %t.lib
 # RUN: llvm-readobj --coff-imports %t.exe | FileCheck --check-prefix=IMPORT %s
 # RUN: llvm-readobj --coff-basereloc %t.exe | FileCheck --check-prefix=BASEREL %s
 # RUN: llvm-readobj --sections --section-data %t.exe | FileCheck --check-prefix=DATA %s

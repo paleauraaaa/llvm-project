@@ -1,6 +1,6 @@
 # RUN: llvm-mc -filetype=obj -triple=ppc64-ibm-xbox360 %s -o %t.obj
 # RUN: llvm-objdump -s --section=.data %t.obj | FileCheck %s --check-prefix=OBJECT
-# RUN: lld-link /machine:ppcbe /subsystem:xbox /entry:main /nodefaultlib /fixed /base:0x82000000 /out:%t.exe %t.obj
+# RUN: lld-link /machine:ppcbe /subsystem:xbox /entry:main /nodefaultlib /fixed /align:4096 /base:0x82000000 /out:%t.exe %t.obj
 # RUN: llvm-objdump -s --section=.data %t.exe | FileCheck %s --check-prefix=LINKED
 
 # These non-instruction COFF relocation fields and their addends are

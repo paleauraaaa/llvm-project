@@ -2,9 +2,9 @@
 # RUN: llvm-mc -filetype=obj -triple=ppc64-ibm-xbox360 %t.dir/branches.s -o %t.branches.obj
 # RUN: llvm-mc -filetype=obj -triple=ppc64-ibm-xbox360 %t.dir/calls.s -o %t.calls.obj
 # RUN: llvm-mc -filetype=obj -triple=ppc64-ibm-xbox360 %t.dir/target.s -o %t.target.obj
-# RUN: lld-link /machine:ppcbe /subsystem:xbox /entry:caller /nodefaultlib /fixed /base:0x82000000 /out:%t.exe %t.branches.obj %t.target.obj
+# RUN: lld-link /machine:ppcbe /subsystem:xbox /entry:caller /nodefaultlib /fixed /align:4096 /base:0x82000000 /out:%t.exe %t.branches.obj %t.target.obj
 # RUN: llvm-objdump -d %t.exe | FileCheck %s
-# RUN: lld-link /machine:ppcbe /subsystem:xbox /entry:caller /nodefaultlib /fixed /base:0x82000000 /out:%t.calls.exe %t.calls.obj %t.target.obj
+# RUN: lld-link /machine:ppcbe /subsystem:xbox /entry:caller /nodefaultlib /fixed /align:4096 /base:0x82000000 /out:%t.calls.exe %t.calls.obj %t.target.obj
 # RUN: llvm-objdump -d %t.calls.exe | FileCheck %s --check-prefix=REL24
 
 # These are the linked targets expected from Xbox 360 linker for the same COFF

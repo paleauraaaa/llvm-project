@@ -1,7 +1,7 @@
 # RUN: split-file %s %t.dir
 # RUN: llvm-mc -filetype=obj -triple=ppc64-ibm-xbox360 %t.dir/refs.s -o %t.refs.obj
 # RUN: llvm-mc -filetype=obj -triple=ppc64-ibm-xbox360 %t.dir/defs.s -o %t.defs.obj
-# RUN: lld-link /machine:ppcbe /entry:main /subsystem:console /fixed /base:0x82000000 /out:%t.exe %t.refs.obj %t.defs.obj
+# RUN: lld-link /machine:ppcbe /entry:main /subsystem:console /fixed /align:4096 /base:0x82000000 /out:%t.exe %t.refs.obj %t.defs.obj
 # RUN: llvm-objdump -s --section=.text %t.exe | FileCheck %s
 
 # target = 0x12348000. Check low-half sign boundaries, carries, negative

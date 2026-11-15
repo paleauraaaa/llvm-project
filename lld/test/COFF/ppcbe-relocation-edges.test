@@ -1,21 +1,21 @@
 # RUN: split-file %s %t.dir
 # RUN: yaml2obj %t.dir/pair-addend.yaml -o %t.pair.obj
-# RUN: lld-link /machine:ppcbe /entry:main /base:0x10000 /out:%t.pair.exe %t.pair.obj
+# RUN: lld-link /machine:ppcbe /entry:main /align:4096 /base:0x10000 /out:%t.pair.exe %t.pair.obj
 # RUN: llvm-objdump -s --section=.text %t.pair.exe | FileCheck --check-prefix=PAIR %s
 # RUN: yaml2obj %t.dir/pair-invalid.yaml -o %t.pair-invalid.obj
 # RUN: not lld-link /machine:ppcbe /entry:main /out:%t.pair-invalid.exe %t.pair-invalid.obj 2>&1 | FileCheck --check-prefix=PAIR-ERROR %s
 # RUN: yaml2obj %t.dir/branch-errors.yaml -o %t.branch-errors.obj
-# RUN: not lld-link /machine:ppcbe /entry:main /base:0x4000000 /out:%t.branch-errors.exe %t.branch-errors.obj 2>&1 | FileCheck --check-prefix=BRANCH-ERROR %s
+# RUN: not lld-link /machine:ppcbe /entry:main /align:4096 /base:0x4000000 /out:%t.branch-errors.exe %t.branch-errors.obj 2>&1 | FileCheck --check-prefix=BRANCH-ERROR %s
 # RUN: llvm-mc -filetype=obj -triple=ppc64-ibm-xbox360 %t.dir/secrel16-overflow.s -o %t.secrel16-overflow.obj
 # RUN: not lld-link /machine:ppcbe /entry:main /out:%t.secrel16-overflow.exe %t.secrel16-overflow.obj 2>&1 | FileCheck --check-prefix=SECREL16-ERROR %s
 # RUN: llvm-mc -filetype=obj -triple=ppc64-ibm-xbox360 %t.dir/secrel16-fields.s -o %t.secrel16-fields.obj
-# RUN: lld-link /machine:ppcbe /entry:main /base:0x10000 /out:%t.secrel16-fields.exe %t.secrel16-fields.obj
+# RUN: lld-link /machine:ppcbe /entry:main /align:4096 /base:0x10000 /out:%t.secrel16-fields.exe %t.secrel16-fields.obj
 # RUN: llvm-objdump -s --section=.text %t.secrel16-fields.exe | FileCheck --check-prefix=SECREL16-CODE %s
 # RUN: llvm-objdump -s --section=.data %t.secrel16-fields.exe | FileCheck --check-prefix=SECREL16-DATA %s
 # RUN: llvm-mc -filetype=obj -triple=ppc64-ibm-xbox360 %t.dir/secrel16-truncated.s -o %t.secrel16-truncated.obj
 # RUN: not lld-link /machine:ppcbe /entry:main /out:%t.secrel16-truncated.exe %t.secrel16-truncated.obj 2>&1 | FileCheck --check-prefix=SECREL16-TRUNCATED %s
 # RUN: yaml2obj %t.dir/pair-icf.yaml -o %t.pair-icf.obj
-# RUN: lld-link /machine:ppcbe /entry:foo /include:bar /include:baz /opt:icf /base:0x10000 /out:%t.pair-icf.exe %t.pair-icf.obj
+# RUN: lld-link /machine:ppcbe /entry:foo /include:bar /include:baz /opt:icf /align:4096 /base:0x10000 /out:%t.pair-icf.exe %t.pair-icf.obj
 # RUN: llvm-objdump -s --section=.text %t.pair-icf.exe | FileCheck --check-prefix=PAIR-ICF %s
 
 # PAIR: 11000 3c600001 4e800020

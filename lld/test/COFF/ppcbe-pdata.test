@@ -1,9 +1,9 @@
 # RUN: split-file %s %t.dir
 # RUN: llvm-mc -triple=powerpc64-ibm-xbox360 -filetype=obj %t.dir/pdata.s -o %t.obj
-# RUN: lld-link /machine:ppcbe /subsystem:xbox /entry:main /nodefaultlib /fixed:no /out:%t.exe %t.obj
+# RUN: lld-link /machine:ppcbe /subsystem:xbox /entry:main /nodefaultlib /fixed:no /align:4096 /base:0x82000000 /out:%t.exe %t.obj
 # RUN: llvm-objdump -s --section=.pdata %t.exe | FileCheck %s --check-prefix=DATA
 # RUN: llvm-readobj --file-headers --coff-basereloc %t.exe | FileCheck %s --check-prefix=HEADER
-# RUN: lld-link /machine:ppcbe /subsystem:xbox /entry:main /nodefaultlib /fixed:no /merge:.pdata=.rdata /out:%t.merged.exe %t.obj
+# RUN: lld-link /machine:ppcbe /subsystem:xbox /entry:main /nodefaultlib /fixed:no /align:4096 /base:0x82000000 /merge:.pdata=.rdata /out:%t.merged.exe %t.obj
 # RUN: llvm-objdump -s --section=.rdata %t.merged.exe | FileCheck %s --check-prefix=DATA
 # RUN: llvm-readobj --file-headers --coff-basereloc %t.merged.exe | FileCheck %s --check-prefix=HEADER
 # RUN: llvm-mc -triple=powerpc64-ibm-xbox360 -filetype=obj %t.dir/bad-size.s -o %t.bad.obj
