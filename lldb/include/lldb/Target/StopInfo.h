@@ -152,6 +152,8 @@ public:
 
   static lldb::StopInfoSP CreateStopReasonWithExec(Thread &thread);
 
+  static lldb::StopInfoSP CreateStopReasonWithLibraryEvent(Thread &thread);
+
   static lldb::StopInfoSP
   CreateStopReasonProcessorTrace(Thread &thread, const char *description);
 

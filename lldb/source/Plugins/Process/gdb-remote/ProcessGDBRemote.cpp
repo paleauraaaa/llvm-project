@@ -1879,6 +1879,10 @@ ThreadSP ProcessGDBRemote::SetThreadStopInfo(
           thread_sp->SetStopInfo(StopInfo::CreateStopReasonWithWatchpointID(
               *thread_sp, watch_id, silently_continue));
           handled = true;
+        } else if (reason == "library" && signo == SIGTRAP) {
+          thread_sp->SetStopInfo(
+              StopInfo::CreateStopReasonWithLibraryEvent(*thread_sp));
+          handled = true;
         } else if (reason == "exception") {
           thread_sp->SetStopInfo(stop);
           handled = true;
@@ -2197,6 +2201,7 @@ StateType ProcessGDBRemote::SetThreadStopInfo(StringExtractor &stop_packet) {
     lldb::pid_t stop_pid = LLDB_INVALID_PROCESS_ID;
     lldb::tid_t tid = LLDB_INVALID_THREAD_ID;
     const uint8_t signo = stop_packet.GetHexU8();
+    bool library_refresh_failed = false;
     llvm::StringRef key;
     llvm::StringRef value;
     std::string thread_name;
@@ -2341,6 +2346,7 @@ StateType ProcessGDBRemote::SetThreadStopInfo(StringExtractor &stop_packet) {
         if (error) {
           Log *log(GetLog(GDBRLog::Process));
           LLDB_LOG_ERROR(log, std::move(error), "Failed to load modules: {0}");
+          library_refresh_failed = true;
         }
       } else if (key.compare("fork") == 0 || key.compare("vfork") == 0) {
         // fork includes child pid/tid in thread-id format
@@ -2402,6 +2408,11 @@ StateType ProcessGDBRemote::SetThreadStopInfo(StringExtractor &stop_packet) {
     }
 
     SetAddressableBitMasks(addressable_bits);
+
+    if (library_refresh_failed && reason == "library") {
+      reason = "exception";
+      description = "Failed to refresh shared libraries";
+    }
 
     ThreadSP thread_sp = SetThreadStopInfo(
         tid, expedited_register_map, signo, thread_name, reason, description,

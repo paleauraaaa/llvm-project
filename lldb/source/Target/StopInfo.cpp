@@ -1347,6 +1347,23 @@ protected:
   bool m_performed_action = false;
 };
 
+class StopInfoLibraryEvent : public StopInfo {
+public:
+  StopInfoLibraryEvent(Thread &thread) : StopInfo(thread, LLDB_INVALID_UID) {}
+
+  StopReason GetStopReason() const override {
+    return eStopReasonInstrumentation;
+  }
+
+  const char *GetDescription() override { return "shared library event"; }
+
+  bool ShouldStopSynchronous(Event *event_ptr) override {
+    ThreadSP thread_sp = GetThread();
+    return !thread_sp ||
+           thread_sp->GetProcess()->GetStopOnSharedLibraryEvents();
+  }
+};
+
 // StopInfoFork
 
 class StopInfoFork : public StopInfo {
@@ -1502,6 +1519,10 @@ StopInfoSP StopInfo::CreateStopReasonProcessorTrace(Thread &thread,
 
 StopInfoSP StopInfo::CreateStopReasonWithExec(Thread &thread) {
   return StopInfoSP(new StopInfoExec(thread));
+}
+
+StopInfoSP StopInfo::CreateStopReasonWithLibraryEvent(Thread &thread) {
+  return std::make_shared<StopInfoLibraryEvent>(thread);
 }
 
 StopInfoSP StopInfo::CreateStopReasonFork(Thread &thread,
