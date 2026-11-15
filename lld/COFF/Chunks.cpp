@@ -216,12 +216,12 @@ static void applyLWZ(uint8_t *off, uint16_t v) {
 }
 
 void applyADDIS_LWZ(uint8_t *off, uint32_t v) {
-  uint16_t immH = readADDIS(off);   // read ADDIS operand (high 16 bits)
-  uint16_t immL = readLWZ(off + 4); // read LWZ operand (low 16 bits)
-  uint32_t imm = (immH << 16) | immL;
-  v += imm;                         // add the immediate offset
-  applyADDIS(off, v >> 16);         // set ADDIS operand (high 16 bits)
-  applyLWZ(off + 4, v);             // set LWZ operand (low 16 bits)
+  uint16_t immH = readADDIS(off);      // read ADDIS operand (high 16 bits)
+  uint16_t immL = readLWZ(off + 4);    // read LWZ operand (low 16 bits)
+  v += ((uint32_t)immH << 16) + SignExtend32<16>(immL);  // add the immediate offset
+  // LWZ sign-extends its displacement, so adjust the high half.
+  applyADDIS(off, (v + 0x8000) >> 16); // set ADDIS operand (high 16 bits)
+  applyLWZ(off + 4, v);                // set LWZ operand (low 16 bits)
 }
 
 static void applyBranch20T(uint8_t *off, int32_t v) {

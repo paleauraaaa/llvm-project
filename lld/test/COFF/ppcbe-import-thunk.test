@@ -7,10 +7,18 @@
 # RUN: llvm-readobj --coff-basereloc %t.exe | FileCheck --check-prefix=BASEREL %s
 # RUN: llvm-readobj --sections --section-data %t.exe | FileCheck --check-prefix=DATA %s
 # RUN: llvm-objdump -d --triple=powerpc-unknown-windows-msvc %t.exe | FileCheck --check-prefix=DIS %s
+# RUN: llvm-mc -filetype=obj -triple=ppc64-ibm-xbox360 %t.dir/pad.s -o %t.pad.obj
+# RUN: lld-link /machine:ppcbe /entry:main /subsystem:console /align:4096 /base:0x10000 /out:%t.padded.exe %t.main.obj %t.lib %t.pad.obj
+# RUN: llvm-readobj --coff-imports %t.padded.exe | FileCheck --check-prefix=PADDED-IMPORT %s
+# RUN: llvm-objdump -d --triple=powerpc-unknown-windows-msvc %t.padded.exe | FileCheck --check-prefix=PADDED-DIS %s
 
 # IMPORT: Format: COFF-PPCBE
 # IMPORT: Import {
+# IMPORT: ImportAddressTableRVA: 0x2030
 # IMPORT: Symbol: impfunc
+
+# PADDED-IMPORT: ImportAddressTableRVA: 0x8030
+# PADDED-IMPORT: Symbol: impfunc
 
 # BASEREL-LABEL: BaseReloc [
 # BASEREL: Entry {
@@ -36,10 +44,21 @@
 # DIS: lis 4,
 # DIS: b
 # DIS: blr
-# DIS: lis 12,
-# DIS-NEXT: lwz 12,
+# DIS: lis 12, 1
+# DIS-NEXT: lwz 12, 8240(12)
 # DIS-NEXT: mtctr 12
 # DIS-NEXT: bctr
+
+# The IAT is at 0x18030. The signed displacement requires the high half to
+# be adjusted from 1 to 2.
+# PADDED-DIS: lis 12, 2
+# PADDED-DIS-NEXT: lwz 12, -32720(12)
+# PADDED-DIS-NEXT: mtctr 12
+# PADDED-DIS-NEXT: bctr
+
+#--- pad.s
+.text
+.space 0x6000
 
 #--- dll.s
 .text
