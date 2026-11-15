@@ -1,0 +1,72 @@
+# RUN: split-file %s %t.dir
+# RUN: llvm-mc -triple=powerpc64-unknown-xbox360 -filetype=obj %t.dir/input.s -o %t.obj
+# RUN: lld-link /machine:ppcbe /subsystem:xbox /entry:main /nodefaultlib /debug /out:%t.exe /pdb:%t.pdb %t.obj 2>&1 | FileCheck %s --check-prefix=NO-WARNING --allow-empty
+# RUN: llvm-pdbutil dump -symbols %t.pdb | FileCheck %s --check-prefix=SYMS
+#
+# A normal empty subsection followed by a valid one must still be parsed.
+# RUN: llvm-mc -triple=powerpc64-unknown-xbox360 -filetype=obj --defsym=STANDARD=1 %t.dir/input.s -o %t.standard.obj
+# RUN: lld-link /machine:ppcbe /subsystem:xbox /entry:main /nodefaultlib /debug /out:%t.standard.exe /pdb:%t.standard.pdb %t.standard.obj 2>&1 | FileCheck %s --check-prefix=EMPTY
+# RUN: llvm-pdbutil dump -symbols %t.standard.pdb | FileCheck %s --check-prefix=SYMS
+#
+# A truncated symbol stream must not be accepted as the legacy variant.
+# RUN: llvm-mc -triple=powerpc64-unknown-xbox360 -filetype=obj --defsym=TRUNCATED=1 %t.dir/input.s -o %t.bad.obj
+# RUN: lld-link /machine:ppcbe /subsystem:xbox /entry:main /nodefaultlib /debug /out:%t.bad.exe /pdb:%t.bad.pdb %t.bad.obj 2>&1 | FileCheck %s --check-prefix=EMPTY
+#
+# The compatibility path is limited to PPCBE objects.
+# RUN: llvm-mc -triple=x86_64-pc-windows-msvc -filetype=obj %t.dir/input.s -o %t.x64.obj
+# RUN: lld-link /machine:x64 /entry:main /nodefaultlib /debug /out:%t.x64.exe /pdb:%t.x64.pdb %t.x64.obj 2>&1 | FileCheck %s --check-prefix=EMPTY
+
+# NO-WARNING-NOT: warning:
+# EMPTY: warning: empty symbols subsection
+# SYMS: S_OBJNAME {{.*}} `legacy.obj`
+# SYMS: S_COMPILE2
+# SYMS: S_GPROC32 {{.*}} `legacy_function`
+# SYMS: addr = 0001:0000
+
+#--- input.s
+.text
+.globl main
+main:
+  .byte 0, 0, 0, 0
+
+.section .debug$S,"dr"
+  .long 4
+  .long 0xf1
+  .long 0
+.ifdef STANDARD
+  .long 0xf1
+  .long .Lsymbols_end-.Lsymbols
+.endif
+.Lsymbols:
+  .short .Lobj_end-.Lobj
+.Lobj:
+  .short 0x1101
+  .long 0
+  .asciz "legacy.obj"
+.Lobj_end:
+  .short .Lcompile_end-.Lcompile
+.Lcompile:
+  .short 0x1116
+  .long 3
+  .short 0x40
+  .short 0, 0, 0, 0, 0, 0
+  .asciz "assembler"
+  .byte 0
+.Lcompile_end:
+  .short .Lproc_end-.Lproc
+.Lproc:
+  .short 0x1110
+  .long 0, 0, 0
+  .long 4, 0, 4
+  .long 0
+  .secrel32 main
+  .secidx main
+  .byte 0
+  .asciz "legacy_function"
+.Lproc_end:
+  .short 2
+  .short 6
+.Lsymbols_end:
+.ifdef TRUNCATED
+  .byte 1
+.endif

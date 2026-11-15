@@ -118,7 +118,7 @@ public:
                                uint32_t &moduleSymOffset,
                                uint32_t &nextRelocIndex,
                                std::vector<StringTableFixup> &stringTableFixups,
-                               BinaryStreamRef symData);
+                               ArrayRef<uint8_t> symsBuffer);
 
   // Write all module symbols from all live debug symbol subsections of the
   // given object file into the given stream writer.
@@ -582,19 +582,60 @@ void PDBLinker::writeSymbolRecord(SectionChunk *debugChunk,
   translateIdSymbols(recordBytes, source);
 }
 
+// Some Xbox 360 objects leave the length of their only symbols
+// subsection at zero, with the symbol records extending to the section end.
+static std::optional<ArrayRef<uint8_t>>
+getXbox360SymbolData(COFFLinkerContext &ctx, ArrayRef<uint8_t> contents) {
+  if (ctx.config.machine != COFF::IMAGE_FILE_MACHINE_PPCBE ||
+      contents.size() <= sizeof(DebugSubsectionHeader) ||
+      support::endian::read32le(contents.data()) !=
+          uint32_t(DebugSubsectionKind::Symbols) ||
+      support::endian::read32le(contents.data() + 4) != 0)
+    return std::nullopt;
+
+  ArrayRef<uint8_t> data = contents.drop_front(sizeof(DebugSubsectionHeader));
+  BinaryByteStream stream(data, llvm::endianness::little);
+  BinaryStreamRef ref(stream);
+  unsigned count = 0;
+  for (uint64_t offset = 0; offset < data.size();) {
+    Expected<CVSymbol> sym = readCVRecordFromStream<SymbolKind>(ref, offset);
+    if (!sym) {
+      consumeError(sym.takeError());
+      return std::nullopt;
+    }
+    if (count == 0) {
+      if (sym->kind() != SymbolKind::S_OBJNAME)
+        return std::nullopt;
+      auto objName = SymbolDeserializer::deserializeAs<ObjNameSym>(*sym);
+      if (!objName) {
+        consumeError(objName.takeError());
+        return std::nullopt;
+      }
+    } else if (count == 1) {
+      if (sym->kind() != SymbolKind::S_COMPILE2)
+        return std::nullopt;
+      auto compile = SymbolDeserializer::deserializeAs<Compile2Sym>(*sym);
+      if (!compile) {
+        consumeError(compile.takeError());
+        return std::nullopt;
+      }
+    }
+    offset += sym->length();
+    ++count;
+  }
+  return count >= 2 ? std::optional<ArrayRef<uint8_t>>(data) : std::nullopt;
+}
+
 void PDBLinker::analyzeSymbolSubsection(
     SectionChunk *debugChunk, uint32_t &moduleSymOffset,
     uint32_t &nextRelocIndex, std::vector<StringTableFixup> &stringTableFixups,
-    BinaryStreamRef symData) {
+    ArrayRef<uint8_t> symsBuffer) {
   ObjFile *file = debugChunk->file;
   uint32_t moduleSymStart = moduleSymOffset;
 
   uint32_t scopeLevel = 0;
   std::vector<uint8_t> storage;
   ArrayRef<uint8_t> sectionContents = debugChunk->getContents();
-
-  ArrayRef<uint8_t> symsBuffer;
-  cantFail(symData.readBytes(0, symData.getLength(), symsBuffer));
 
   if (symsBuffer.empty())
     Warn(ctx) << "empty symbols subsection in " << file->getName();
@@ -664,16 +705,10 @@ Error PDBLinker::writeAllModuleSymbolRecords(ObjFile *file,
     exitOnErr(reader.readArray(subsections, contents.size()));
 
     uint32_t nextRelocIndex = 0;
-    for (const DebugSubsectionRecord &ss : subsections) {
-      if (ss.kind() != DebugSubsectionKind::Symbols)
-        continue;
-
+    auto writeSymbols = [&](ArrayRef<uint8_t> symsBuffer) -> Error {
       uint32_t moduleSymStart = writer.getOffset();
       scopes.clear();
       storage.clear();
-      ArrayRef<uint8_t> symsBuffer;
-      BinaryStreamRef sr = ss.getRecordData();
-      cantFail(sr.readBytes(0, sr.getLength(), symsBuffer));
       auto ec = forEachCodeViewRecord<CVSymbol>(
           symsBuffer, [&](CVSymbol sym) -> llvm::Error {
             // Track the current scope. Only update records in the postmerge
@@ -704,7 +739,21 @@ Error PDBLinker::writeAllModuleSymbolRecords(ObjFile *file,
       // at once.
       // TODO: Consider buffering symbols for the entire object file to reduce
       // overhead even further.
-      if (Error e = writer.writeBytes(storage))
+      return writer.writeBytes(storage);
+    };
+
+    if (auto xboxSymbols = getXbox360SymbolData(ctx, contents)) {
+      if (Error e = writeSymbols(*xboxSymbols))
+        return e;
+      continue;
+    }
+    for (const DebugSubsectionRecord &ss : subsections) {
+      if (ss.kind() != DebugSubsectionKind::Symbols)
+        continue;
+      ArrayRef<uint8_t> symsBuffer;
+      BinaryStreamRef sr = ss.getRecordData();
+      cantFail(sr.readBytes(0, sr.getLength(), symsBuffer));
+      if (Error e = writeSymbols(symsBuffer))
         return e;
     }
   }
@@ -770,6 +819,12 @@ void DebugSHandler::handleDebugS(SectionChunk *debugChunk) {
   // Reset the relocation index, since this is a new section.
   nextRelocIndex = 0;
 
+  if (auto xboxSymbols = getXbox360SymbolData(ctx, contents)) {
+    linker.analyzeSymbolSubsection(debugChunk, moduleStreamSize, nextRelocIndex,
+                                   stringTableFixups, *xboxSymbols);
+    return;
+  }
+
   for (const DebugSubsectionRecord &ss : subsections) {
     // Ignore subsections with the 'ignore' bit. Some versions of the Visual C++
     // runtime have subsections with this bit set.
@@ -795,11 +850,15 @@ void DebugSHandler::handleDebugS(SectionChunk *debugChunk) {
     case DebugSubsectionKind::FrameData:
       addFrameDataSubsection(debugChunk, ss);
       break;
-    case DebugSubsectionKind::Symbols:
+    case DebugSubsectionKind::Symbols: {
+      BinaryStreamRef symData = ss.getRecordData();
+      ArrayRef<uint8_t> symsBuffer;
+      cantFail(symData.readBytes(0, symData.getLength(), symsBuffer));
       linker.analyzeSymbolSubsection(debugChunk, moduleStreamSize,
                                      nextRelocIndex, stringTableFixups,
-                                     ss.getRecordData());
+                                     symsBuffer);
       break;
+    }
 
     case DebugSubsectionKind::CrossScopeImports:
     case DebugSubsectionKind::CrossScopeExports:
