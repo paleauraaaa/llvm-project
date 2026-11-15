@@ -3,6 +3,10 @@
 ; RUN: llc -mtriple=powerpc64-ibm-xbox360 -mcpu=xenon -O0 -verify-machineinstrs < %t/xbox.ll | FileCheck %s
 ; RUN: llc -mtriple=powerpc64-ibm-xbox360 -mcpu=xenon -stop-after=finalize-isel < %t/xbox.ll | FileCheck %s --check-prefix=MEM
 ; RUN: llc -mtriple=powerpc64-unknown-linux -mcpu=pwr7 < %t/vsx.ll | FileCheck %s --check-prefix=VSX
+; RUN: llc -mtriple=powerpc64-ibm-xbox360 -mcpu=xenon -mattr=-vsx -verify-machineinstrs < %t/truncate.ll | FileCheck %s --check-prefix=FPU-TRUNC
+; RUN: llc -mtriple=powerpc64-ibm-xbox360 -mcpu=xenon -O0 -verify-machineinstrs < %t/truncate.ll | FileCheck %s --check-prefix=FPU-TRUNC
+; RUN: llc -mtriple=powerpc64-unknown-linux -mcpu=970 -verify-machineinstrs < %t/truncate.ll | FileCheck %s --check-prefix=FPU-TRUNC
+; RUN: llc -mtriple=powerpc64-unknown-linux -mcpu=pwr7 -verify-machineinstrs < %t/truncate.ll | FileCheck %s --check-prefix=VSX-TRUNC
 
 ;--- xbox.ll
 declare double @llvm.ppc.fcfid(double)
@@ -79,5 +83,31 @@ declare double @llvm.ppc.fcfid(double)
 ; VSX: xscvsxddp
 define double @convert(double %bits) {
   %result = call double @llvm.ppc.fcfid(double %bits)
+  ret double %result
+}
+
+;--- truncate.ll
+declare double @llvm.ppc.fctidz(double)
+declare double @llvm.ppc.fctiwz(double)
+
+; FPU-TRUNC-LABEL: truncate_doubleword:
+; FPU-TRUNC: fctidz 1, 1
+; FPU-TRUNC-NEXT: blr
+; VSX-TRUNC-LABEL: truncate_doubleword:
+; VSX-TRUNC: xscvdpsxds 1, 1
+; VSX-TRUNC-NEXT: blr
+define double @truncate_doubleword(double %value) {
+  %result = call double @llvm.ppc.fctidz(double %value)
+  ret double %result
+}
+
+; FPU-TRUNC-LABEL: truncate_word:
+; FPU-TRUNC: fctiwz 1, 1
+; FPU-TRUNC-NEXT: blr
+; VSX-TRUNC-LABEL: truncate_word:
+; VSX-TRUNC: xscvdpsxws 1, 1
+; VSX-TRUNC-NEXT: blr
+define double @truncate_word(double %value) {
+  %result = call double @llvm.ppc.fctiwz(double %value)
   ret double %result
 }

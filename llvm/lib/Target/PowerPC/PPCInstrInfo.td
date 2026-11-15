@@ -5367,19 +5367,23 @@ def : Pat<(PPCStoreCond ForceXForm:$dst, gprc:$A, 1),
 let Predicates = [HasVSX] in
 def : Pat<(int_ppc_fcfid f64:$A),
         (XSCVSXDDP $A)>;
-def NoVSXForFCFID : Predicate<"!Subtarget->hasVSX()">;
-let Predicates = [HasFPU, In64BitMode, NoVSXForFCFID] in
+def NoVSXForFPConversion : Predicate<"!Subtarget->hasVSX()">;
+let Predicates = [HasFPU, In64BitMode, NoVSXForFPConversion] in
 def : Pat<(int_ppc_fcfid f64:$A), (FCFID $A)>;
 def : Pat<(int_ppc_fcfud f64:$A),
         (XSCVUXDDP $A)>;
 def : Pat<(int_ppc_fctid f64:$A),
         (FCTID $A)>;
-def : Pat<(int_ppc_fctidz f64:$A),
-        (XSCVDPSXDS $A)>;
+let Predicates = [HasVSX] in
+def : Pat<(int_ppc_fctidz f64:$A), (XSCVDPSXDS $A)>;
+let Predicates = [HasFPU, In64BitMode, NoVSXForFPConversion] in
+def : Pat<(int_ppc_fctidz f64:$A), (FCTIDZ $A)>;
 def : Pat<(int_ppc_fctiw f64:$A),
         (FCTIW $A)>;
-def : Pat<(int_ppc_fctiwz f64:$A),
-        (XSCVDPSXWS $A)>;
+let Predicates = [HasVSX] in
+def : Pat<(int_ppc_fctiwz f64:$A), (XSCVDPSXWS $A)>;
+let Predicates = [HasFPU, NoVSXForFPConversion] in
+def : Pat<(int_ppc_fctiwz f64:$A), (FCTIWZ $A)>;
 def : Pat<(int_ppc_fctudz f64:$A),
         (XSCVDPUXDS $A)>;
 def : Pat<(int_ppc_fctuwz f64:$A),
