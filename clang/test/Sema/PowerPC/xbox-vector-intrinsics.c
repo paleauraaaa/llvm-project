@@ -59,6 +59,7 @@ __vector4 __vspltisw(int);
 __vector4 __vspltw(__vector4, unsigned int);
 __vector4 __vpermwi(__vector4, unsigned int);
 __vector4 __vpkd3d(__vector4, __vector4, enum PackType, enum PackMask, unsigned int);
+__vector4 __vupkd3d(__vector4, enum PackType);
 __vector4 __VMXGetReg(int);
 void __VMXSetReg(int, __vector4);
 
@@ -90,6 +91,11 @@ void f(__vector4 a, __vector4 b, int n) {
   __vpermwi(a, 256); // expected-error {{outside the valid range}}
   __vpkd3d(a, b, Pack, Mask, 3);
   __vpkd3d(a, b, Pack, Mask, 4); // expected-error {{outside the valid range}}
+  __vupkd3d(a, (enum PackType)0);
+  __vupkd3d(a, (enum PackType)6);
+  __vupkd3d(a, (enum PackType)7); // expected-error {{outside the valid range}}
+  __vupkd3d(a, (enum PackType)-1); // expected-error {{outside the valid range}}
+  __vupkd3d(a, (enum PackType)n); // expected-error {{must be a constant integer}}
   __VMXGetReg(127);
   __VMXGetReg(128); // expected-error {{outside the valid range}}
   __VMXSetReg(127, a);

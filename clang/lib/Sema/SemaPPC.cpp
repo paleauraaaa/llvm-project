@@ -160,8 +160,9 @@ bool SemaPPC::CheckPPCBuiltinFunctionCall(const TargetInfo &TI,
   case PPC::BI__vcfux:
   case PPC::BI__vctsxs:
   case PPC::BI__vctuxs:
-  case PPC::BI__vupkd3d:
     return SemaRef.BuiltinConstantArgRange(TheCall, 1, 0, 31);
+  case PPC::BI__vupkd3d:
+    return SemaRef.BuiltinConstantArgRange(TheCall, 1, 0, 6);
   case PPC::BI__vpermwi:
     return SemaRef.BuiltinConstantArgRange(TheCall, 1, 0, 255);
   case PPC::BI__vsldoi:

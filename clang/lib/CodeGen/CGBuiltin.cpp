@@ -17844,6 +17844,9 @@ Value *CodeGenFunction::EmitPPCXboxVectorBuiltinExpr(
       else
         Args[I] = Builder.CreateBitCast(Args[I], Ty);
     }
+    if (BuiltinID == PPC::BI__vupkd3d)
+      // The intrinsic's pack type occupies the upper three bits of the immediate.
+      Args[1] = Builder.CreateShl(Args[1], 2);
     Result = Builder.CreateCall(F, Args);
   } else {
     unsigned ElementBits;

@@ -2,7 +2,9 @@
 // RUN: %clang_cc1 -triple powerpc64-ibm-xbox360 -mrelocation-model static -target-cpu xenon -fms-extensions -x c++ -emit-llvm -o - %s | FileCheck %s
 // RUN: %clang_cc1 -triple powerpc64-ibm-xbox360 -mrelocation-model static -target-cpu xenon -fms-extensions -fno-builtin -emit-llvm -o - %s | FileCheck %s
 // RUN: %clang_cc1 -triple powerpc64-ibm-xbox360 -mrelocation-model static -target-cpu xenon -fms-extensions -mllvm -verify-machineinstrs -emit-obj -o %t.o %s
+// RUN: llvm-objdump -d --mcpu=xenon %t.o | FileCheck %s --check-prefix=ENC
 // RUN: %clang_cc1 -triple powerpc64-ibm-xbox360 -mrelocation-model static -target-cpu xenon -fms-extensions -mllvm -verify-machineinstrs -O2 -emit-obj -o %t.opt.o %s
+// RUN: llvm-objdump -d --mcpu=xenon %t.opt.o | FileCheck %s --check-prefix=ENC
 
 // Independently declared platform API: no compiler-provided header or builtin aliases.
 typedef struct __declspec(intrin_type) __declspec(align(16)) __vector4 {
@@ -1125,9 +1127,27 @@ __vector4 test__vpkd3d(__vector4 a0, __vector4 a1) {
 }
 
 // CHECK-LABEL: define{{.*}} @test__vupkd3d(
-// CHECK: call {{.*}} @llvm.ppc.altivec.vupkd3d128(
+// CHECK: call {{.*}} @llvm.ppc.altivec.vupkd3d128({{.*}}, i32 0)
+// ENC-LABEL: <test__vupkd3d>:
+// ENC: vupkd3d128 {{[0-9]+}}, {{[0-9]+}}, 0
 __vector4 test__vupkd3d(__vector4 a0) {
   return __vupkd3d(a0, 0);
+}
+
+// CHECK-LABEL: define{{.*}} @test__vupkd3d_short2(
+// CHECK: call {{.*}} @llvm.ppc.altivec.vupkd3d128({{.*}}, i32 4)
+// ENC-LABEL: <test__vupkd3d_short2>:
+// ENC: vupkd3d128 {{[0-9]+}}, {{[0-9]+}}, 4
+__vector4 test__vupkd3d_short2(__vector4 a0) {
+  return __vupkd3d(a0, 1);
+}
+
+// CHECK-LABEL: define{{.*}} @test__vupkd3d_packed64(
+// CHECK: call {{.*}} @llvm.ppc.altivec.vupkd3d128({{.*}}, i32 24)
+// ENC-LABEL: <test__vupkd3d_packed64>:
+// ENC: vupkd3d128 {{[0-9]+}}, {{[0-9]+}}, 24
+__vector4 test__vupkd3d_packed64(__vector4 a0) {
+  return __vupkd3d(a0, 6);
 }
 
 // CHECK-LABEL: define{{.*}} @test__lvlx(
