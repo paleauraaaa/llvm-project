@@ -1,7 +1,9 @@
 ; RUN: llc -mtriple=powerpc64-ibm-xbox360 -mcpu=xenon -filetype=obj %s -o %t.modern.obj
 ; RUN: llvm-readobj --codeview %t.modern.obj | FileCheck %s --check-prefix=MODERN
-; RUN: sed 's/!"CodeViewXbox360Modern", i32 1/!"CodeViewXbox360Modern", i32 0/' %s | llc -mtriple=powerpc64-ibm-xbox360 -mcpu=xenon -filetype=obj -o %t.legacy.obj
+; RUN: sed 's/!llvm.module.flags = !{!2, !3}/!llvm.module.flags = !{!2, !3, !19}/' %s | llc -mtriple=powerpc64-ibm-xbox360 -mcpu=xenon -filetype=obj -o %t.legacy.obj
 ; RUN: llvm-readobj --codeview %t.legacy.obj | FileCheck %s --check-prefix=LEGACY --implicit-check-not=LF_FUNC_ID --implicit-check-not=LF_STRING_ID --implicit-check-not=LF_UDT_SRC_LINE --implicit-check-not=LF_BUILDINFO --implicit-check-not=InlineSiteSym --implicit-check-not=BuildInfoSym
+; RUN: sed -e 's/!llvm.module.flags = !{!2, !3}/!llvm.module.flags = !{!2, !3, !19}/' -e 's/!"CodeViewXbox360Legacy", i32 1/!"CodeViewXbox360Legacy", i32 0/' %s | llc -mtriple=powerpc64-ibm-xbox360 -mcpu=xenon -filetype=obj -o %t.zero.obj
+; RUN: llvm-readobj --codeview %t.zero.obj | FileCheck %s --check-prefix=MODERN
 
 ; Modern records must not change the target's register numbering or endianness.
 ; MODERN-DAG: TypeLeafKind: LF_FUNC_ID
@@ -51,7 +53,7 @@ entry:
 declare void @llvm.dbg.value(metadata, metadata, metadata)
 
 !llvm.dbg.cu = !{!0}
-!llvm.module.flags = !{!2, !3, !19}
+!llvm.module.flags = !{!2, !3}
 
 !0 = distinct !DICompileUnit(language: DW_LANG_C_plus_plus, file: !1, producer: "clang", isOptimized: true, runtimeVersion: 0, emissionKind: FullDebug, globals: !21)
 !1 = !DIFile(filename: "modern.cpp", directory: "/src")
@@ -70,7 +72,7 @@ declare void @llvm.dbg.value(metadata, metadata, metadata)
 !16 = !DILocalVariable(name: "inner_local", scope: !9, file: !1, line: 11, type: !7)
 !17 = !DILocation(line: 11, column: 3, scope: !9, inlinedAt: !11)
 !18 = !DILocation(line: 32, column: 3, scope: !4)
-!19 = !{i32 7, !"CodeViewXbox360Modern", i32 1}
+!19 = !{i32 7, !"CodeViewXbox360Legacy", i32 1}
 !20 = !DIGlobalVariableExpression(var: !22, expr: !DIExpression())
 !21 = !{!20}
 !22 = distinct !DIGlobalVariable(name: "sample", scope: !0, file: !1, line: 5, type: !23, isLocal: false, isDefinition: true)

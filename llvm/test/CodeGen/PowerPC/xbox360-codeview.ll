@@ -4,7 +4,7 @@
 ; CHECK-NOT: TypeLeafKind: LF_FUNC_ID
 ; CHECK-NOT: TypeLeafKind: LF_STRING_ID
 ; CHECK-NOT: TypeLeafKind: LF_BUILDINFO
-; CHECK: Machine: PPC604 (0x42)
+; CHECK: Machine: PPCBE (0x45)
 ; CHECK-NOT: S_GPROC32_ID
 ; CHECK: GlobalProcSym {
 ; CHECK: FunctionType: void () (0x1002)
@@ -23,7 +23,7 @@ entry:
 declare void @llvm.dbg.value(metadata, metadata, metadata)
 
 !llvm.dbg.cu = !{!0}
-!llvm.module.flags = !{!2, !3}
+!llvm.module.flags = !{!2, !3, !15}
 
 !0 = distinct !DICompileUnit(language: DW_LANG_C, file: !1, producer: "clang",
     isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug)
@@ -45,3 +45,4 @@ declare void @llvm.dbg.value(metadata, metadata, metadata)
 !12 = !{!13}
 !13 = !DISubrange(count: 4)
 !14 = !{!8}
+!15 = !{i32 7, !"CodeViewXbox360Legacy", i32 1}

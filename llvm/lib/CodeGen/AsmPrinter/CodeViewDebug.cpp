@@ -628,10 +628,10 @@ void CodeViewDebug::beginModule(Module *M) {
   }
 
   TheCPU = mapArchToCVCPUType(Triple(M->getTargetTriple()));
-  const auto *Modern = mdconst::extract_or_null<ConstantInt>(
-      M->getModuleFlag("CodeViewXbox360Modern"));
+  const auto *Legacy = mdconst::extract_or_null<ConstantInt>(
+      M->getModuleFlag("CodeViewXbox360Legacy"));
   EmitLegacyXbox360CodeView = Triple(M->getTargetTriple()).isOSXbox360() &&
-                              (!Modern || Modern->isZero());
+                              Legacy && !Legacy->isZero();
 
   // Get the current source language.
   const MDNode *Node = *M->debug_compile_units_begin();
