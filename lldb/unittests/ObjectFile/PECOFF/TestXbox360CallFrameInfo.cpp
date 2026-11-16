@@ -203,6 +203,25 @@ TEST_F(Xbox360CallFrameInfoTest, RejectsInvalidMetadata) {
   EXPECT_FALSE(Plan(0, plan));
 }
 
+TEST_F(Xbox360CallFrameInfoTest, UnsupportedRecordDoesNotDiscardOtherFunctions) {
+  Load({0x4e800020, 0x4e800020, 0x4e800020},
+       {0x82001000, 0x40000100, 0x82001004, 0x00000100,
+        0x82001008, 0x40000100});
+  AddressRange range;
+  EXPECT_TRUE(cfi->GetAddressRange(object->GetAddress(0x1000), range));
+  EXPECT_FALSE(cfi->GetAddressRange(object->GetAddress(0x1004), range));
+  EXPECT_TRUE(cfi->GetAddressRange(object->GetAddress(0x1008), range));
+  UnwindPlan plan(eRegisterKindDWARF);
+  EXPECT_TRUE(Plan(0, plan));
+  EXPECT_FALSE(Plan(4, plan));
+  EXPECT_TRUE(Plan(8, plan));
+
+  Load({0x4e800020, 0x4e800020, 0x4e800020},
+       {0x82001000, 0x40000100, 0x82001004, 0x00000200,
+        0x82001008, 0x40000100});
+  EXPECT_FALSE(Plan(0, plan));
+}
+
 TEST_F(Xbox360CallFrameInfoTest, TracksRestoresThroughMultipleEpilogues) {
   // Two return paths, both restoring SP, LR and r31.
   Load({0x7d8802a6, 0x9181fff8, 0xfbe1fff0, 0x9421ff80, 0x48000101, 0x38210080,

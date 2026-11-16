@@ -245,8 +245,8 @@ Xbox360CallFrameInfo::Xbox360CallFrameInfo(ObjectFilePECOFF &object_file,
         (packed & PData::kPrologueLengthMask) * kInstructionSize;
     // Bit 30 selects four-byte PowerPC instructions; bit 31 is the
     // exception-handler flag and does not change the unwind recipe.
-    if (!(packed & PData::kPowerPCInstructions) || !length ||
-        start % kInstructionSize || prologue > length || start < previous_end ||
+    if (!length || start % kInstructionSize || prologue > length ||
+        start < previous_end ||
         uint64_t(start) + length > uint64_t(UINT32_MAX) + 1 ||
         start < object_file.GetFileAddress(0)) {
       Fail("invalid packed runtime function");
@@ -254,8 +254,12 @@ Xbox360CallFrameInfo::Xbox360CallFrameInfo(ObjectFilePECOFF &object_file,
       return;
     }
 
-    m_functions.push_back({start, length, prologue});
     previous_end = uint64_t(start) + length;
+    if (!(packed & PData::kPowerPCInstructions)) {
+      Fail("unsupported packed runtime function instruction format");
+      continue;
+    }
+    m_functions.push_back({start, length, prologue});
   }
 }
 

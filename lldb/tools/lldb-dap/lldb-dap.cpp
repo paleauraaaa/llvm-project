@@ -3628,7 +3628,12 @@ void request_stepOut(DAP &dap, const llvm::json::Object &request) {
     // Remember the thread ID that caused the resume so we can set the
     // "threadCausedFocus" boolean value in the "stopped" events.
     dap.focus_tid = thread.GetThreadID();
-    thread.StepOut();
+    lldb::SBError error;
+    thread.StepOut(error);
+    if (error.Fail()) {
+      response["success"] = false;
+      EmplaceSafeString(response, "message", error.GetCString());
+    }
   } else {
     response["success"] = llvm::json::Value(false);
   }
