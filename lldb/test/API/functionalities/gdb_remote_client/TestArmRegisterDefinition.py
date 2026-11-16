@@ -8,6 +8,66 @@ from lldbsuite.test.lldbgdbclient import GDBRemoteTestBase
 class TestArmRegisterDefinition(GDBRemoteTestBase):
     @skipIfXmlSupportMissing
     @skipIfRemote
+    def test_ieee_register_types(self):
+        class MyResponder(MockGDBServerResponder):
+            def qXferRead(self, obj, annex, offset, length):
+                if obj == "features" and annex == "target.xml":
+                    return (
+                        """<target><architecture>arm</architecture>
+                        <feature name="test">
+                        <reg name="r0" bitsize="32" type="uint32" group="general"/>
+                        <reg name="pc" bitsize="32" type="code_ptr" group="general"/>
+                        <reg name="s0" bitsize="32" type="ieee_single" group="float"/>
+                        <reg name="d0" bitsize="64" type="ieee_double" group="float"/>
+                        <reg name="fpscr" bitsize="32" type="uint32" group="float"/>
+                        <reg name="v0" bitsize="128" type="uint128" group="vector"/>
+                        </feature></target>""",
+                        False,
+                    )
+                return None, False
+
+            def qSupported(self, client_supported):
+                return "PacketSize=4000;qXfer:features:read+"
+
+            def readRegister(self, regnum):
+                return "E01"
+
+            def readRegisters(self):
+                return (
+                    "0100000000100000"
+                    "0000c03f"
+                    "0000000000000440"
+                    "00000000"
+                    + "00" * 16
+                )
+
+            def haltReason(self):
+                return "S05"
+
+            def qfThreadInfo(self):
+                return "mdead"
+
+        self.server.responder = MyResponder()
+        self.dbg.SetDefaultArchitecture("armv7em")
+        target = self.dbg.CreateTargetWithFileAndArch(None, None)
+        frame = self.connect(target).GetThreadAtIndex(0).GetFrameAtIndex(0)
+        sets = {
+            reg_set.GetName(): {
+                reg_set.GetChildAtIndex(i).GetName()
+                for i in range(reg_set.GetNumChildren())
+            }
+            for reg_set in frame.GetRegisters()
+        }
+        self.assertIn("r0", sets["general"])
+        self.assertEqual(sets["float"], {"s0", "d0", "fpscr"})
+        self.assertIn("v0", sets["vector"])
+        self.assertEqual(frame.FindRegister("s0").GetTypeName(), "float")
+        self.assertEqual(frame.FindRegister("d0").GetTypeName(), "double")
+        self.assertEqual(float(frame.FindRegister("s0").GetValue()), 1.5)
+        self.assertEqual(float(frame.FindRegister("d0").GetValue()), 2.5)
+
+    @skipIfXmlSupportMissing
+    @skipIfRemote
     def test(self):
         """
         Test lldb's parsing of the <architecture> tag in the target.xml register

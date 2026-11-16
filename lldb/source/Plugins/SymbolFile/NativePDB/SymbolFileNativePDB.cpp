@@ -833,10 +833,13 @@ TypeSP SymbolFileNativePDB::GetOrCreateType(PdbTypeSymId type_id) {
   return type;
 }
 
-VariableSP SymbolFileNativePDB::CreateGlobalVariable(PdbGlobalSymId var_id) {
-  CVSymbol sym = m_index->symrecords().readRecord(var_id.offset);
+VariableSP SymbolFileNativePDB::CreateGlobalVariable(PdbSymUid var_id) {
+  const bool is_compiland_sym = var_id.kind() == PdbSymUidKind::CompilandSym;
+  CVSymbol sym = is_compiland_sym
+                     ? m_index->ReadSymbolRecord(var_id.asCompilandSym())
+                     : m_index->ReadSymbolRecord(var_id.asGlobalSym());
   if (sym.kind() == S_CONSTANT)
-    return CreateConstantSymbol(var_id, sym);
+    return CreateConstantSymbol(var_id.asGlobalSym(), sym);
 
   lldb::ValueType scope = eValueTypeInvalid;
   TypeIndex ti;
@@ -881,7 +884,11 @@ VariableSP SymbolFileNativePDB::CreateGlobalVariable(PdbGlobalSymId var_id) {
   }
 
   CompUnitSP comp_unit;
-  std::optional<uint16_t> modi = m_index->GetModuleIndexForVa(addr);
+  std::optional<uint16_t> modi;
+  if (is_compiland_sym)
+    modi = var_id.asCompilandSym().modi;
+  else
+    modi = m_index->GetModuleIndexForVa(addr);
   if (modi && *modi < GetNumCompileUnits()) {
     CompilandIndexItem &cci =
         m_index->compilands().GetOrCreateCompiland(*modi);
@@ -932,7 +939,13 @@ VariableSP SymbolFileNativePDB::CreateGlobalVariable(PdbGlobalSymId var_id) {
   if (!ts)
     return nullptr;
 
-  ts->GetNativePDBParser()->GetOrCreateVariableDecl(var_id);
+  if (is_compiland_sym) {
+    PdbCompilandSymId id = var_id.asCompilandSym();
+    ts->GetNativePDBParser()->GetOrCreateVariableDecl(
+        PdbCompilandSymId(id.modi, 0), id);
+  } else {
+    ts->GetNativePDBParser()->GetOrCreateVariableDecl(var_id.asGlobalSym());
+  }
 
   ModuleSP module_sp = GetObjectFile()->GetModule();
   DWARFExpressionList location(
@@ -947,7 +960,7 @@ VariableSP SymbolFileNativePDB::CreateGlobalVariable(PdbGlobalSymId var_id) {
   bool location_is_constant_data = false;
   bool static_member = false;
   VariableSP var_sp = std::make_shared<Variable>(
-      toOpaqueUid(var_id), name.str().c_str(), global_name.c_str(), type_sp,
+      var_id.toOpaqueId(), name.str().c_str(), global_name.c_str(), type_sp,
       scope, comp_unit.get(), ranges, &decl, location, is_external, artificial,
       location_is_constant_data, static_member);
 
@@ -987,8 +1000,9 @@ SymbolFileNativePDB::CreateConstantSymbol(PdbGlobalSymId var_id,
 }
 
 VariableSP
-SymbolFileNativePDB::GetOrCreateGlobalVariable(PdbGlobalSymId var_id) {
-  auto emplace_result = m_global_vars.try_emplace(toOpaqueUid(var_id), nullptr);
+SymbolFileNativePDB::GetOrCreateGlobalVariable(PdbSymUid var_id) {
+  auto emplace_result =
+      m_global_vars.try_emplace(var_id.toOpaqueId(), nullptr);
   if (emplace_result.second) {
     if (VariableSP var_sp = CreateGlobalVariable(var_id))
       emplace_result.first->second = var_sp;
@@ -1932,8 +1946,57 @@ SymbolFileNativePDB::ParseVariablesForCompileUnit(CompileUnit &comp_unit,
     case SymbolKind::S_LDATA32:
     case SymbolKind::S_GTHREAD32:
     case SymbolKind::S_LTHREAD32: {
-      if (VariableSP var = GetOrCreateGlobalVariable(global))
-        variables.AddVariable(var);
+      SegmentOffset address = GetSegmentAndOffset(sym);
+      if (m_index->GetModuleIndexForAddr(address.segment, address.offset) ==
+          sym_uid.asCompiland().modi)
+        if (VariableSP var = GetOrCreateGlobalVariable(global))
+          variables.AddVariableIfUnique(var);
+      break;
+    }
+    default:
+      break;
+    }
+  }
+  CompilandIndexItem &cii =
+      m_index->compilands().GetOrCreateCompiland(sym_uid.asCompiland().modi);
+  const CVSymbolArray &symbols = cii.m_debug_stream.getSymbolArray();
+  unsigned scope_depth = 0;
+  for (auto iter = symbols.begin(); iter != symbols.end(); ++iter) {
+    CVSymbol sym = *iter;
+    if (symbolEndsScope(sym.kind())) {
+      if (scope_depth)
+        --scope_depth;
+      continue;
+    }
+    if (symbolOpensScope(sym.kind())) {
+      ++scope_depth;
+      continue;
+    }
+    if (scope_depth)
+      continue;
+    switch (sym.kind()) {
+    case SymbolKind::S_GDATA32:
+    case SymbolKind::S_LDATA32:
+    case SymbolKind::S_GTHREAD32:
+    case SymbolKind::S_LTHREAD32: {
+      VariableInfo info = GetVariableNameInfo(sym);
+      SegmentOffset address = GetSegmentAndOffset(sym);
+      PdbSymUid id = PdbCompilandSymId(cii.m_id.modi, iter.offset());
+      // Reuse a matching global record to avoid listing the same symbol twice.
+      for (const auto &match :
+           m_index->globals().findRecordsByName(info.name,
+                                                m_index->symrecords())) {
+        if (match.second.kind() != sym.kind())
+          continue;
+        SegmentOffset other = GetSegmentAndOffset(match.second);
+        if (other.segment == address.segment && other.offset == address.offset &&
+            GetVariableNameInfo(match.second).type == info.type) {
+          id = PdbGlobalSymId(match.first, false);
+          break;
+        }
+      }
+      if (VariableSP var = GetOrCreateGlobalVariable(id))
+        variables.AddVariableIfUnique(var);
       break;
     }
     default:

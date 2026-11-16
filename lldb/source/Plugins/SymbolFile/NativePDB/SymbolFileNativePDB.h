@@ -227,7 +227,7 @@ private:
   lldb::CompUnitSP GetOrCreateCompileUnit(const CompilandIndexItem &cci);
   lldb::TypeSP GetOrCreateType(PdbTypeSymId type_id);
   lldb::TypeSP GetOrCreateType(llvm::codeview::TypeIndex ti);
-  lldb::VariableSP GetOrCreateGlobalVariable(PdbGlobalSymId var_id);
+  lldb::VariableSP GetOrCreateGlobalVariable(PdbSymUid var_id);
   Block *GetOrCreateBlock(PdbCompilandSymId block_id);
   lldb::VariableSP GetOrCreateLocalVariable(PdbCompilandSymId scope_id,
                                             PdbCompilandSymId var_id,
@@ -243,7 +243,7 @@ private:
   lldb::CompUnitSP CreateCompileUnit(const CompilandIndexItem &cci);
   lldb::TypeSP CreateType(PdbTypeSymId type_id, CompilerType ct);
   lldb::TypeSP CreateAndCacheType(PdbTypeSymId type_id);
-  lldb::VariableSP CreateGlobalVariable(PdbGlobalSymId var_id);
+  lldb::VariableSP CreateGlobalVariable(PdbSymUid var_id);
   lldb::VariableSP CreateConstantSymbol(PdbGlobalSymId var_id,
                                         const llvm::codeview::CVSymbol &cvs);
   size_t ParseVariablesForCompileUnit(CompileUnit &comp_unit,

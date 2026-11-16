@@ -1,0 +1,7 @@
+# REQUIRES: lld, powerpc
+# RUN: %clang -target powerpc64-ibm-xbox360 -mcpu=xenon -std=c++17 -g -gcodeview -O0 -c %S/Inputs/xbox360-pdb.cpp -o %t.obj
+# RUN: %clang -target powerpc64-ibm-xbox360 -mcpu=xenon -std=c++17 -g -gcodeview -O0 -c %S/Inputs/xbox360-other-globals.cpp -o %t.other.obj
+# RUN: lld-link /machine:ppcbe /subsystem:xbox /entry:debug_entry /nodefaultlib /debug:full /opt:noref /out:%t.exe /pdb:%t.pdb %t.obj %t.other.obj
+# RUN: %python %S/Inputs/xbox360-pdb-remote.py %t.exe %lldb --check-globals
+# RUN: %python %S/Inputs/xbox360-pdb-remote.py %t.exe %lldb --check-globals --other-frame
+# RUN: %python %S/Inputs/xbox360-pdb-remote.py %S/Inputs/xbox360-linker-owned-global.pe %lldb --linker-globals

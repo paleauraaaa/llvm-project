@@ -118,7 +118,14 @@ class PDBResponder(MockGDBServerResponder):
 
 executable = pathlib.Path(sys.argv[1]).resolve()
 test_default_reader = "--default-reader" in sys.argv
-lldb_args = [arg for arg in sys.argv[2:] if arg != "--default-reader"]
+check_globals = "--check-globals" in sys.argv
+linker_globals = "--linker-globals" in sys.argv
+other_frame = "--other-frame" in sys.argv
+lldb_args = [
+    arg for arg in sys.argv[2:]
+    if arg not in ("--default-reader", "--check-globals", "--linker-globals",
+                   "--other-frame")
+]
 server = MockGDBServer(TCPServerSocket())
 server.responder = PDBResponder(executable)
 server.start()
@@ -127,21 +134,28 @@ commands = [
     "settings set stop-disassembly-display never",
     f'target create "{executable}"',
     *(["image dump symfile"] if test_default_reader else []),
-    "breakpoint set -f xbox360-pdb.cpp -l 101",
+    ("breakpoint set -f pdb-probe-real.c -l 13" if linker_globals else
+     "breakpoint set -f xbox360-other-globals.cpp -l 4" if other_frame else
+     "breakpoint set -f xbox360-pdb.cpp -l 101"),
     "gdb-remote " + server.get_connect_address(),
     f'target modules load -f "{executable}" --slide 0',
     "continue",
     "breakpoint list -v",
     "thread backtrace",
     *(["frame variable value local"] if test_default_reader else []),
-    "expression -j false -- game::actor.id",
-    "expression -j false -- game::actor.team",
-    "expression -j false -- game::actor.team = 3",
-    "expression -j false -- game::actor.team",
-    "expression -j false -- game::actor.enabled",
-    "expression -j false -- game::Actor::count",
-    "expression -j false -- game::Actor::count = 11",
-    "expression -j false -- game::Actor::count",
+    *(["frame variable -g -a -l", "target variable other_global"]
+      if check_globals else []),
+    *(["frame variable -g -a -l item", "target variable global_data"]
+      if linker_globals else [
+        "expression -j false -- game::actor.id",
+        "expression -j false -- game::actor.team",
+        "expression -j false -- game::actor.team = 3",
+        "expression -j false -- game::actor.team",
+        "expression -j false -- game::actor.enabled",
+        "expression -j false -- game::Actor::count",
+        "expression -j false -- game::Actor::count = 11",
+        "expression -j false -- game::Actor::count",
+    ]),
     "process detach",
     "quit",
 ]
@@ -167,24 +181,47 @@ try:
     assert completed.returncode == 0
     assert "error:" not in completed.stdout
     assert "stop reason = breakpoint 1.1" in completed.stdout
-    assert "xbox360-pdb.cpp:101" in completed.stdout
+    assert ("pdb-probe-real.c:13" if linker_globals else
+            "xbox360-other-globals.cpp:4" if other_frame else
+            "xbox360-pdb.cpp:101") in completed.stdout
     assert "resolved = true" in completed.stdout
     assert "hit count = 1" in completed.stdout
     if test_default_reader:
         assert "SymbolFile native-pdb" in completed.stdout
         assert "(int) value = 123" in completed.stdout
         assert "(volatile int) local = 456" in completed.stdout
-    for value in [
-        "(int) $0 = 42",
-        "$1 = 5",
-        "$2 = 3",
-        "$3 = 3",
-        "$4 = 1",
-        "$5 = 9",
-        "$6 = 11",
-        "$7 = 11",
-    ]:
-        assert value in completed.stdout, value
+    if check_globals:
+        globals_output = completed.stdout.split(
+            "(lldb) frame variable -g -a -l", 1
+        )[1].split("(lldb) target variable other_global", 1)[0]
+        if other_frame:
+            assert "::other_global = 73" in globals_output
+            assert "::other_static = 91" in globals_output
+            assert "::game::actor" not in globals_output
+        else:
+            assert "::game::actor" in globals_output
+            assert "::game::Actor::count" in globals_output
+            assert "other_global" not in globals_output
+            assert "other_static" not in globals_output
+        assert "(int) other_global = 73" in completed.stdout
+    if linker_globals:
+        globals_output = completed.stdout.split(
+            "(lldb) frame variable -g -a -l item", 1
+        )[1].split("(lldb) target variable global_data", 1)[0]
+        assert globals_output.count("::item =") == 1
+        assert "(int) global_data = 7" in completed.stdout
+    else:
+        for value in [
+            "(int) $0 = 42",
+            "$1 = 5",
+            "$2 = 3",
+            "$3 = 3",
+            "$4 = 1",
+            "$5 = 9",
+            "$6 = 11",
+            "$7 = 11",
+        ]:
+            assert value in completed.stdout, value
     assert server.responder.resumed
 finally:
     server.stop()
