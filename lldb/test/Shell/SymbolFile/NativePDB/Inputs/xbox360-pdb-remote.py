@@ -2,6 +2,7 @@
 # See https://llvm.org/LICENSE.txt for license information.
 # SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
+import os
 import pathlib
 import struct
 import subprocess
@@ -37,6 +38,8 @@ class PDBResponder(MockGDBServerResponder):
             self.image[rva : rva + size] = data[offset : offset + size]
         self.breakpoint = None
         self.resumed = False
+        self.stack = bytearray(0x4000)
+        struct.pack_into(">II", self.stack, 0x2058, 456, 123)
 
     def qHostInfo(self):
         return (
@@ -64,7 +67,7 @@ class PDBResponder(MockGDBServerResponder):
     def readRegister(self, num):
         if num == 32:
             return f"{self.pc:08x}"
-        if num == 1:
+        if num in (1, 31):
             return "0000000000012000"
         return "0000000000000000"
 
@@ -85,7 +88,8 @@ class PDBResponder(MockGDBServerResponder):
         if 0 <= offset and offset + length <= len(self.image):
             return self.image[offset : offset + length].hex()
         if 0x10000 <= addr and addr + length <= 0x14000:
-            return "00" * length
+            offset = addr - 0x10000
+            return self.stack[offset : offset + length].hex()
         return "E01"
 
     def writeMemory(self, addr, data_hex):
@@ -113,6 +117,8 @@ class PDBResponder(MockGDBServerResponder):
 
 
 executable = pathlib.Path(sys.argv[1]).resolve()
+test_default_reader = "--default-reader" in sys.argv
+lldb_args = [arg for arg in sys.argv[2:] if arg != "--default-reader"]
 server = MockGDBServer(TCPServerSocket())
 server.responder = PDBResponder(executable)
 server.start()
@@ -120,12 +126,14 @@ commands = [
     "settings set interpreter.prompt-on-quit false",
     "settings set stop-disassembly-display never",
     f'target create "{executable}"',
+    *(["image dump symfile"] if test_default_reader else []),
     "breakpoint set -f xbox360-pdb.cpp -l 101",
     "gdb-remote " + server.get_connect_address(),
     f'target modules load -f "{executable}" --slide 0',
     "continue",
     "breakpoint list -v",
     "thread backtrace",
+    *(["frame variable value local"] if test_default_reader else []),
     "expression -j false -- game::actor.id",
     "expression -j false -- game::actor.team",
     "expression -j false -- game::actor.team = 3",
@@ -141,13 +149,17 @@ try:
     with tempfile.TemporaryDirectory() as directory:
         command_file = pathlib.Path(directory) / "commands"
         command_file.write_text("\n".join(commands) + "\n")
+        env = os.environ.copy()
+        if test_default_reader:
+            env.pop("LLDB_USE_NATIVE_PDB_READER", None)
         completed = subprocess.run(
-            sys.argv[2:]
+            lldb_args
             + ["-b", "-o", f'command source -e true "{command_file}"'],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
             timeout=60,
+            env=env,
         )
     print(completed.stdout)
     if completed.returncode:
@@ -158,6 +170,10 @@ try:
     assert "xbox360-pdb.cpp:101" in completed.stdout
     assert "resolved = true" in completed.stdout
     assert "hit count = 1" in completed.stdout
+    if test_default_reader:
+        assert "SymbolFile native-pdb" in completed.stdout
+        assert "(int) value = 123" in completed.stdout
+        assert "(volatile int) local = 456" in completed.stdout
     for value in [
         "(int) $0 = 42",
         "$1 = 5",

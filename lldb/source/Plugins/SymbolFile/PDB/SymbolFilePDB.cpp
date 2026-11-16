@@ -137,6 +137,14 @@ llvm::StringRef SymbolFilePDB::GetPluginDescriptionStatic() {
 
 lldb_private::SymbolFile *
 SymbolFilePDB::CreateInstance(ObjectFileSP objfile_sp) {
+  // DIA can omit S_LOCAL records from Xbox 360 PDBs. Use the native reader by
+  // default for these targets while respecting an explicit reader selection.
+  if (!::getenv("LLDB_USE_NATIVE_PDB_READER") && objfile_sp &&
+      objfile_sp->GetModule() &&
+      objfile_sp->GetModule()->GetArchitecture().GetTriple().isOSXbox360())
+  {
+    return npdb::SymbolFileNativePDB::CreateInstance(std::move(objfile_sp));
+  }
   return new SymbolFilePDB(std::move(objfile_sp));
 }
 

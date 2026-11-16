@@ -1,0 +1,6 @@
+# REQUIRES: system-windows, lld, x86
+# RUN: %clang -target x86_64-pc-windows-msvc -std=c++17 -g -gcodeview -O0 -c %S/../NativePDB/Inputs/xbox360-pdb.cpp -o %t.obj
+# RUN: lld-link /machine:x64 /subsystem:console /entry:debug_entry /nodefaultlib /debug:full /out:%t.exe /pdb:%t.pdb %t.obj
+# RUN: env -u LLDB_USE_NATIVE_PDB_READER %lldb -b -f %t.exe -o "image dump symfile" | FileCheck %s
+
+# CHECK: SymbolFile pdb
