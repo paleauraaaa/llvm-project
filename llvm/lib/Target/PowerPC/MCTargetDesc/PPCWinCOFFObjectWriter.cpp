@@ -8,11 +8,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "MCTargetDesc/PPCFixupKinds.h"
+#include "MCTargetDesc/PPCMCAsmInfo.h"
 #include "MCTargetDesc/PPCMCTargetDesc.h"
 #include "llvm/BinaryFormat/COFF.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCFixup.h"
-#include "llvm/MC/MCFixupKindInfo.h"
 #include "llvm/MC/MCValue.h"
 #include "llvm/MC/MCWinCOFFObjectWriter.h"
 #include "llvm/Support/Debug.h"
@@ -46,17 +46,18 @@ unsigned PPCWinCOFFObjectWriter::getRelocType(MCContext &Ctx, const MCValue &Tar
                                 const MCAsmBackend &MAB) const
 {
 
-  MCSymbolRefExpr::VariantKind Modifier =
-    Target.isAbsolute() ? MCSymbolRefExpr::VK_None : Target.getSymA()->getKind();
+  unsigned Modifier = Target.getSpecifier();
   const unsigned FixupKind = Fixup.getKind();
-  if (FixupKind >= FirstLiteralRelocationKind)
-    return FixupKind - FirstLiteralRelocationKind;
+  if (mc::isRelocation(FixupKind))
+    return mc::isRelocRelocation(FixupKind)
+               ? FixupKind - FirstLiteralRelocationKind
+               : FixupKind;
 
-  assert(Modifier != MCSymbolRefExpr::VK_PPC_TOC &&
-         Modifier != MCSymbolRefExpr::VK_PPC_TOC_HA &&
-         Modifier != MCSymbolRefExpr::VK_PPC_TOC_HI &&
-         Modifier != MCSymbolRefExpr::VK_PPC_TOC_LO &&
-         Modifier != MCSymbolRefExpr::VK_PPC_TOCBASE &&
+  assert(Modifier != PPC::S_TOC &&
+         Modifier != PPC::S_TOC_HA &&
+         Modifier != PPC::S_TOC_HI &&
+         Modifier != PPC::S_TOC_LO &&
+         Modifier != PPC::S_TOCBASE &&
          "WinCOFF doesn't use TOC for any implemented platform");
   switch(FixupKind) {
   // TODO: make sure these are all valid for the target's variant kind.
@@ -64,10 +65,11 @@ unsigned PPCWinCOFFObjectWriter::getRelocType(MCContext &Ctx, const MCValue &Tar
   case PPC::fixup_ppc_nofixup:
     return llvm::COFF::IMAGE_REL_PPC_ABSOLUTE;
   case PPC::fixup_ppc_half16ds:
+  case PPC::fixup_ppc_half16dq:
     return llvm::COFF::IMAGE_REL_PPC_ADDR14;
   case FK_Data_2:
   case PPC::fixup_ppc_codeview_data_2:
-    if (Modifier == MCSymbolRefExpr::VK_SECREL) {
+    if (Modifier == PPC::S_SECREL) {
       Ctx.reportError(Fixup.getLoc(),
                       "16-bit section-relative data relocation is not "
                       "supported; use a 32-bit section-relative field");
@@ -79,7 +81,7 @@ unsigned PPCWinCOFFObjectWriter::getRelocType(MCContext &Ctx, const MCValue &Tar
     switch (Modifier) {
     case MCSymbolRefExpr::VK_COFF_IMGREL32:
       return COFF::IMAGE_REL_PPC_ADDR32NB;
-    case MCSymbolRefExpr::VK_SECREL:
+    case PPC::S_SECREL:
       return COFF::IMAGE_REL_PPC_SECREL;
     default:
       return COFF::IMAGE_REL_PPC_ADDR32;
@@ -92,6 +94,7 @@ unsigned PPCWinCOFFObjectWriter::getRelocType(MCContext &Ctx, const MCValue &Tar
   case FK_SecRel_4:
     return llvm::COFF::IMAGE_REL_PPC_SECREL;
   case PPC::fixup_ppc_br24:
+  case PPC::fixup_ppc_br24_notoc:
     return llvm::COFF::IMAGE_REL_PPC_REL24;
   case PPC::fixup_ppc_br24abs:
     return llvm::COFF::IMAGE_REL_PPC_ADDR24;
@@ -101,13 +104,13 @@ unsigned PPCWinCOFFObjectWriter::getRelocType(MCContext &Ctx, const MCValue &Tar
     return llvm::COFF::IMAGE_REL_PPC_ADDR14;
   case PPC::fixup_ppc_half16:
     switch (Modifier) {
-    case MCSymbolRefExpr::VK_None:
-    case MCSymbolRefExpr::VK_PPC_LO:
+    case PPC::S_None:
+    case PPC::S_LO:
       return llvm::COFF::IMAGE_REL_PPC_REFLO;
-    // case MCSymbolRefExpr::VK_PPC_HI:
-    case MCSymbolRefExpr::VK_PPC_HA:
+    // COFF REFHI is high-adjusted, not the unadjusted @h.
+    case PPC::S_HA:
       return llvm::COFF::IMAGE_REL_PPC_REFHI;
-    case MCSymbolRefExpr::VK_SECREL:
+    case PPC::S_SECREL:
       return llvm::COFF::IMAGE_REL_PPC_SECREL16;
     default:
       ;

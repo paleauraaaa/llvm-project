@@ -76,6 +76,8 @@ define void @volatile_loads(ptr %p, i32 %offset) {
 ; CHECK-COUNT-2: stvehx
 ; CHECK-COUNT-2: stvewx128
 ; CHECK-COUNT-2: stvx128
+; CHECK-COUNT-2: stvlx128
+; CHECK-COUNT-2: stvrx128
 define void @volatile_stores(ptr %p, ptr %v, i32 %offset) {
   %a = load <4 x i32>, ptr %v, align 16
   %ab = bitcast <4 x i32> %a to <16 x i8>
@@ -89,6 +91,10 @@ define void @volatile_stores(ptr %p, ptr %v, i32 %offset) {
   call void @llvm.ppc.altivec.stvewx128.volatile(<4 x i32> %a, ptr %p, i32 %offset)
   call void @llvm.ppc.altivec.stvx128.volatile(<4 x i32> %a, ptr %p, i32 %offset)
   call void @llvm.ppc.altivec.stvx128.volatile(<4 x i32> %a, ptr %p, i32 %offset)
+  call void @llvm.ppc.altivec.stvlx128.volatile(<4 x i32> %a, ptr %p, i32 %offset)
+  call void @llvm.ppc.altivec.stvlx128.volatile(<4 x i32> %a, ptr %p, i32 %offset)
+  call void @llvm.ppc.altivec.stvrx128.volatile(<4 x i32> %a, ptr %p, i32 %offset)
+  call void @llvm.ppc.altivec.stvrx128.volatile(<4 x i32> %a, ptr %p, i32 %offset)
   ret void
 }
 
@@ -110,3 +116,5 @@ declare void @llvm.ppc.altivec.stvebx.volatile(<16 x i8>, ptr)
 declare void @llvm.ppc.altivec.stvehx.volatile(<8 x i16>, ptr)
 declare void @llvm.ppc.altivec.stvewx128.volatile(<4 x i32>, ptr, i32)
 declare void @llvm.ppc.altivec.stvx128.volatile(<4 x i32>, ptr, i32)
+declare void @llvm.ppc.altivec.stvlx128.volatile(<4 x i32>, ptr, i32)
+declare void @llvm.ppc.altivec.stvrx128.volatile(<4 x i32>, ptr, i32)

@@ -1,4 +1,4 @@
-# RUN: llc -mtriple=powerpc64-ibm-xbox360 -mcpu=xenon -run-pass=prologepilog -verify-machineinstrs %s -o - | FileCheck %s
+# RUN: llc -mtriple=powerpc64-ibm-xbox360 -mcpu=xenon -run-pass=prolog-epilog -verify-machineinstrs %s -o - | FileCheck %s
 
 --- |
   declare i32 @__CxxFrameHandler(...)

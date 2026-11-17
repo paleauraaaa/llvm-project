@@ -4,6 +4,9 @@ add_lldb_library(lldbPluginABIPowerPC PLUGIN
   ABISysV_ppc64.cpp
   ABIXbox360.cpp
 
+  LINK_COMPONENTS
+    Support
+    TargetParser
   LINK_LIBS
     lldbCore
     lldbSymbol
@@ -12,7 +15,4 @@ add_lldb_library(lldbPluginABIPowerPC PLUGIN
     lldbValueObject
   CLANG_LIBS
     clangAST
-  LINK_COMPONENTS
-    Support
-    TargetParser
-  )
+)

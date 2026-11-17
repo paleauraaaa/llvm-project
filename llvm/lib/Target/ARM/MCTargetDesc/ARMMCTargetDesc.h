@@ -71,6 +71,7 @@ MCTargetStreamer *createARMTargetAsmStreamer(MCStreamer &S,
 MCTargetStreamer *createARMObjectTargetStreamer(MCStreamer &S,
                                                 const MCSubtargetInfo &STI);
 MCTargetStreamer *createARMObjectTargetELFStreamer(MCStreamer &S);
+MCTargetStreamer *createARMObjectTargetMachOStreamer(MCStreamer &S);
 MCTargetStreamer *createARMObjectTargetWinCOFFStreamer(MCStreamer &S);
 
 MCCodeEmitter *createARMLEMCCodeEmitter(const MCInstrInfo &MCII,
@@ -89,7 +90,7 @@ MCAsmBackend *createARMBEAsmBackend(const Target &T, const MCSubtargetInfo &STI,
 
 // Construct a PE/COFF machine code streamer which will generate a PE/COFF
 // object file.
-MCStreamer *createARMWinCOFFStreamer(const Triple &T, MCContext &Context,
+MCStreamer *createARMWinCOFFStreamer(MCContext &Context,
                                      std::unique_ptr<MCAsmBackend> &&MAB,
                                      std::unique_ptr<MCObjectWriter> &&OW,
                                      std::unique_ptr<MCCodeEmitter> &&Emitter);

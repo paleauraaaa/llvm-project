@@ -16,10 +16,11 @@
 
 #include "llvm_blake3_prefix.h"
 
-#ifndef _MSC_VER
+#ifdef __clang__
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wlanguage-extension-token"
-#endif // _MSC_VER
+#endif
+#define BLAKE3_PRIVATE
 
 // internal flags
 enum blake3_flags {
@@ -40,7 +41,7 @@ enum blake3_flags {
 #define INLINE static inline __attribute__((always_inline))
 #endif
 
-#if defined(__x86_64__) || defined(_M_X64)
+#if (defined(__x86_64__) || defined(_M_X64)) && !defined(_M_ARM64EC)
 #define IS_X86
 #define IS_X86_64
 #endif
@@ -50,7 +51,7 @@ enum blake3_flags {
 #define IS_X86_32
 #endif
 
-#if defined(__aarch64__) || defined(_M_ARM64)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)
 #define IS_AARCH64
 #endif
 
@@ -101,7 +102,7 @@ static const uint8_t MSG_SCHEDULE[7][16] = {
 /* x is assumed to be nonzero.       */
 static unsigned int highest_one(uint64_t x) {
 #if defined(__GNUC__) || defined(__clang__)
-  return 63 ^ __builtin_clzll(x);
+  return 63 ^ (unsigned int)__builtin_clzll(x);
 #elif defined(_MSC_VER) && defined(IS_X86_64)
   unsigned long index;
   _BitScanReverse64(&index, x);
@@ -131,7 +132,7 @@ static unsigned int highest_one(uint64_t x) {
 // Count the number of 1 bits.
 INLINE unsigned int popcnt(uint64_t x) {
 #if defined(__GNUC__) || defined(__clang__)
-  return __builtin_popcountll(x);
+  return (unsigned int)__builtin_popcountll(x);
 #else
   unsigned int count = 0;
   while (x != 0) {
@@ -172,6 +173,13 @@ INLINE void load_key_words(const uint8_t key[BLAKE3_KEY_LEN],
   key_words[7] = load32(&key[7 * 4]);
 }
 
+INLINE void load_block_words(const uint8_t block[BLAKE3_BLOCK_LEN],
+                             uint32_t block_words[16]) {
+  for (size_t i = 0; i < 16; i++) {
+      block_words[i] = load32(&block[i * 4]);
+  }
+}
+
 INLINE void store32(void *dst, uint32_t w) {
   uint8_t *p = (uint8_t *)dst;
   p[0] = (uint8_t)(w >> 0);
@@ -204,6 +212,12 @@ void blake3_compress_xof(const uint32_t cv[8],
                          uint8_t out[64]);
 
 LLVM_LIBRARY_VISIBILITY
+void blake3_xof_many(const uint32_t cv[8],
+                     const uint8_t block[BLAKE3_BLOCK_LEN],
+                     uint8_t block_len, uint64_t counter, uint8_t flags,
+                     uint8_t out[64], size_t outblocks);
+
+LLVM_LIBRARY_VISIBILITY
 void blake3_hash_many(const uint8_t *const *inputs, size_t num_inputs,
                       size_t blocks, const uint32_t key[8], uint64_t counter,
                       bool increment_counter, uint8_t flags,
@@ -212,6 +226,22 @@ void blake3_hash_many(const uint8_t *const *inputs, size_t num_inputs,
 LLVM_LIBRARY_VISIBILITY
 size_t blake3_simd_degree(void);
 
+BLAKE3_PRIVATE size_t blake3_compress_subtree_wide(const uint8_t *input, size_t input_len,
+                                                   const uint32_t key[8],
+                                                   uint64_t chunk_counter, uint8_t flags,
+                                                   uint8_t *out, bool use_tbb);
+
+#if defined(BLAKE3_USE_TBB)
+BLAKE3_PRIVATE void blake3_compress_subtree_wide_join_tbb(
+    // shared params
+    const uint32_t key[8], uint8_t flags, bool use_tbb,
+    // left-hand side params
+    const uint8_t *l_input, size_t l_input_len, uint64_t l_chunk_counter,
+    uint8_t *l_cvs, size_t *l_n,
+    // right-hand side params
+    const uint8_t *r_input, size_t r_input_len, uint64_t r_chunk_counter,
+    uint8_t *r_cvs, size_t *r_n) NOEXCEPT;
+#endif
 
 // Declarations for implementation-specific functions.
 LLVM_LIBRARY_VISIBILITY
@@ -297,6 +327,14 @@ void blake3_hash_many_avx512(const uint8_t *const *inputs, size_t num_inputs,
                              uint64_t counter, bool increment_counter,
                              uint8_t flags, uint8_t flags_start,
                              uint8_t flags_end, uint8_t *out);
+
+#if !defined(_WIN32) && !defined(__CYGWIN__)
+LLVM_LIBRARY_VISIBILITY
+void blake3_xof_many_avx512(const uint32_t cv[8],
+                            const uint8_t block[BLAKE3_BLOCK_LEN],
+                            uint8_t block_len, uint64_t counter, uint8_t flags,
+                            uint8_t* out, size_t outblocks);
+#endif
 #endif
 #endif
 
@@ -309,8 +347,8 @@ void blake3_hash_many_neon(const uint8_t *const *inputs, size_t num_inputs,
                            uint8_t flags_end, uint8_t *out);
 #endif
 
-#ifndef _MSC_VER
+#ifdef __clang__
 #pragma clang diagnostic pop
-#endif // _MSC_VER
+#endif
 
 #endif /* BLAKE3_IMPL_H */

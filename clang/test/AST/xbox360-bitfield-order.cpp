@@ -82,7 +82,7 @@ template<class T> struct LowPattern { unsigned field : 3; };
 #pragma bitfield_order(msb_to_lsb)
 LowPattern<int> third;
 
-// CHECK-LABEL: ClassTemplateSpecializationDecl {{.*}} struct LowPattern definition explicit_specialization
+// CHECK-LABEL: ClassTemplateSpecializationDecl {{.*}} struct LowPattern definition external-linkage explicit_specialization
 // CHECK: TemplateArgument type 'char'
 // CHECK: FieldDecl {{.*}} explicitField 'unsigned int'
 // CHECK: BitfieldOrderAttr {{.*}} Implicit LSBToMSB

@@ -1,7 +1,7 @@
 # RUN: split-file %s %t
-# RUN: llc -mtriple=powerpc64-ibm-xbox360 -mcpu=xenon -start-after=prologepilog -filetype=obj %t/valid.mir -o %t/valid.obj
+# RUN: llc -mtriple=powerpc64-ibm-xbox360 -mcpu=xenon -start-after=prolog-epilog -filetype=obj %t/valid.mir -o %t/valid.obj
 # RUN: llvm-readobj --sections --section-data %t/valid.obj | FileCheck %s --check-prefix=VALID
-# RUN: not llc -mtriple=powerpc64-ibm-xbox360 -mcpu=xenon -start-after=prologepilog -filetype=obj %t/invalid.mir -o %t/invalid.obj 2>&1 | FileCheck %s --check-prefix=INVALID
+# RUN: not llc -mtriple=powerpc64-ibm-xbox360 -mcpu=xenon -start-after=prolog-epilog -filetype=obj %t/invalid.mir -o %t/invalid.obj 2>&1 | FileCheck %s --check-prefix=INVALID
 
 # A stackmap shadow exercises the final emitted size of a single pseudo.
 # Its following return consumes four bytes of the requested shadow.

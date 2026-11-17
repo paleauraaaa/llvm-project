@@ -4,10 +4,6 @@
 Using libc for GPUs
 ===================
 
-.. contents:: Table of Contents
-  :depth: 4
-  :local:
-
 Using the GPU C library
 =======================
 
@@ -34,7 +30,7 @@ described in the `clang documentation
 by the OpenMP toolchain, but is currently opt-in for the CUDA and HIP toolchains
 through the ``--offload-new-driver``` and ``-fgpu-rdc`` flags.
 
-In order or link the GPU runtime, we simply pass this library to the embedded
+In order to link the GPU runtime, we simply pass this library to the embedded
 device linker job. This can be done using the ``-Xoffload-linker`` option, which
 forwards an argument to a ``clang`` job used to create the final GPU executable.
 The toolchain should pick up the C libraries automatically in most cases, so
@@ -44,7 +40,7 @@ this shouldn't be necessary.
 
   $> clang openmp.c -fopenmp --offload-arch=gfx90a -Xoffload-linker -lc
   $> clang cuda.cu --offload-arch=sm_80 --offload-new-driver -fgpu-rdc -Xoffload-linker -lc
-  $> clang hip.hip --offload-arch=gfx940 --offload-new-driver -fgpu-rdc -Xoffload-linker -lc
+  $> clang hip.hip --offload-arch=gfx942 --offload-new-driver -fgpu-rdc -Xoffload-linker -lc
 
 This will automatically link in the needed function definitions if they were
 required by the user's application. Normally using the ``-fgpu-rdc`` option

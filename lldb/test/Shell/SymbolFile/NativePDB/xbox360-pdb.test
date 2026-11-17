@@ -57,10 +57,14 @@
 # CHECK: [1] = 20
 # CHECK: [2] = 30
 # CHECK: next = {{(0x0+|nullptr|NULL)}}
-# CHECK: (unsigned long) $0 = 36
-# CHECK: (unsigned long) $1 = 4
-# CHECK: (unsigned long) $2 = 2
-# CHECK: (unsigned long) $3 = 8
+# CHECK: (game::ReverseBits) game::reversed
+# CHECK-DAG: low = 5
+# CHECK-DAG: neg = -3
+# CHECK-DAG: high = 166
+# CHECK: (__size_t) $0 = 36
+# CHECK: (__size_t) $1 = 4
+# CHECK: (__size_t) $2 = 2
+# CHECK: (__size_t) $3 = 8
 
 # MODERN-PDB-DAG: LF_UDT_SRC_LINE
 # MODERN-PDB-DAG: LF_BUILDINFO

@@ -20,7 +20,7 @@ declare ptr @llvm.localrecover(ptr, ptr, i32)
 declare ptr @llvm.eh.recoverfp(ptr, ptr)
 
 ; CHECK: .long __C_specific_handler
-; CHECK-NEXT: .long ($sehxdata$except)
+; CHECK-NEXT: .long $sehxdata$except
 ; CHECK-NEXT: except:
 ; CHECK: stwu 1, -[[FRAME:[0-9]+]](1)
 ; CHECK: bl risky
@@ -47,7 +47,7 @@ handled:
 }
 
 ; CHECK: .long __C_specific_handler
-; CHECK-NEXT: .long ($sehxdata$finally)
+; CHECK-NEXT: .long $sehxdata$finally
 ; CHECK-NEXT: finally:
 ; CHECK: addi {{[0-9]+}}, 31, [[PARENT:[0-9]+]]
 ; CHECK: clrldi 12,
@@ -82,7 +82,7 @@ cleanup:
 ; CHECK-NEXT: blr
 ; CHECK: .long (0x40000000
 ; CHECK: $sehxdata$catch_all:
-; CHECK: .long ($sehfilter$catch_all)
+; CHECK: .long $sehfilter$catch_all
 define i32 @catch_all(ptr %p) personality ptr @__C_specific_handler {
 entry:
   invoke void @risky(ptr %p) to label %normal unwind label %dispatch
@@ -126,7 +126,7 @@ handler:
 
 ; Escaped offsets are relative to the incoming SP, not the allocated frame.
 ; CHECK: escaped:
-; CHECK: .set [[LOCAL:L[^ ,]+]], -{{[4-9][0-9][0-9][0-9][0-9]}}
+; CHECK: [[LOCAL:L[^ ]+]] = -{{[4-9][0-9][0-9][0-9][0-9]}}
 define void @escaped() {
 entry:
   %local = alloca [40000 x i8], align 16

@@ -72,12 +72,12 @@ void bad_floating_register(void) {
 }
 
 void unsupported_fpscr(void) {
-  __asm { mtfsfi 0, 0 } // expected-error {{opcode not supported by Xbox 360 toolchain inline asm}}
-  __asm { mtfsb0 0 } // expected-error {{opcode not supported by Xbox 360 toolchain inline asm}}
-  __asm { mtfsb1 0 } // expected-error {{opcode not supported by Xbox 360 toolchain inline asm}}
+  __asm { mtfsfi 0, 0 } // expected-error {{opcode not supported by PPC inline asm}}
+  __asm { mtfsb0 0 } // expected-error {{opcode not supported by PPC inline asm}}
+  __asm { mtfsb1 0 } // expected-error {{opcode not supported by PPC inline asm}}
 }
 
 void immediate_quirk(void) {
-  __asm { addi r3, r4, -32768 } // expected-warning {{signed immediate value out of range in Xbox 360 toolchain inline asm}}
-  __asm { addi r3, r4, 65535 } // expected-warning {{signed immediate value out of range in Xbox 360 toolchain inline asm}}
+  __asm { addi r3, r4, -32768 } // expected-warning {{signed immediate value out of range in PPC inline asm}}
+  __asm { addi r3, r4, 65535 } // expected-warning {{signed immediate value out of range in PPC inline asm}}
 }

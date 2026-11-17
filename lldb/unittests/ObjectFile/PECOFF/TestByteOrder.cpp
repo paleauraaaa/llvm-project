@@ -61,8 +61,9 @@ symbols: []
 
     // Generate PE32 using i386, since the YAML emitter selects PE32+ for PPCBE.
     // Changing only the machine preserves the Xbox 360 PE32 optional header layout.
-    auto data =
-        std::make_shared<DataBufferHeap>(*file->moduleSpec().GetData());
+    auto extractor = file->moduleSpec().GetExtractor();
+    auto data = std::make_shared<DataBufferHeap>(extractor->GetDataStart(),
+                                                  extractor->GetByteSize());
     ASSERT_GE(data->GetByteSize(), 0x40u);
     uint32_t pe_offset = llvm::support::endian::read32le(data->GetBytes() + 0x3c);
     ASSERT_GE(data->GetByteSize(),
@@ -75,7 +76,8 @@ symbols: []
               llvm::COFF::PE32Header::PE32);
 
     auto module =
-        std::make_shared<Module>(ModuleSpec(FileSpec(), UUID(), data));
+        std::make_shared<Module>(ModuleSpec(
+            FileSpec(), UUID(), std::make_shared<DataExtractor>(data)));
     auto *object_file =
         llvm::dyn_cast_or_null<ObjectFilePECOFF>(module->GetObjectFile());
     ASSERT_NE(object_file, nullptr);
@@ -109,12 +111,12 @@ symbols: []
     offset_t offset = 0;
     EXPECT_EQ(section_data.GetU32(&offset), expected);
 
-    DataExtractor file_data;
+    DataExtractorSP file_data;
     ASSERT_EQ(object_file->GetData(data_section->GetFileOffset(), 4, file_data),
               4u);
-    EXPECT_EQ(file_data.GetByteOrder(), byte_order);
+    EXPECT_EQ(file_data->GetByteOrder(), byte_order);
     offset = 0;
-    EXPECT_EQ(file_data.GetU32(&offset), expected);
+    EXPECT_EQ(file_data->GetU32(&offset), expected);
 
     DataExtractor image_data = object_file->ReadImageDataByRVA(8192, 4);
     ASSERT_EQ(image_data.GetByteSize(), 4u);

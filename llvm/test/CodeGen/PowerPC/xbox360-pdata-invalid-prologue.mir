@@ -1,4 +1,4 @@
-# RUN: not --crash llc -mtriple=powerpc64-ibm-xbox360 -mcpu=xenon -start-after=prologepilog %s -o - 2>&1 | FileCheck %s
+# RUN: not --crash llc -mtriple=powerpc64-ibm-xbox360 -mcpu=xenon -start-after=prolog-epilog %s -o - 2>&1 | FileCheck %s
 # CHECK: Xbox 360 prologue saves must be based on r1
 
 --- |

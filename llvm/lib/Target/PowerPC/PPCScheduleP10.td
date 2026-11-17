@@ -30,7 +30,8 @@ def P10Model : SchedMachineModel {
   let CompleteModel = 1;
 
   // Power 10 does not support instructions from SPE, Book E and HTM.
-  let UnsupportedFeatures = [HasSPE, IsE500, IsBookE, IsISAFuture, HasHTM, HasVMX128];
+  let UnsupportedFeatures = [HasSPE, IsE500, IsBookE, IsISAFuture,
+                             HasFutureVector, HasHTM, HasVMX128];
 }
 
 let SchedModel = P10Model in {

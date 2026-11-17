@@ -95,7 +95,12 @@ bool IsDirectCXXRecord(const clang::CXXRecordDecl &record) {
       record.hasNonTrivialDestructor())
     return false;
   for (const clang::Decl *decl : record.decls()) {
-    if (const auto *ctor = llvm::dyn_cast<clang::CXXConstructorDecl>(decl)) {
+    if (const auto *field = llvm::dyn_cast<clang::FieldDecl>(decl)) {
+      if (field->getAccess() == clang::AS_private ||
+          field->getAccess() == clang::AS_protected)
+        return false;
+    } else if (const auto *ctor =
+                   llvm::dyn_cast<clang::CXXConstructorDecl>(decl)) {
       if (ctor->isUserProvided())
         return false;
     } else if (const auto *templ =
@@ -128,9 +133,8 @@ ClassifyReturn(CompilerType &type, uint64_t size,
     return unsupported();
   }
 
-  uint32_t count = 0;
-  bool is_complex = false;
-  if (!type.IsVectorType() && type.IsFloatingPointType(count, is_complex)) {
+  bool is_complex = type.IsComplexType();
+  if (!type.IsVectorType() && type.IsFloatingPointType()) {
     uint64_t element_size = is_complex ? size / 2 : size;
     if ((element_size != 4 && element_size != 8) ||
         size != element_size * (is_complex ? 2 : 1))
@@ -738,13 +742,11 @@ bool ABIXbox360::GetArgumentValues(Thread &thread, ValueList &values) const {
     if (!bit_size || !*bit_size)
       return Fail("unknown argument size");
 
-    bool is_signed = false, is_complex = false;
-    uint32_t count = 0;
+    bool is_signed = false;
 
     bool integer = type.IsIntegerOrEnumerationType(is_signed) ||
                    type.IsPointerOrReferenceType();
-    bool floating = type.IsFloatingPointType(count, is_complex) && !is_complex &&
-                    count == 1;
+    bool floating = type.IsRealFloatingPointType();
     bool vector = type.IsVectorType();
 
     if ((!integer && !floating && !vector) ||
@@ -857,19 +859,18 @@ bool ABIXbox360::GetArgumentValues(Thread &thread, ValueList &values) const {
   return true;
 }
 
-bool ABIXbox360::CreateFunctionEntryUnwindPlan(UnwindPlan &unwind_plan) {
-  unwind_plan.Clear();
-  unwind_plan.SetRegisterKind(eRegisterKindGeneric);
-  auto row = std::make_shared<UnwindPlan::Row>();
-  row->GetCFAValue().SetIsRegisterPlusOffset(LLDB_REGNUM_GENERIC_SP, 0);
-  row->SetRegisterLocationToRegister(LLDB_REGNUM_GENERIC_PC,
-                                     LLDB_REGNUM_GENERIC_RA, true);
-  unwind_plan.AppendRow(row);
-  unwind_plan.SetReturnAddressRegister(LLDB_REGNUM_GENERIC_RA);
-  unwind_plan.SetSourceName("Xbox 360 function entry");
-  unwind_plan.SetSourcedFromCompiler(eLazyBoolNo);
-  unwind_plan.SetUnwindPlanValidAtAllInstructions(eLazyBoolNo);
-  return true;
+UnwindPlanSP ABIXbox360::CreateFunctionEntryUnwindPlan() {
+  auto unwind_plan = std::make_shared<UnwindPlan>(eRegisterKindGeneric);
+  UnwindPlan::Row row;
+  row.GetCFAValue().SetIsRegisterPlusOffset(LLDB_REGNUM_GENERIC_SP, 0);
+  row.SetRegisterLocationToRegister(LLDB_REGNUM_GENERIC_PC,
+                                    LLDB_REGNUM_GENERIC_RA, true);
+  unwind_plan->AppendRow(std::move(row));
+  unwind_plan->SetReturnAddressRegister(LLDB_REGNUM_GENERIC_RA);
+  unwind_plan->SetSourceName("Xbox 360 function entry");
+  unwind_plan->SetSourcedFromCompiler(eLazyBoolNo);
+  unwind_plan->SetUnwindPlanValidAtAllInstructions(eLazyBoolNo);
+  return unwind_plan;
 }
 
 std::optional<addr_t> ABIXbox360::GetThreadLocalData(Thread &thread,
@@ -1026,9 +1027,8 @@ ABIXbox360::ReadExceptionRecord(Thread &thread, addr_t address) {
   return record;
 }
 
-bool ABIXbox360::CreateDefaultUnwindPlan(UnwindPlan &unwind_plan) {
-  unwind_plan.Clear();
-  return false;
+UnwindPlanSP ABIXbox360::CreateDefaultUnwindPlan() {
+  return {};
 }
 
 bool ABIXbox360::CallFrameAddressIsValid(addr_t cfa) {

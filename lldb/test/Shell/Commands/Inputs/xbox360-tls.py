@@ -176,7 +176,8 @@ try:
         assert expected in completed.stdout, expected
     assert server.responder.memory[0x2004:0x2008] == bytes.fromhex("87654321")
     assert not any(
-        p == "c" or p.startswith("vCont;c") for p in server.responder.packetLog
+        p == "c" or p.startswith("vCont;c")
+        for p in server.responder.packetLog.get_received()
     )
 finally:
     server.stop()

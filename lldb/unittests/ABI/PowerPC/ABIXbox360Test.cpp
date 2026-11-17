@@ -228,6 +228,8 @@ class Xbox360ABI : public testing::Test {
 
 protected:
   void SetUp() override {
+    std::call_once(TestUtilities::g_debugger_initialize_flag,
+                   []() { Debugger::Initialize(nullptr); });
     LLVMInitializePowerPCTargetInfo();
     LLVMInitializePowerPCTargetMC();
     ABIPowerPC::Initialize();
@@ -325,10 +327,14 @@ protected:
                       bool cxx = false, AccessType access = eAccessPublic) {
     auto type = ast->CreateRecordType(
         ast->getASTContext().getTranslationUnitDecl(), OptionalClangModuleID(),
-        eAccessPublic, name, llvm::to_underlying(clang::TagTypeKind::Struct),
+        name, llvm::to_underlying(clang::TagTypeKind::Struct),
         cxx ? eLanguageTypeC_plus_plus : eLanguageTypeC);
     TypeSystemClang::StartTagDeclarationDefinition(type);
-    ast->AddFieldToRecordType(type, "value", field, access, 0);
+    auto *field_decl = ast->AddFieldToRecordType(type, "value", field, 0);
+    if (access == eAccessPrivate)
+      field_decl->setAccess(clang::AS_private);
+    else if (access == eAccessProtected)
+      field_decl->setAccess(clang::AS_protected);
     TypeSystemClang::CompleteTagDeclarationDefinition(type);
     return type;
   }
@@ -337,15 +343,15 @@ protected:
                                       bool instance_method) {
     auto owner = ast->CreateRecordType(
         ast->getASTContext().getTranslationUnitDecl(), OptionalClangModuleID(),
-        eAccessPublic, "ReturnOwner",
+        "ReturnOwner",
         llvm::to_underlying(clang::TagTypeKind::Struct),
         eLanguageTypeC_plus_plus);
     TypeSystemClang::StartTagDeclarationDefinition(owner);
     auto function_type =
-        ast->CreateFunctionType(return_type, nullptr, 0, false, 0);
+        ast->CreateFunctionType(return_type, {}, false, 0);
     auto *method = ast->AddMethodToCXXRecordType(
         owner.GetOpaqueQualType(), instance_method ? "Instance" : "Static",
-        nullptr, function_type, eAccessPublic, /*is_virtual=*/false,
+        "", function_type, /*is_virtual=*/false,
         /*is_static=*/!instance_method, /*is_inline=*/false,
         /*is_explicit=*/false, /*is_attr_used=*/false, /*is_artificial=*/false);
     TypeSystemClang::CompleteTagDeclarationDefinition(owner);
@@ -974,12 +980,12 @@ TEST_F(Xbox360ABI, AddressValidation) {
 }
 
 TEST_F(Xbox360ABI, DoesNotUseSysVUnwindOrReturnRules) {
-  UnwindPlan plan(eRegisterKindDWARF);
-  EXPECT_TRUE(abi->CreateFunctionEntryUnwindPlan(plan));
-  EXPECT_EQ(plan.GetRegisterKind(), eRegisterKindGeneric);
-  EXPECT_EQ(plan.GetReturnAddressRegister(), LLDB_REGNUM_GENERIC_RA);
-  ASSERT_EQ(plan.GetRowCount(), 1u);
-  auto row = plan.GetRowAtIndex(0);
+  UnwindPlanSP plan = abi->CreateFunctionEntryUnwindPlan();
+  ASSERT_TRUE(plan);
+  EXPECT_EQ(plan->GetRegisterKind(), eRegisterKindGeneric);
+  EXPECT_EQ(plan->GetReturnAddressRegister(), LLDB_REGNUM_GENERIC_RA);
+  ASSERT_EQ(plan->GetRowCount(), 1u);
+  auto row = plan->GetRowAtIndex(0);
   ASSERT_TRUE(row);
   EXPECT_EQ(row->GetCFAValue().GetRegisterNumber(), LLDB_REGNUM_GENERIC_SP);
   EXPECT_EQ(row->GetCFAValue().GetOffset(), 0);
@@ -987,7 +993,7 @@ TEST_F(Xbox360ABI, DoesNotUseSysVUnwindOrReturnRules) {
   ASSERT_TRUE(row->GetRegisterInfo(LLDB_REGNUM_GENERIC_PC, pc));
   ASSERT_TRUE(pc.IsInOtherRegister());
   EXPECT_EQ(pc.GetRegisterNumber(), LLDB_REGNUM_GENERIC_RA);
-  EXPECT_FALSE(abi->CreateDefaultUnwindPlan(plan));
+  EXPECT_FALSE(abi->CreateDefaultUnwindPlan());
   StackFrameSP frame;
   ValueObjectSP value;
   EXPECT_TRUE(abi->SetReturnValueObject(frame, value).Fail());
@@ -1459,9 +1465,9 @@ symbols: []
   ASSERT_TRUE(object);
   auto cfi = object->CreateCallFrameInfo();
   ASSERT_TRUE(cfi);
-  UnwindPlan plan(eRegisterKindDWARF);
-  ASSERT_TRUE(cfi->GetUnwindPlan(Address(0x82001014), plan));
-  auto row = plan.GetRowForFunctionOffset(20);
+  auto plan = cfi->GetUnwindPlan(Address(0x82001014));
+  ASSERT_TRUE(plan);
+  auto row = plan->GetRowForFunctionOffset(20);
   ASSERT_TRUE(row);
   registers->Set("r1", RegisterValue(uint64_t(0xdeadbeef00011000)));
   EXPECT_EQ(abi->FixDataAddress(registers->Get("r1")) +
@@ -1512,6 +1518,15 @@ symbols: []
     EXPECT_EQ(pc, 0x82001038u);
     EXPECT_EQ(frame_cfa, 0x11100u);
   }
+
+  registers->Set("pc", RegisterValue(uint32_t(0x82001004)));
+  registers->Set("r1", RegisterValue(uint64_t(0xdeadbeef00011080)));
+  registers->Set("lr", RegisterValue(uint64_t(0xdeadbeef83001000)));
+  UnwindLLDB unwinder(*thread);
+  addr_t frame_cfa, pc;
+  bool zeroth;
+  ASSERT_TRUE(unwinder.GetFrameInfoAtIndex(0, frame_cfa, pc, zeroth));
+  EXPECT_FALSE(unwinder.GetFrameInfoAtIndex(1, frame_cfa, pc, zeroth));
 }
 
 TEST_F(Xbox360ABI, PackedUnwindRestoresNonvolatileRegistersAcrossDynamicStack) {
@@ -1548,9 +1563,9 @@ symbols: []
   ASSERT_TRUE(object);
   auto cfi = object->CreateCallFrameInfo();
   ASSERT_TRUE(cfi);
-  UnwindPlan plan(eRegisterKindDWARF);
-  ASSERT_TRUE(cfi->GetUnwindPlan(Address(0x8200102c), plan));
-  auto body_row = plan.GetRowForFunctionOffset(44);
+  auto plan = cfi->GetUnwindPlan(Address(0x8200102c));
+  ASSERT_TRUE(plan);
+  auto body_row = plan->GetRowForFunctionOffset(44);
   ASSERT_TRUE(body_row);
   EXPECT_EQ(body_row->GetCFAValue().GetRegisterNumber(), 31u);
   EXPECT_EQ(body_row->GetCFAValue().GetOffset(), 128);
@@ -1582,7 +1597,7 @@ symbols: []
   EXPECT_EQ(pc, 0x82001004u);
 
   StackFrame caller_frame(thread, 1, 1, frame_cfa, true, pc,
-                          StackFrame::Kind::Regular, false, nullptr);
+                          StackFrame::Kind::Regular, false, false, nullptr);
   RegisterContextSP caller_registers =
       unwinder.CreateRegisterContextForFrame(&caller_frame);
   ASSERT_TRUE(caller_registers);
@@ -1781,7 +1796,7 @@ TEST_F(Xbox360ABI, SetVectorAndSmallAggregateReturns) {
                      eBasicTypeUnsignedInt, eBasicTypeUnsignedLongLong}) {
     auto type = Record("ForcedAggregate", Type(basic));
     auto size = type.GetByteSize(thread.get());
-    ASSERT_TRUE(size);
+    ASSERT_THAT_EXPECTED(size, llvm::Succeeded());
     auto data = llvm::ArrayRef(bytes).take_front(*size);
     ASSERT_TRUE(SetReturn(type, data).Success());
     ExpectReturnBytes(type, data);

@@ -1,7 +1,8 @@
-REQUIRES: target-windows, lld
-RUN: %build --compiler=clang-cl --arch=32 --nodefaultlib --output=%T/FuncSymbolsTest.exe %S/Inputs/FuncSymbolsTestMain.cpp %S/Inputs/FuncSymbols.cpp
-RUN: lldb-test symbols %T/FuncSymbolsTest.exe | FileCheck --check-prefix=CHECK-ONE %s
-RUN: lldb-test symbols %T/FuncSymbolsTest.exe | FileCheck --check-prefix=CHECK-TWO %s
+REQUIRES: target-windows, lld, diasdk
+RUN: mkdir -p %t.dir
+RUN: %build --compiler=clang-cl --arch=32 --nodefaultlib --output=%t.dir/FuncSymbolsTest.exe %S/Inputs/FuncSymbolsTestMain.cpp %S/Inputs/FuncSymbols.cpp
+RUN: lldb-test symbols %t.dir/FuncSymbolsTest.exe | FileCheck --check-prefix=CHECK-ONE %s
+RUN: lldb-test symbols %t.dir/FuncSymbolsTest.exe | FileCheck --check-prefix=CHECK-TWO %s
 
 ; Link multiple objects
 ; In this test, We don't check demangled name of a mangled function.
@@ -30,7 +31,7 @@ CHECK-ONE-DAG: Function{[[UID4]]}, mangled = ?Func@NS@@YAXDH@Z, demangled = {{.*
 CHECK-ONE-DAG: Function{[[UID5]]}, mangled = {{_?}}main, demangled = {{.*}}, type = [[TY5]]
 CHECK-ONE-DAG: Function{[[UID6]]}, demangled = {{.*}}`anonymous namespace'::Func{{.*}}, type = [[TY6]]
 CHECK-ONE-DAG: Function{[[UID7]]}, demangled = {{.*}}StaticFunction{{.*}}, type = [[TY7]]
-CHECK-ONE-DAG: Function{[[UID8]]}, mangled = ?Func@A@MemberTest@@QAAHHZZ, demangled = {{.*}}, type = [[TY8]]
+CHECK-ONE-DAG: Function{{.*}}, mangled = ?Func@A@MemberTest@@QAAHHZZ, demangled = {{.*}}, type = {{.*}}
 CHECK-ONE-DAG: Function{[[UID9]]}, mangled = ??$TemplateFunc@$00H@@YAXH@Z, demangled = {{.*}}, type = [[TY9]]
 CHECK-ONE-DAG: Function{[[UID10]]}, mangled = ??$TemplateFunc@$00HHH@@YAXHHH@Z, demangled = {{.*}}, type = [[TY10]]
 CHECK-ONE-DAG: Function{[[UID11]]}, mangled = ?InlinedFunction@@YAXJ@Z, demangled = {{.*}}, type = [[TY11]]

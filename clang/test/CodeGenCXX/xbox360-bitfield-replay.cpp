@@ -127,9 +127,10 @@ unsigned (*function_second)() = &function<char>;
 SNAP(after_function_request);
 // CHECK-DAG: @after_function_request = {{.*}}i8 -79
 
-// Deferred bodies run against the live stack, without restoring it afterward.
+// Each function pattern starts from the lexical stack and retains replayed
+// changes for subsequent specializations without changing the lexical stack.
 // CHECK-DAG: @"?local@{{.*}} = {{.*}}i8 -115
-// CHECK-DAG: @"?before@{{.*}}function@H{{.*}} = {{.*}}i8 -115
+// CHECK-DAG: @"?before@{{.*}}function@H{{.*}} = {{.*}}i8 -79
 // CHECK-DAG: @"?after@{{.*}}function@H{{.*}} = {{.*}}i8 -115
 // CHECK-DAG: @"?before@{{.*}}function@D{{.*}} = {{.*}}i8 -115
 // CHECK-DAG: @"?after@{{.*}}function@D{{.*}} = {{.*}}i8 -115

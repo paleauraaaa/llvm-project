@@ -57,9 +57,8 @@ public:
       lldb::StackFrameSP &frame_sp, lldb::ValueObjectSP &new_value,
       const lldb_private::CompilerDeclContext *function_decl_context) override;
 
-  bool
-  CreateFunctionEntryUnwindPlan(lldb_private::UnwindPlan &unwind_plan) override;
-  bool CreateDefaultUnwindPlan(lldb_private::UnwindPlan &unwind_plan) override;
+  lldb::UnwindPlanSP CreateFunctionEntryUnwindPlan() override;
+  lldb::UnwindPlanSP CreateDefaultUnwindPlan() override;
   bool RegisterIsVolatile(const lldb_private::RegisterInfo *reg_info) override;
   llvm::Expected<RuntimeTLS>
   GetRuntimeTLS(lldb_private::Thread &thread) override;

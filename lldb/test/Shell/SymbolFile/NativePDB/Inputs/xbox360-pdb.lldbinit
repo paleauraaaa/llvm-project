@@ -5,7 +5,7 @@ type lookup game::Actor
 type lookup game::Actor::Position
 type lookup game::Kind
 type lookup game::Box<game::Actor *>
-target variable game::actor game::box
+target variable game::actor game::box game::reversed
 expression -- sizeof(game::Actor)
 expression -- sizeof(game::actor.next)
 expression -- sizeof(game::Kind)

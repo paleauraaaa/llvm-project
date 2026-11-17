@@ -13,22 +13,26 @@ lldb_tablegen(ObjectFilePECOFFPropertiesEnum.inc -gen-lldb-property-enum-defs
   SOURCE ObjectFilePECOFFProperties.td
   TARGET LLDBPluginObjectFilePECOFFPropertiesEnumGen)
 
+lldb_tablegen(ObjectFilePECOFFProperties.json -dump-json
+  SOURCE ObjectFilePECOFFProperties.td
+  TARGET LLDBPluginObjectFilePECOFFPropertiesJsonGen)
+
 add_lldb_library(lldbPluginObjectFilePECOFF PLUGIN
   ObjectFilePECOFF.cpp
   PECallFrameInfo.cpp
   Xbox360CallFrameInfo.cpp
   WindowsMiniDump.cpp
 
+  LINK_COMPONENTS
+    BinaryFormat
+    Support
+    TargetParser
   LINK_LIBS
     lldbCore
     lldbHost
     lldbSymbol
     lldbTarget
     ${DBGHELP_LINK_FILES}
-  LINK_COMPONENTS
-    BinaryFormat
-    Support
-    TargetParser
   )
 
 add_dependencies(lldbPluginObjectFilePECOFF

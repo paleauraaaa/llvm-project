@@ -2,6 +2,7 @@ add_lldb_unittest(TargetTests
   ABITest.cpp
   DynamicRegisterInfoTest.cpp
   ExecutionContextTest.cpp
+  LanguageTest.cpp
   LocateModuleCallbackTest.cpp
   MemoryRegionInfoTest.cpp
   MemoryTest.cpp
@@ -10,11 +11,14 @@ add_lldb_unittest(TargetTests
   PathMappingListTest.cpp
   RegisterFlagsTest.cpp
   RemoteAwarePlatformTest.cpp
+  ScratchTypeSystemTest.cpp
   StackFrameRecognizerTest.cpp
   SummaryStatisticsTest.cpp
   FindFileTest.cpp
   Xbox360RegisterInfoTest.cpp
 
+  LINK_COMPONENTS
+      Support
   LINK_LIBS
       lldbCore
       lldbHost
@@ -29,8 +33,7 @@ add_lldb_unittest(TargetTests
       lldbSymbol
       lldbUtility
       lldbUtilityHelpers
-    LINK_COMPONENTS
-      Support
+      LLVMTestingSupport
   )
 
 set(test_inputs

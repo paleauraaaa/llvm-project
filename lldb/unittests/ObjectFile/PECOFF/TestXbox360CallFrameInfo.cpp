@@ -71,11 +71,14 @@ symbols: []
             .str());
     ASSERT_THAT_EXPECTED(file, llvm::Succeeded());
     // Xbox images use PE32, independently of COFF::is64Bit(PPCBE).
-    auto data = std::make_shared<DataBufferHeap>(*file->moduleSpec().GetData());
+    auto extractor = file->moduleSpec().GetExtractor();
+    auto data = std::make_shared<DataBufferHeap>(extractor->GetDataStart(),
+                                                  extractor->GetByteSize());
     uint32_t pe = llvm::support::endian::read32le(data->GetBytes() + 0x3c);
     llvm::support::endian::write16le(data->GetBytes() + pe + 4,
                                      llvm::COFF::IMAGE_FILE_MACHINE_PPCBE);
-    module = std::make_shared<Module>(ModuleSpec(FileSpec(), UUID(), data));
+    module = std::make_shared<Module>(ModuleSpec(
+        FileSpec(), UUID(), std::make_shared<DataExtractor>(data)));
     object = llvm::dyn_cast_or_null<ObjectFilePECOFF>(module->GetObjectFile());
     ASSERT_NE(object, nullptr);
     cfi = object->CreateCallFrameInfo();
@@ -83,17 +86,21 @@ symbols: []
   }
 
   bool Plan(unsigned offset, UnwindPlan &plan) {
-    return cfi->GetUnwindPlan(object->GetAddress(0x1000 + offset), plan);
+    auto result = cfi->GetUnwindPlan(object->GetAddress(0x1000 + offset));
+    if (!result)
+      return false;
+    plan = std::move(*result);
+    return true;
   }
 
-  void AtCFA(const UnwindPlan::RowSP &row, unsigned reg, int32_t offset) {
+  void AtCFA(const UnwindPlan::Row *row, unsigned reg, int32_t offset) {
     UnwindPlan::Row::AbstractRegisterLocation location;
     ASSERT_TRUE(row->GetRegisterInfo(reg, location));
     ASSERT_TRUE(location.IsAtCFAPlusOffset());
     EXPECT_EQ(location.GetOffset(), offset);
   }
 
-  void Expression(const UnwindPlan::RowSP &row, unsigned reg,
+  void Expression(const UnwindPlan::Row *row, unsigned reg,
                   llvm::ArrayRef<uint8_t> expected) {
     UnwindPlan::Row::AbstractRegisterLocation location;
     ASSERT_TRUE(row->GetRegisterInfo(reg, location));

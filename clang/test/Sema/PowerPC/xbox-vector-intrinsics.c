@@ -47,7 +47,7 @@ typedef struct __declspec(intrin_type) __declspec(align(16)) __vector4 {
   float v[4];
 } __vector4;
 
-enum PackType { Pack = 0 };
+enum PackType { PackMin = -1, Pack = 0, PackMax = 7 };
 enum PackMask { Mask = 0 };
 
 #ifdef __cplusplus

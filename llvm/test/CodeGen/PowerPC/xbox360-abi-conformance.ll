@@ -85,11 +85,10 @@ define i8 @ninth_s3(i64 %a, i64 %b, i64 %c, i64 %d,
 }
 
 ; ASM-LABEL: last_byte_s9:
-; ASM: {{srdi|rldicl}} {{[0-9]+}}, 4, {{(56|8, 56)}}
+; ASM-DAG: {{srdi|rldicl}} {{[0-9]+}}, 4, {{(56|8, 56)}}
 ; ASM-DAG: stb {{[0-9]+}}, 24(1)
 ; ASM-DAG: addi [[S9BASE:[0-9]+]], 1, 16
-; ASM: li [[S9LAST:[0-9]+]], 8
-; ASM: rlwimi [[S9LAST]], [[S9BASE]], 0, 29, 27
+; ASM: addi [[S9LAST:[0-9]+]], [[S9BASE]], 8
 ; ASM: clrldi [[S9LAST]], [[S9LAST]], 32
 ; ASM: lbz 3, 0([[S9LAST]])
 ; ASM: blr

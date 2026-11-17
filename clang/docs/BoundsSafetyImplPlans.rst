@@ -5,6 +5,15 @@ Implementation plans for ``-fbounds-safety``
 .. contents::
    :local:
 
+.. _bounds-safety-current-upstream-status:
+
+Current status of ``-fbounds-safety`` support in upstream Clang
+===============================================================
+
+.. FIXME: This is just a placeholder
+
+Not fully implemented upstream.
+
 Gradual updates with experimental flag
 ======================================
 
@@ -134,7 +143,7 @@ same basic block and without side effect in between.
       int *__counted_by(count) buf; size_t count;
    } sized_buf_t;
 
-   void alloc_buf(sized_buf_t *sbuf, sized_t nelems) {
+   void alloc_buf(sized_buf_t *sbuf, size_t nelems) {
       sbuf->buf = (int *)malloc(sizeof(int) * nelems);
       sbuf->count = nelems;
    }
@@ -154,7 +163,7 @@ verify its bounds safety. The implementation relies on LLVM optimizations to
 remove redundant run-time checks. Using this optimization strategy, if the
 original source code already has bounds checks, the fewer additional checks
 ``-fbounds-safety`` will introduce. The LLVM ``ConstraintElimination`` pass is
-design to remove provable redundant checks (please check Florian Hahn’s
+designed to remove provable redundant checks (please check Florian Hahn’s
 presentation in 2021 LLVM Dev Meeting and the implementation to learn more). In
 the following example, ``-fbounds-safety`` implicitly adds the redundant bounds
 checks that the optimizer can remove:

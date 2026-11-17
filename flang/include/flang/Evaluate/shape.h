@@ -15,10 +15,8 @@
 #include "expression.h"
 #include "traverse.h"
 #include "variable.h"
-#include "flang/Common/indirection.h"
 #include "flang/Evaluate/type.h"
 #include <optional>
-#include <variant>
 
 namespace Fortran::parser {
 class ContextualMessages;
@@ -70,6 +68,9 @@ std::optional<Shape> Fold(FoldingContext &, std::optional<Shape> &&);
 template <typename A>
 std::optional<Shape> GetShape(
     FoldingContext &, const A &, bool invariantOnly = true);
+template <typename A>
+std::optional<Shape> GetShape(
+    FoldingContext *, const A &, bool invariantOnly = true);
 template <typename A>
 std::optional<Shape> GetShape(const A &, bool invariantOnly = true);
 
@@ -149,6 +150,8 @@ inline MaybeExtentExpr GetSize(const std::optional<Shape> &maybeShape) {
 // Utility predicate: does an expression reference any implied DO index?
 bool ContainsAnyImpliedDoIndex(const ExtentExpr &);
 
+// GetShape()
+
 class GetShapeHelper
     : public AnyTraverse<GetShapeHelper, std::optional<Shape>> {
 public:
@@ -183,6 +186,21 @@ public:
   template <typename T>
   Result operator()(const ArrayConstructor<T> &aconst) const {
     return Shape{GetArrayConstructorExtent(aconst)};
+  }
+  template <typename T>
+  Result operator()(const ConditionalExpr<T> &conditional) const {
+    // Per F2023 10.1.4(7), the shape is that of the selected branch.
+    // When all branches have identical static extents, return the common shape.
+    int rank{conditional.thenValue().Rank()};
+    Result thenShape{(*this)(conditional.thenValue())};
+    if (!thenShape) {
+      return Shape(rank, std::nullopt);
+    }
+    Result elseShape{(*this)(conditional.elseValue())};
+    if (thenShape != elseShape) {
+      return Shape(rank, std::nullopt);
+    }
+    return thenShape;
   }
   template <typename D, typename R, typename LO, typename RO>
   Result operator()(const Operation<D, R, LO, RO> &operation) const {
@@ -261,23 +279,27 @@ private:
 
 template <typename A>
 std::optional<Shape> GetShape(
-    FoldingContext &context, const A &x, bool invariantOnly) {
-  if (auto shape{GetShapeHelper{&context, invariantOnly}(x)}) {
-    return Fold(context, std::move(shape));
+    FoldingContext *context, const A &x, bool invariantOnly) {
+  if (auto shape{GetShapeHelper{context, invariantOnly}(x)}) {
+    if (context) {
+      return Fold(*context, std::move(shape));
+    } else {
+      return shape;
+    }
   } else {
     return std::nullopt;
   }
 }
 
 template <typename A>
-std::optional<Shape> GetShape(const A &x, bool invariantOnly) {
-  return GetShapeHelper{/*context=*/nullptr, invariantOnly}(x);
+std::optional<Shape> GetShape(
+    FoldingContext &context, const A &x, bool invariantOnly) {
+  return GetShape(&context, x, invariantOnly);
 }
 
 template <typename A>
-std::optional<Shape> GetShape(
-    FoldingContext *context, const A &x, bool invariantOnly = true) {
-  return GetShapeHelper{context, invariantOnly}(x);
+std::optional<Shape> GetShape(const A &x, bool invariantOnly) {
+  return GetShape(/*context=*/nullptr, x, invariantOnly);
 }
 
 template <typename A>

@@ -34,10 +34,10 @@ private:
   void emitPrefixedInstruction(const MCInst &Inst, const MCSubtargetInfo &STI);
 };
 
-MCWinCOFFStreamer *createPPCWinCOFFStreamer(MCContext &Context,
-                                        std::unique_ptr<MCAsmBackend> MAB,
-                                        std::unique_ptr<MCObjectWriter> OW,
-                                        std::unique_ptr<MCCodeEmitter> Emitter);
+MCStreamer *createPPCWinCOFFStreamer(MCContext &Context,
+                                   std::unique_ptr<MCAsmBackend> &&MAB,
+                                   std::unique_ptr<MCObjectWriter> &&OW,
+                                   std::unique_ptr<MCCodeEmitter> &&Emitter);
 } // end namespace llvm
 
 #endif // LLVM_LIB_TARGET_PPC_MCWINCOFFSTREAMER_PPCWINCOFFSTREAMER_H

@@ -322,13 +322,24 @@ Xbox360CallFrameInfo::KeepExpression(std::vector<uint8_t> expression) {
   return m_expressions.back().data();
 }
 
-bool Xbox360CallFrameInfo::GetUnwindPlan(const Address &addr,
-                                         UnwindPlan &plan) {
-  return GetUnwindPlan(AddressRange(addr, 1), plan);
+std::unique_ptr<UnwindPlan>
+Xbox360CallFrameInfo::GetUnwindPlan(const Address &addr) {
+  return GetUnwindPlan({AddressRange(addr, 1)}, addr);
 }
 
-bool Xbox360CallFrameInfo::GetUnwindPlan(const AddressRange &range,
-                                         UnwindPlan &plan) {
+std::unique_ptr<UnwindPlan>
+Xbox360CallFrameInfo::GetUnwindPlan(llvm::ArrayRef<AddressRange> ranges,
+                                   const Address &addr) {
+  if (ranges.size() != 1)
+    return nullptr;
+  auto plan = std::make_unique<UnwindPlan>(eRegisterKindDWARF);
+  if (!BuildUnwindPlan(ranges.front(), *plan))
+    return nullptr;
+  return plan;
+}
+
+bool Xbox360CallFrameInfo::BuildUnwindPlan(const AddressRange &range,
+                                           UnwindPlan &plan) {
   std::lock_guard<std::mutex> guard(m_mutex);
   plan.Clear();
 
@@ -355,11 +366,11 @@ bool Xbox360CallFrameInfo::GetUnwindPlan(const AddressRange &range,
 
   registers[Reg::kSP] = {PrologueValue::Stack, 0};
   std::map<unsigned, Save> saves;
-  std::vector<UnwindPlan::RowSP> rows;
+  std::vector<std::unique_ptr<UnwindPlan::Row>> rows;
   bool lr_live = true;
 
   auto append_row = [&](uint32_t offset) {
-    auto row = std::make_shared<UnwindPlan::Row>();
+    auto row = std::make_unique<UnwindPlan::Row>();
     row->SetOffset(offset);
 
     // A nonvolatile frame pointer, when present, remains usable across alloca.
@@ -418,7 +429,7 @@ bool Xbox360CallFrameInfo::GetUnwindPlan(const AddressRange &range,
           break;
         }
       }
-    rows.push_back(row);
+    rows.push_back(std::move(row));
   };
 
   auto store = [&](PrologueValue value, int64_t offset, unsigned size) {
@@ -806,9 +817,9 @@ bool Xbox360CallFrameInfo::GetUnwindPlan(const AddressRange &range,
               (op == Opcode::Extended && xo == ExtendedOpcode::Or)) &&
              ra == Reg::kSP)) 
         {
-          auto unavailable = std::make_shared<UnwindPlan::Row>();
+          auto unavailable = std::make_unique<UnwindPlan::Row>();
           unavailable->SetOffset(offset + kInstructionSize);
-          rows.push_back(unavailable);
+          rows.push_back(std::move(unavailable));
           break;
         }
       }
@@ -836,11 +847,11 @@ bool Xbox360CallFrameInfo::GetUnwindPlan(const AddressRange &range,
   // hand-written epilogues or control flow.
   plan.SetUnwindPlanValidAtAllInstructions(eLazyBoolNo);
   plan.SetUnwindPlanForSignalTrap(eLazyBoolNo);
-  plan.SetPlanValidAddressRange(
+  plan.SetPlanValidAddressRanges({
       AddressRange(m_object_file.GetAddress(function->start -
                                             m_object_file.GetFileAddress(0)),
-                   function->size));
+                   function->size)});
   for (auto &row : rows)
-    plan.AppendRow(row);
+    plan.AppendRow(std::move(*row));
   return true;
 }

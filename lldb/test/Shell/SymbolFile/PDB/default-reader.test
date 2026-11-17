@@ -3,4 +3,4 @@
 # RUN: lld-link /machine:x64 /subsystem:console /entry:debug_entry /nodefaultlib /debug:full /out:%t.exe /pdb:%t.pdb %t.obj
 # RUN: env -u LLDB_USE_NATIVE_PDB_READER %lldb -b -f %t.exe -o "image dump symfile" | FileCheck %s
 
-# CHECK: SymbolFile pdb
+# CHECK: SymbolFile native-pdb

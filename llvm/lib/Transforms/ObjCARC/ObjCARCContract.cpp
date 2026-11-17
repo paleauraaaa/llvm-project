@@ -42,7 +42,9 @@
 #include "llvm/InitializePasses.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/TargetParser/Triple.h"
 #include "llvm/Transforms/ObjCARC.h"
+#include "llvm/Transforms/Utils/Local.h"
 
 using namespace llvm;
 using namespace llvm::objcarc;
@@ -51,6 +53,11 @@ using namespace llvm::objcarc;
 
 STATISTIC(NumPeeps,       "Number of calls peephole-optimized");
 STATISTIC(NumStoreStrongs, "Number objc_storeStrong calls formed");
+
+static cl::opt<cl::boolOrDefault> UseObjCClaimRV(
+    "arc-contract-use-objc-claim-rv",
+    cl::desc(
+        "Enable generation of calls to objc_claimAutoreleasedReturnValue"));
 
 //===----------------------------------------------------------------------===//
 //                                Declarations
@@ -64,7 +71,7 @@ namespace {
 
 class ObjCARCContract {
   bool Changed;
-  bool CFGChanged;
+  bool CFGChanged = false;
   AAResults *AA;
   DominatorTree *DT;
   ProvenanceAnalysis PA;
@@ -73,6 +80,9 @@ class ObjCARCContract {
 
   /// A flag indicating whether this optimization pass should run.
   bool Run;
+
+  /// Whether objc_claimAutoreleasedReturnValue is available.
+  bool HasClaimRV = false;
 
   /// The inline asm string to insert between calls and RetainRV calls to make
   /// the optimization work on targets which need it.
@@ -517,6 +527,39 @@ bool ObjCARCContract::tryToPeepholeInstruction(
   }
 }
 
+/// Should we use objc_claimAutoreleasedReturnValue?
+static bool useClaimRuntimeCall(Module &M) {
+  // Let the flag override our OS-based default.
+  if (UseObjCClaimRV != cl::boolOrDefault::BOU_UNSET)
+    return UseObjCClaimRV == cl::boolOrDefault::BOU_TRUE;
+
+  Triple TT(M.getTargetTriple());
+
+  // On x86_64, claimARV doesn't make sense, as the marker isn't actually a nop
+  // there (it's needed by the calling convention).
+  if (!TT.isAArch64())
+    return false;
+
+  unsigned Major = TT.getOSMajorVersion();
+  switch (TT.getOS()) {
+  default:
+    return false;
+  case Triple::IOS:
+  case Triple::TvOS:
+    return Major >= 16;
+  case Triple::WatchOS:
+    return Major >= 9;
+  case Triple::BridgeOS:
+    return Major >= 7;
+  case Triple::MacOSX:
+    return Major >= 13;
+  case Triple::Darwin:
+    return Major >= 21;
+  }
+
+  return false;
+}
+
 //===----------------------------------------------------------------------===//
 //                              Top Level Driver
 //===----------------------------------------------------------------------===//
@@ -527,6 +570,8 @@ bool ObjCARCContract::init(Module &M) {
     return false;
 
   EP.init(&M);
+
+  HasClaimRV = useClaimRuntimeCall(M);
 
   // Initialize RVInstMarker.
   RVInstMarker = getRVInstMarker(M);
@@ -545,7 +590,7 @@ bool ObjCARCContract::run(Function &F, AAResults *A, DominatorTree *D) {
   AA = A;
   DT = D;
   PA.setAA(A);
-  BundledRetainClaimRVs BRV(/*ContractPass=*/true);
+  BundledRetainClaimRVs BRV(EP, /*ContractPass=*/true, HasClaimRV);
   BundledInsts = &BRV;
 
   std::pair<bool, bool> R = BundledInsts->insertAfterInvokes(F, DT);
@@ -606,6 +651,10 @@ bool ObjCARCContract::run(Function &F, AAResults *A, DominatorTree *D) {
         Use &U = *UI++;
         unsigned OperandNo = U.getOperandNo();
 
+        if (!canReplaceOperandWithVariable(cast<Instruction>(U.getUser()),
+                                           OperandNo))
+          continue;
+
         // If the call's return value dominates a use of the call's argument
         // value, rewrite the use to use the return value. We check for
         // reachability here because an unreachable call is considered to
@@ -660,7 +709,6 @@ bool ObjCARCContract::run(Function &F, AAResults *A, DominatorTree *D) {
     };
 
     Value *Arg = cast<CallInst>(Inst)->getArgOperand(0);
-    Value *OrigArg = Arg;
 
     // TODO: Change this to a do-while.
     for (;;) {
@@ -686,24 +734,6 @@ bool ObjCARCContract::run(Function &F, AAResults *A, DominatorTree *D) {
         }
         break;
       }
-    }
-
-    // Replace bitcast users of Arg that are dominated by Inst.
-    SmallVector<BitCastInst *, 2> BitCastUsers;
-
-    // Add all bitcast users of the function argument first.
-    for (User *U : OrigArg->users())
-      if (auto *BC = dyn_cast<BitCastInst>(U))
-        BitCastUsers.push_back(BC);
-
-    // Replace the bitcasts with the call return. Iterate until list is empty.
-    while (!BitCastUsers.empty()) {
-      auto *BC = BitCastUsers.pop_back_val();
-      for (User *U : BC->users())
-        if (auto *B = dyn_cast<BitCastInst>(U))
-          BitCastUsers.push_back(B);
-
-      ReplaceArgUses(BC);
     }
   }
 

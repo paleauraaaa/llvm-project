@@ -7,14 +7,14 @@
 //===----------------------------------------------------------------------===//
 
 #include "Xbox360.h"
-#include "CommonArgs.h"
 #include "clang/Basic/CharInfo.h"
 #include "clang/Basic/Version.h"
 #include "clang/Config/config.h"
 #include "clang/Driver/Compilation.h"
+#include "clang/Driver/CommonArgs.h"
 #include "clang/Driver/Driver.h"
-#include "clang/Driver/Options.h"
 #include "clang/Driver/SanitizerArgs.h"
+#include "clang/Options/Options.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/Option/Arg.h"

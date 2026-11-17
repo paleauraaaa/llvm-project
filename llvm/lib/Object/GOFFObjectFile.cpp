@@ -170,6 +170,12 @@ GOFFObjectFile::GOFFObjectFile(MemoryBufferRef Object, Error &Err)
       TextPtrs.emplace_back(I);
       LLVM_DEBUG(dbgs() << "  --  TXT\n");
       break;
+    case GOFF::RT_RLD:
+      LLVM_DEBUG(dbgs() << "  --  RLD (GOFF record type) unhandled\n");
+      break;
+    case GOFF::RT_LEN:
+      LLVM_DEBUG(dbgs() << "  --  LEN (GOFF record type) unhandled\n");
+      break;
     case GOFF::RT_END:
       LLVM_DEBUG(dbgs() << "  --  END (GOFF record type) unhandled\n");
       break;
@@ -177,7 +183,10 @@ GOFFObjectFile::GOFFObjectFile(MemoryBufferRef Object, Error &Err)
       LLVM_DEBUG(dbgs() << "  --  HDR (GOFF record type) unhandled\n");
       break;
     default:
-      llvm_unreachable("Unknown record type");
+      Err = createStringError(object_error::parse_failed,
+                              "record %zu has unknown record type 0x%02" PRIX8,
+                              RecordNum, RecordType);
+      return;
     }
     PrevRecordType = RecordType;
     PrevContinuationBits = I[1] & 0x03;
@@ -270,7 +279,13 @@ Expected<uint32_t> GOFFObjectFile::getSymbolFlags(DataRefImpl Symb) const {
   GOFF::ESDBindingScope BindingScope;
   ESDRecord::getBindingScope(Record, BindingScope);
 
-  if (BindingScope != GOFF::ESD_BSC_Section) {
+  GOFF::ESDSymbolType Type;
+  ESDRecord::getSymbolType(Record, Type);
+
+  if (Type != GOFF::ESD_ST_SectionDefinition &&
+      Type != GOFF::ESD_ST_ElementDefinition &&
+      BindingScope != GOFF::ESD_BSC_Section &&
+      BindingScope != GOFF::ESD_BSC_Module) {
     Expected<StringRef> Name = getSymbolName(Symb);
     if (Name && *Name != " ") { // Blank name is local.
       Flags |= SymbolRef::SF_Global;
@@ -503,8 +518,9 @@ GOFFObjectFile::getSectionContents(DataRefImpl Sec) const {
     std::copy(CompleteData.data(), CompleteData.data() + TxtDataSize,
               Data.begin() + TxtDataOffset);
   }
-  SectionDataCache[Sec.d.a] = Data;
-  return ArrayRef<uint8_t>(SectionDataCache[Sec.d.a]);
+  auto &Cache = SectionDataCache[Sec.d.a];
+  Cache = std::move(Data);
+  return ArrayRef<uint8_t>(Cache);
 }
 
 uint64_t GOFFObjectFile::getSectionAlignment(DataRefImpl Sec) const {
@@ -564,8 +580,7 @@ section_iterator GOFFObjectFile::section_end() const {
 
 void GOFFObjectFile::moveSymbolNext(DataRefImpl &Symb) const {
   for (uint32_t I = Symb.d.a + 1, E = EsdPtrs.size(); I < E; ++I) {
-    if (EsdPtrs[I]) {
-      const uint8_t *EsdRecord = EsdPtrs[I];
+    if (const uint8_t *EsdRecord = EsdPtrs[I]) {
       GOFF::ESDSymbolType SymbolType;
       ESDRecord::getSymbolType(EsdRecord, SymbolType);
       // Skip EDs - i.e. section symbols.

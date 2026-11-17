@@ -26,10 +26,11 @@ public:
 
   bool GetAddressRange(lldb_private::Address addr,
                        lldb_private::AddressRange &range) override;
-  bool GetUnwindPlan(const lldb_private::Address &addr,
-                     lldb_private::UnwindPlan &plan) override;
-  bool GetUnwindPlan(const lldb_private::AddressRange &range,
-                     lldb_private::UnwindPlan &plan) override;
+  std::unique_ptr<lldb_private::UnwindPlan>
+  GetUnwindPlan(const lldb_private::Address &addr) override;
+  std::unique_ptr<lldb_private::UnwindPlan>
+  GetUnwindPlan(llvm::ArrayRef<lldb_private::AddressRange> ranges,
+                const lldb_private::Address &addr) override;
 
 private:
   struct RuntimeFunction {
@@ -39,6 +40,8 @@ private:
   };
   const RuntimeFunction *
   FindFunction(const lldb_private::AddressRange &range) const;
+  bool BuildUnwindPlan(const lldb_private::AddressRange &range,
+                       lldb_private::UnwindPlan &plan);
   std::optional<uint32_t> ReadInstruction(uint32_t address);
   const uint8_t *KeepExpression(std::vector<uint8_t> expression);
 

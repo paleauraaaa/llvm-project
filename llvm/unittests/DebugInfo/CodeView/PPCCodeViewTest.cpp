@@ -6,6 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "llvm/ADT/Enum.h"
 #include "llvm/DebugInfo/CodeView/CodeView.h"
 #include "llvm/DebugInfo/CodeView/EnumTables.h"
 #include "llvm/Support/ScopedPrinter.h"
@@ -32,24 +33,23 @@ TEST(PPCCodeViewTest, RegisterIDs) {
 }
 
 TEST(PPCCodeViewTest, RegisterNames) {
-  llvm::ArrayRef<llvm::EnumEntry<uint16_t>> Names =
-      getRegisterNames(CPUType::PPC604);
-  EXPECT_EQ(Names[0].Name, "PPC_GPR0");
-  EXPECT_EQ(Names[0].Value, 1);
-  EXPECT_EQ(Names[31].Name, "PPC_GPR31");
-  EXPECT_EQ(Names[31].Value, 32);
+  auto Names = getRegisterNames(CPUType::PPC604);
+  EXPECT_EQ(Names[0].name(), "PPC_GPR0");
+  EXPECT_EQ(Names[0].value(), 1);
+  EXPECT_EQ(Names[31].name(), "PPC_GPR31");
+  EXPECT_EQ(Names[31].value(), 32);
 
   Names = getRegisterNames(CPUType::PPC620);
-  EXPECT_EQ(Names[0].Name, "PPC_GPR0");
-  EXPECT_EQ(Names[0].Value, 1);
+  EXPECT_EQ(Names[0].name(), "PPC_GPR0");
+  EXPECT_EQ(Names[0].value(), 1);
 
-  EXPECT_EQ(Names[100].Name, "PPC_VR0");
-  EXPECT_EQ(Names[100].Value, 1200);
+  EXPECT_EQ(Names[100].name(), "PPC_VR0");
+  EXPECT_EQ(Names[100].value(), 1200);
   EXPECT_EQ(Names.size(), 228U);
   for (unsigned I = 0; I != 128; ++I)
-    EXPECT_EQ(Names[100 + I].Value, 1200 + 5 * I);
-  EXPECT_EQ(Names.back().Name, "PPC_VR127");
-  EXPECT_EQ(Names.back().Value, 1835);
+    EXPECT_EQ(Names[100 + I].value(), 1200 + 5 * I);
+  EXPECT_EQ(Names[Names.size() - 1].name(), "PPC_VR127");
+  EXPECT_EQ(Names[Names.size() - 1].value(), 1835);
 }
 
 TEST(PPCCodeViewTest, FramePointerRegisters) {

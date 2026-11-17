@@ -36,7 +36,7 @@ float positive_zero(void) { return __fself(0.0f, 1.0f, 2.0f); }
 // CHECK: call float @llvm.ppc.fsels(float -0.000000e+00, float 1.000000e+00, float 2.000000e+00)
 float negative_zero(void) { return __fself(-0.0f, 1.0f, 2.0f); }
 // CHECK-LABEL: define{{.*}} @nan_comparand(
-// CHECK: call float @llvm.ppc.fsels(float 0x7FF8000000000000, float 1.000000e+00, float 2.000000e+00)
+// CHECK: call float @llvm.ppc.fsels(float +qnan, float 1.000000e+00, float 2.000000e+00)
 float nan_comparand(void) { return __fself(__builtin_nanf(""), 1.0f, 2.0f); }
 #ifdef __cplusplus
 }

@@ -12,11 +12,13 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/Support/Compiler.h"
 #include "llvm/Support/SMLoc.h"
 #include <string>
 
 namespace llvm {
 
+class MCAsmInfo;
 class MCRegister;
 class raw_ostream;
 
@@ -24,7 +26,7 @@ class raw_ostream;
 /// instruction operand.  It should be subclassed by target-specific code.  This
 /// base class is used by target-independent clients and is the interface
 /// between parsing an asm instruction and recognizing it.
-class MCParsedAsmOperand {
+class LLVM_ABI MCParsedAsmOperand {
   /// MCOperandNum - The corresponding MCInst operand number.  Only valid when
   /// parsing MS-style inline assembly.
   unsigned MCOperandNum = ~0u;
@@ -96,20 +98,11 @@ public:
   virtual SMLoc getOffsetOfLoc() const { return SMLoc(); }
 
   /// print - Print a debug representation of the operand to the given stream.
-  virtual void print(raw_ostream &OS) const = 0;
+  virtual void print(raw_ostream &, const MCAsmInfo &) const = 0;
 
   /// dump - Print to the debug stream.
   virtual void dump() const;
 };
-
-//===----------------------------------------------------------------------===//
-// Debugging Support
-
-inline raw_ostream& operator<<(raw_ostream &OS, const MCParsedAsmOperand &MO) {
-  MO.print(OS);
-  return OS;
-}
-
 } // end namespace llvm
 
 #endif // LLVM_MC_MCPARSER_MCPARSEDASMOPERAND_H

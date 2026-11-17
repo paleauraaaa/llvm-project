@@ -36,6 +36,15 @@ void Actor::SetID(int value) { id = value; }
 int Actor::count = 9;
 Actor actor = {{42}, {1.5f, 2.5f}, Kind::Active, 1, 5, {10, 20, 30}, nullptr};
 Box<Actor *> box = {&actor};
+
+#pragma bitfield_order(lsb_to_msb)
+struct ReverseBits {
+  unsigned low : 3;
+  signed neg : 5;
+  unsigned high : 8;
+};
+#pragma bitfield_order(msb_to_lsb)
+ReverseBits reversed = {5, -3, 0xa6};
 } // namespace game
 
 #line 100 "xbox360-pdb.cpp"

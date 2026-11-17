@@ -12,7 +12,7 @@ declare void @destroy(ptr) nounwind
 declare void @use(ptr)
 
 ; CHECK: .long __CxxFrameHandler
-; CHECK-NEXT: .long ($cppxdata$catch_int)
+; CHECK-NEXT: .long $cppxdata$catch_int
 ; CHECK-NEXT: catch_int:
 ; CHECK: li 0, 0
 ; CHECK-NEXT: stw 0, 4(1)
@@ -21,7 +21,7 @@ declare void @use(ptr)
 ; CHECK: addi 1, 1, [[FRAME]]
 ; CHECK: .long (0xc0000000
 ; CHECK: .long __CxxFrameHandler
-; CHECK-NEXT: .long ($cppxdata$catch_int)
+; CHECK-NEXT: .long $cppxdata$catch_int
 ; CHECK: addi 31, 12, -[[FRAME]]
 ; CHECK: stwu 1, -{{[0-9]+}}(1)
 ; CHECK: lwz {{[0-9]+}}, {{[0-9]+}}(31)
@@ -32,11 +32,11 @@ declare void @use(ptr)
 ; CHECK: $cppxdata$catch_int:
 ; CHECK-NEXT: .long 429065506
 ; CHECK-NEXT: .long 2
-; CHECK-NEXT: .long ($stateUnwindMap$catch_int)
+; CHECK-NEXT: .long $stateUnwindMap$catch_int
 ; CHECK-NEXT: .long 1
-; CHECK-NEXT: .long ($tryMap$catch_int)
+; CHECK-NEXT: .long $tryMap$catch_int
 ; CHECK-NEXT: .long 4
-; CHECK-NEXT: .long ($ip2state$catch_int)
+; CHECK-NEXT: .long $ip2state$catch_int
 ; CHECK-NEXT: .long 0
 ; CHECK-NEXT: .long 1
 ; CHECK-NEXT: $stateUnwindMap$catch_int:
@@ -68,7 +68,7 @@ return:
 }
 
 ; CHECK: .long __CxxFrameHandler
-; CHECK-NEXT: .long ($cppxdata$cleanup)
+; CHECK-NEXT: .long $cppxdata$cleanup
 ; CHECK-NEXT: cleanup:
 ; CHECK: .long (0xc0000000
 ; CHECK: addi 31, 12, -{{[0-9]+}}
