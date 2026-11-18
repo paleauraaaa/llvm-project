@@ -7572,10 +7572,6 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       CmdArgs.push_back("-fms-define-stdc");
   }
 
-  // imitate the behavior of -faltivec for Xbox 360.
-  if (IsXbox360) {
-    CmdArgs.push_back("-includealtivec.h");
-  }
   // Handle -f[no-]wrapv and -f[no-]strict-overflow, which are used by both
   // clang and flang.
   renderCommonIntegerOverflowOptions(Args, CmdArgs, IsMSVCCompat);
