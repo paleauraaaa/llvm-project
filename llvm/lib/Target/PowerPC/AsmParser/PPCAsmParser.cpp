@@ -2350,8 +2350,11 @@ bool PPCAsmParser::parseInstruction(ParseInstructionInfo &Info, StringRef Name,
   }
 
   // If there are no more operands then finish
-  if (parseOptionalToken(AsmToken::EndOfStatement))
+  if (parseOptionalToken(AsmToken::EndOfStatement)) {
+    if (Name == "bclr+")
+      return Error(NameLoc, "too few operands for instruction");
     return false;
+  }
 
   // Parse the first operand
   if (parseOperand(Operands))
@@ -2360,6 +2363,30 @@ bool PPCAsmParser::parseInstruction(ParseInstructionInfo &Info, StringRef Name,
   while (!parseOptionalToken(AsmToken::EndOfStatement)) {
     if (parseToken(AsmToken::Comma) || parseOperand(Operands))
       return true;
+  }
+
+  if (Name == "bclr+") {
+    const auto &BOOp = static_cast<const PPCOperand &>(*Operands[1]);
+    if (!BOOp.isUImm<5>())
+      return Error(BOOp.getStartLoc(), "invalid branch option");
+
+    unsigned BO = BOOp.getImm();
+    // The A/T bits occupy different positions for CR-only and CTR-only
+    // branches. Options that test both or neither cannot carry this hint.
+    unsigned Hint = 0;
+    if ((BO & 0x14) == 0x04)
+      Hint = 0x03;
+    else if ((BO & 0x14) == 0x10)
+      Hint = 0x09;
+    if (!Hint || ((BO & Hint) && (BO & Hint) != Hint))
+      return Error(BOOp.getStartLoc(),
+                   "branch option is incompatible with a taken hint");
+
+    Operands[1] =
+        PPCOperand::CreateImm(BO | Hint, BOOp.getStartLoc(), BOOp.getEndLoc(),
+                              isPPC64(), getContext());
+    Operands[0] =
+        PPCOperand::CreateToken("bclr", NameLoc, isPPC64(), getContext());
   }
 
   // We'll now deal with an unfortunate special case: the syntax for the dcbt
