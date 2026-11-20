@@ -307,7 +307,7 @@ void PPCTargetInfo::getTargetDefines(const LangOptions &Opts,
   Builder.defineMacro("_ARCH_PPC");
   Builder.defineMacro("__powerpc__");
   Builder.defineMacro("__POWERPC__");
-  if (PointerWidth == 64) {
+  if (PointerWidth == 64 || getTriple().isXbox360()) {
     Builder.defineMacro("_ARCH_PPC64");
     Builder.defineMacro("__powerpc64__");
     Builder.defineMacro("__PPC64__");
@@ -416,6 +416,7 @@ void PPCTargetInfo::getTargetDefines(const LangOptions &Opts,
   }
   if (HasVMX128)
     Builder.defineMacro("__VMX128__");
+    Builder.defineMacro("__VMX128_SUPPORTED");
   if (ReserveVMX128)
     Builder.defineMacro("__VMX128_RESERVE", "1");
   if (HasSPE)
