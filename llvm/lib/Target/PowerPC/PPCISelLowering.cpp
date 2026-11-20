@@ -1262,6 +1262,10 @@ PPCTargetLowering::PPCTargetLowering(const PPCTargetMachine &TM,
     }
 
     if (Subtarget.hasVMX128()) {
+      // VMX128 lacks the integer multiply instructions used by AltiVec lowering.
+      for (MVT VT : {MVT::v16i8, MVT::v8i16, MVT::v4i32})
+        setOperationAction(ISD::MUL, VT, Expand);
+
       // Wide lanes are useful for untyped vector storage, not Xenon arithmetic.
       for (MVT VT : {MVT::v2i64, MVT::v1i128}) {
         addRegisterClass(VT, &PPC::VR128RCRegClass);

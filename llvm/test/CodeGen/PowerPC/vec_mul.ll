@@ -3,6 +3,8 @@
 ; RUN: llc -verify-machineinstrs < %s -mtriple=powerpc64le-unknown-linux-gnu -mattr=+altivec -mattr=-vsx -mcpu=pwr8 -mattr=-power8-altivec | FileCheck %s -check-prefix=CHECK-LE
 ; RUN: llc -verify-machineinstrs < %s -mtriple=powerpc64-unknown-linux-gnu -mattr=+altivec -mattr=+vsx -mcpu=pwr7 | FileCheck %s -check-prefix=CHECK-VSX
 ; RUN: llc -verify-machineinstrs < %s -mtriple=powerpc64le-unknown-linux-gnu -mattr=+altivec -mattr=+vsx -mcpu=pwr8 -mattr=-power8-altivec | FileCheck %s -check-prefix=CHECK-LE-VSX
+; RUN: llc -verify-machineinstrs < %s -mtriple=powerpc64-ibm-xbox360 -mcpu=xenon | FileCheck %s --check-prefix=XENON
+; RUN: llc -verify-machineinstrs < %s -mtriple=powerpc64-ibm-xbox360 -mcpu=xenon -filetype=obj -o %t.obj
 
 define <4 x i32> @test_v4i32(ptr %X, ptr %Y) {
 	%tmp = load <4 x i32>, ptr %X		; <<4 x i32>> [#uses=1]
@@ -22,6 +24,8 @@ define <4 x i32> @test_v4i32(ptr %X, ptr %Y) {
 ; CHECK-LE-VSX-LABEL: test_v4i32:
 ; CHECK-LE-VSX: vmsumuhm
 ; CHECK-LE-VSX-NOT: mullw
+; XENON-LABEL: test_v4i32:
+; XENON-COUNT-4: mullw
 
 define <8 x i16> @test_v8i16(ptr %X, ptr %Y) {
 	%tmp = load <8 x i16>, ptr %X		; <<8 x i16>> [#uses=1]
@@ -41,6 +45,8 @@ define <8 x i16> @test_v8i16(ptr %X, ptr %Y) {
 ; CHECK-LE-VSX-LABEL: test_v8i16:
 ; CHECK-LE-VSX: vmladduhm
 ; CHECK-LE-VSX-NOT: mullw
+; XENON-LABEL: test_v8i16:
+; XENON-COUNT-8: mullw
 
 define <16 x i8> @test_v16i8(ptr %X, ptr %Y) {
 	%tmp = load <16 x i8>, ptr %X		; <<16 x i8>> [#uses=1]
@@ -66,6 +72,8 @@ define <16 x i8> @test_v16i8(ptr %X, ptr %Y) {
 ; CHECK-LE-VSX: vmuleub [[REG2:[0-9]+]]
 ; CHECK-LE-VSX: vperm {{[0-9]+}}, [[REG2]], [[REG1]]
 ; CHECK-LE-VSX-NOT: mullw
+; XENON-LABEL: test_v16i8:
+; XENON-COUNT-16: mullw
 
 define <4 x float> @test_float(ptr %X, ptr %Y) {
 	%tmp = load <4 x float>, ptr %X
@@ -88,3 +96,5 @@ define <4 x float> @test_float(ptr %X, ptr %Y) {
 ; CHECK-VSX: xvmulsp
 ; CHECK-LE-VSX-LABEL: test_float:
 ; CHECK-LE-VSX: xvmulsp
+; XENON-LABEL: test_float:
+; XENON: vmaddfp
