@@ -3403,7 +3403,9 @@ bool TargetLowering::SimplifyDemandedVectorElts(
             continue;
           for (unsigned SrcElt = 0; SrcElt != NumSrcElts; ++SrcElt) {
             unsigned Elt = Scale * SrcElt + SubElt;
-            if (DemandedElts[Elt])
+            // A wholly-undef source lane is reported as undef below; don't also
+            // flag it as zero, keeping the undef and zero sets disjoint.
+            if (DemandedElts[Elt] && !SrcUndef[SrcElt])
               KnownZero.setBit(Elt);
           }
         }
@@ -3970,6 +3972,7 @@ bool TargetLowering::SimplifyDemandedVectorElts(
     break;
   }
   }
+
   assert((KnownUndef & KnownZero) == 0 && "Elements flagged as undef AND zero");
 
   // Constant fold all undef cases.
@@ -11374,16 +11377,20 @@ SDValue TargetLowering::expandABD(SDNode *N, SelectionDAG &DAG) const {
                        DAG.getNode(ISD::USUBSAT, dl, VT, RHS, LHS));
   }
 
-  // If the subtract doesn't overflow then just use abs(sub())
+  // abds, or abdu with non-negative operands: if the sub is nsw, abs(sub).
+  // Otherwise abdu: if the sub is nuw then lhs >= rhs, so just sub.
   bool IsNonNegative = DAG.SignBitIsZero(LHS) && DAG.SignBitIsZero(RHS);
+  bool UseSigned = IsSigned || IsNonNegative;
 
-  if (DAG.willNotOverflowSub(IsSigned || IsNonNegative, LHS, RHS))
-    return DAG.getNode(ISD::ABS, dl, VT,
-                       DAG.getNode(ISD::SUB, dl, VT, LHS, RHS));
+  if (DAG.willNotOverflowSub(UseSigned, LHS, RHS)) {
+    SDValue Sub = DAG.getNode(ISD::SUB, dl, VT, LHS, RHS);
+    return UseSigned ? DAG.getNode(ISD::ABS, dl, VT, Sub) : Sub;
+  }
 
-  if (DAG.willNotOverflowSub(IsSigned || IsNonNegative, RHS, LHS))
-    return DAG.getNode(ISD::ABS, dl, VT,
-                       DAG.getNode(ISD::SUB, dl, VT, RHS, LHS));
+  if (DAG.willNotOverflowSub(UseSigned, RHS, LHS)) {
+    SDValue Sub = DAG.getNode(ISD::SUB, dl, VT, RHS, LHS);
+    return UseSigned ? DAG.getNode(ISD::ABS, dl, VT, Sub) : Sub;
+  }
 
   EVT CCVT = getSetCCResultType(DAG.getDataLayout(), *DAG.getContext(), VT);
   ISD::CondCode CC = IsSigned ? ISD::CondCode::SETGT : ISD::CondCode::SETUGT;
@@ -13757,10 +13764,11 @@ SDValue TargetLowering::expandVECTOR_COMPRESS(SDNode *Node,
 SDValue TargetLowering::expandCttzElts(SDNode *Node, SelectionDAG &DAG) const {
   SDLoc DL(Node);
   EVT VT = Node->getValueType(0);
+  SDValue Op = Node->getOperand(0);
+  ElementCount EC = Op.getValueType().getVectorElementCount();
 
   bool ZeroIsPoison = Node->getOpcode() == ISD::CTTZ_ELTS_ZERO_POISON;
-  auto [Mask, StepVec] =
-      getLegalMaskAndStepVector(Node->getOperand(0), ZeroIsPoison, DL, DAG);
+  auto [Mask, StepVec] = getLegalMaskAndStepVector(Op, ZeroIsPoison, DL, DAG);
 
   // No legal step vector: split mask in half and recombine results.
   // LoNumElts uses the non-poison CTTZ_ELTS so its result is well-defined
@@ -13768,7 +13776,7 @@ SDValue TargetLowering::expandCttzElts(SDNode *Node, SelectionDAG &DAG) const {
   // Result: (ResLo != LoNumElts) ? ResLo : (LoNumElts + ResHi)
   if (!StepVec) {
     EVT ResVT = Node->getValueType(0);
-    auto [MaskLo, MaskHi] = DAG.SplitVector(Node->getOperand(0), DL);
+    auto [MaskLo, MaskHi] = DAG.SplitVector(Op, DL);
     SDValue LoNumElts = DAG.getElementCount(
         DL, ResVT, MaskLo.getValueType().getVectorElementCount());
     SDValue ResLo = DAG.getNode(ISD::CTTZ_ELTS, DL, ResVT, MaskLo);
@@ -13791,8 +13799,7 @@ SDValue TargetLowering::expandCttzElts(SDNode *Node, SelectionDAG &DAG) const {
   if (getTypeAction(StepVT.getSimpleVT()) == TypePromoteInteger)
     StepVT = getTypeToTransformTo(*DAG.getContext(), StepVT);
 
-  SDValue VL =
-      DAG.getElementCount(DL, StepVT, StepVecVT.getVectorElementCount());
+  SDValue VL = DAG.getElementCount(DL, StepVT, EC);
   SDValue SplatVL = DAG.getSplat(StepVecVT, DL, VL);
   StepVec = DAG.getNode(ISD::SUB, DL, StepVecVT, SplatVL, StepVec);
   SDValue Zeroes = DAG.getConstant(0, DL, StepVecVT);

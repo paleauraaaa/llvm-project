@@ -3968,6 +3968,16 @@ static SDValue combineOrOfSetCCToUSUBOCarry(SDNode *N, SelectionDAG &DAG,
                                                     *DAG.getContext(), IntVT)))
     return SDValue();
 
+  // USUBO_CARRY's carry-in must match boolean contents, which the matched
+  // pattern does not guarantee.
+  // TODO: Extend to other boolean contents.
+  if (TLI.getBooleanContents(IntVT) !=
+          TargetLowering::ZeroOrOneBooleanContent ||
+      !DAG.MaskedValueIsZero(
+          CarryIn,
+          APInt::getBitsSetFrom(CarryIn.getScalarValueSizeInBits(), 1)))
+    return SDValue();
+
   SDLoc DL(N);
   SDVTList VTs = DAG.getVTList(IntVT, N->getValueType(0));
   return DAG.getNode(ISD::USUBO_CARRY, DL, VTs, A, B, CarryIn).getValue(1);
@@ -13042,10 +13052,13 @@ SDValue DAGCombiner::foldSelectToABD(SDValue LHS, SDValue RHS, SDValue True,
   }
 
   // (setcc (add nsw A, Const), 0, sets??) --> (setcc A, -Const, sets??)
+  // Ensure -Const doesn't overflow.
   SDValue A, B;
   if (ISD::isSignedIntSetCC(CC) && LHS->getFlags().hasNoSignedWrap() &&
       isZeroOrZeroSplat(RHS) && sd_match(LHS, m_Add(m_Value(A), m_Value(B))) &&
-      DAG.isConstantIntBuildVectorOrConstantInt(B)) {
+      ISD::matchUnaryPredicate(B, [](ConstantSDNode *C) {
+        return !C->getAPIntValue().isMinSignedValue();
+      })) {
     RHS = DAG.getNegative(B, LHS, B.getValueType());
     LHS = A;
   }
