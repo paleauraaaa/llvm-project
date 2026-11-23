@@ -1,5 +1,6 @@
 // RUN: %clang_cc1 -triple powerpc64-ibm-xbox360 -fsyntax-only -verify %s
 // RUN: %clang_cc1 -triple powerpc64-ibm-xbox360 -x c++ -fsyntax-only -verify %s
+// RUN: echo "#pragma bitfield_order(show)" | %clang_cc1 -triple powerpc64-ibm-xbox360 -Werror -Wno-pragma-bitfield-order -x c -fsyntax-only -
 
 #pragma bitfield_order(show) // expected-warning {{== msb_to_lsb}}
 #pragma bitfield_order(lsb_to_msb)
