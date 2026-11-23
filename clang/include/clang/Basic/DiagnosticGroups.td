@@ -1181,10 +1181,12 @@ def UnknownPragmas : DiagGroup<"unknown-pragmas">;
 def IgnoredPragmas : DiagGroup<"ignored-pragmas",
     [IgnoredPragmaIntrinsic, IgnoredPragmaOptimize]>;
 def PragmaClangAttribute : DiagGroup<"pragma-clang-attribute">;
+def PragmaBitfieldOrder : DiagGroup<"pragma-bitfield-order">;
 def PragmaPackSuspiciousInclude : DiagGroup<"pragma-pack-suspicious-include">;
 def PragmaPack : DiagGroup<"pragma-pack", [PragmaPackSuspiciousInclude]>;
 def Pragmas : DiagGroup<"pragmas", [UnknownPragmas, IgnoredPragmas,
-                                    PragmaClangAttribute, PragmaPack]>;
+                                    PragmaClangAttribute, PragmaBitfieldOrder,
+                                    PragmaPack]>;
 def UnknownWarningOption : DiagGroup<"unknown-warning-option">;
 def NSobjectAttribute : DiagGroup<"NSObject-attribute">;
 def NSConsumedMismatch : DiagGroup<"nsconsumed-mismatch">;
