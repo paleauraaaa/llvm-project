@@ -1,8 +1,8 @@
 # REQUIRES: lld
 # RUN: llvm-mc --triple=x86_64-pc-windows --filetype=obj --defsym DLL=0 %s >%t.dll.o
 # RUN: llvm-mc --triple=x86_64-pc-windows --filetype=obj --defsym EXE=0 %s >%t.exe.o
-# RUN: lld-link /OUT:%t.dll %t.dll.o /SUBSYSTEM:console /dll /noentry /debug
-# RUN: lld-link /OUT:%t.exe %t.exe.o /SUBSYSTEM:console /debug /force
+# RUN: lld-link /OUT:%t.dll %t.dll.o /SUBSYSTEM:console /dll /noentry /debug:dwarf
+# RUN: lld-link /OUT:%t.exe %t.exe.o /SUBSYSTEM:console /debug:dwarf /force
 # RUN: %lldb %t.exe -o "target modules add %t.dll" -o "expression var" \
 # RUN:   -o exit 2>&1 | FileCheck %s
 
