@@ -9,7 +9,7 @@ import time
 class DelayingHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         # The test sets DEBUGINFOD_TIMEOUT=1
-        time.sleep(5)
+        time.sleep(15)
         self.send_response(501)
 
 

@@ -32,6 +32,7 @@
 // CHECK-SAME: {{^}}, 970
 // CHECK-SAME: {{^}}, ppc970
 // CHECK-SAME: {{^}}, g5
+// CHECK-SAME: {{^}}, xenon
 // CHECK-SAME: {{^}}, a2
 // CHECK-SAME: {{^}}, ppca2
 // CHECK-SAME: {{^}}, ppc-cell-be

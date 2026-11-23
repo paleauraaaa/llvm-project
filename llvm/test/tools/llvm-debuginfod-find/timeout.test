@@ -3,7 +3,7 @@ REQUIRES: curl || system-windows, http-server
 RUN: rm -rf %t
 RUN: mkdir -p %t/debuginfod-cache
 
-# We hit the timeout because the Python script delays the response by 2 seconds
+# Allow for WinHTTP's timeout granularity and retries.
 RUN: env DEBUGINFOD_TIMEOUT=1 \
 RUN: env DEBUGINFOD_CACHE=%t/debuginfod-cache \
 RUN: env DEBUGINFOD_HEADERS_FILE=%S/Inputs/headers \
