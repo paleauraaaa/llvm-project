@@ -507,6 +507,8 @@ public:
 
   CallingConvCheckResult checkCallingConvention(CallingConv CC) const override {
     switch (CC) {
+    case CC_C:
+      return getTriple().isXbox360() ? CCCR_OK : CCCR_Warning;
     case CC_Swift:
       return CCCR_OK;
     case CC_SwiftAsync:
