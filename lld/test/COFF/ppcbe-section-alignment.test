@@ -1,5 +1,7 @@
 # RUN: split-file %s %t.dir
 # RUN: llvm-mc -triple=powerpc64-ibm-xbox360 -filetype=obj %t.dir/main.s -o %t.ppc.obj
+# RUN: lld-link /WX /machine:ppcbe /subsystem:xbox /entry:main /nodefaultlib /align:4096 /out:%t.no-warning.exe %t.ppc.obj
+# RUN: lld-link /WX /entry:main /nodefaultlib /align:65536 /out:%t.inferred-no-warning.exe %t.ppc.obj
 # RUN: lld-link /machine:ppcbe /entry:main /nodefaultlib /out:%t.explicit.exe %t.ppc.obj
 # RUN: llvm-readobj --file-headers --sections %t.explicit.exe | FileCheck %s --check-prefix=DEFAULT
 # RUN: lld-link /entry:main /nodefaultlib /out:%t.inferred.exe %t.ppc.obj
@@ -15,12 +17,13 @@
 # RUN: not lld-link /machine:ppcbe /entry:main /nodefaultlib /align:8192 /out:%t.invalid.exe %t.ppc.obj 2>&1 | FileCheck %s --check-prefix=INVALID-8192
 # RUN: not lld-link /entry:main /nodefaultlib /align:131072 /out:%t.inferred-invalid.exe %t.ppc.obj 2>&1 | FileCheck %s --check-prefix=INVALID-131072
 # RUN: not lld-link /entry:main /nodefaultlib /align:2048 /out:%t.small-invalid.exe %t.ppc.obj 2>&1 | FileCheck %s --check-prefix=INVALID-2048
-# RUN: not lld-link /entry:main /nodefaultlib /align:12345 /out:%t.non-power.exe %t.ppc.obj 2>&1 | FileCheck %s --check-prefix=NON-POWER
+# RUN: not lld-link /entry:main /nodefaultlib /align:12345 /out:%t.non-power.exe %t.ppc.obj 2>&1 | FileCheck %s --check-prefix=NON-POWER --implicit-check-not="/align specified without /driver"
 # RUN: llvm-mc -triple=x86_64-pc-windows-msvc -filetype=obj %t.dir/main.s -o %t.x64.obj
 # RUN: lld-link /entry:main /nodefaultlib /out:%t.x64.exe %t.x64.obj
 # RUN: llvm-readobj --file-headers --sections %t.x64.exe | FileCheck %s --check-prefixes=OVERRIDE,X64
 # RUN: lld-link /entry:main /nodefaultlib /align:8192 /out:%t.x64-override.exe %t.x64.obj
 # RUN: llvm-readobj --file-headers --sections %t.x64-override.exe | FileCheck %s --check-prefix=X64-OVERRIDE
+# RUN: not lld-link /entry:main /nodefaultlib /align:12345 /out:%t.x64-invalid.exe %t.x64.obj 2>&1 | FileCheck %s --check-prefix=X64-INVALID
 
 # DEFAULT: ImageBase: 0x82000000
 # DEFAULT: SectionAlignment: 65536
@@ -48,6 +51,8 @@
 # X64-OVERRIDE: VirtualAddress: 0x2000
 # X64-OVERRIDE: Name: .data
 # X64-OVERRIDE: VirtualAddress: 0x4000
+# X64-INVALID: error: /align: not a power of two: 12345
+# X64-INVALID: warning: /align specified without /driver; image may not run
 
 #--- main.s
 .text

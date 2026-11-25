@@ -2176,15 +2176,6 @@ void LinkerDriver::linkerMain(ArrayRef<const char *> argsArr) {
   if (auto *arg = args.getLastArg(OPT_sectionlayout))
     parseSectionLayout(arg->getValue());
 
-  // Handle /align
-  if (auto *arg = args.getLastArg(OPT_align)) {
-    parseNumbers(arg->getValue(), &config->align);
-    if (!isPowerOf2_64(config->align))
-      Err(ctx) << "/align: not a power of two: " << StringRef(arg->getValue());
-    if (!args.hasArg(OPT_driver))
-      Warn(ctx) << "/align specified without /driver; image may not run";
-  }
-
   // Handle /aligncomm
   for (auto *arg : args.filtered(OPT_aligncomm))
     ctx.symtab.parseAligncomm(arg->getValue());
@@ -2388,6 +2379,13 @@ void LinkerDriver::linkerMain(ArrayRef<const char *> argsArr) {
 
   // Read all input files given via the command line.
   run();
+  if (auto *arg = args.getLastArg(OPT_align)) {
+    parseNumbers(arg->getValue(), &config->align);
+    if (!isPowerOf2_64(config->align))
+      Err(ctx) << "/align: not a power of two: " << StringRef(arg->getValue());
+    if (config->machine != PPCBE && !args.hasArg(OPT_driver))
+      Warn(ctx) << "/align specified without /driver; image may not run";
+  }
   if (errorCount())
     return;
 
