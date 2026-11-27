@@ -234,7 +234,8 @@ inline uintptr_t LocalAddressSpace::getP(pint_t addr) {
 }
 
 inline uint64_t LocalAddressSpace::getRegister(pint_t addr) {
-#if __SIZEOF_POINTER__ == 8 || defined(__mips64)
+#if __SIZEOF_POINTER__ == 8 || defined(__mips64) ||                            \
+    (defined(_XBOX) && _XBOX_VER == 200)
   return get64(addr);
 #else
   return get32(addr);

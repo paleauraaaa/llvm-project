@@ -1182,6 +1182,10 @@ inline const char *Registers_ppc::getRegisterName(int regNum) {
 #endif // _LIBUNWIND_TARGET_PPC
 
 #if defined(_LIBUNWIND_TARGET_PPC64)
+#if defined(_XBOX) && _XBOX_VER == 200
+class Registers_ppc64;
+extern "C" void __libunwind_Registers_ppc64_jumpto(Registers_ppc64 *);
+#endif
 /// Registers_ppc64 holds the register state of a thread in a 64-bit PowerPC
 /// process.
 class _LIBUNWIND_HIDDEN Registers_ppc64 {
@@ -1203,7 +1207,11 @@ public:
   v128        getVectorRegister(int num) const;
   void        setVectorRegister(int num, v128 value);
   static const char *getRegisterName(int num);
+#if defined(_XBOX) && _XBOX_VER == 200
+  void        jumpto() { __libunwind_Registers_ppc64_jumpto(this); }
+#else
   void        jumpto();
+#endif
   static constexpr int lastDwarfRegNum() {
     return _LIBUNWIND_HIGHEST_DWARF_REGISTER_PPC64;
   }
@@ -1270,7 +1278,11 @@ private:
   };
 
   ppc64_thread_state_t _registers;
+#if defined(_XBOX) && _XBOX_VER == 200
+  ppc64_vsr_t          _vectorScalarRegisters[160];
+#else
   ppc64_vsr_t          _vectorScalarRegisters[64];
+#endif
 
   static int getVectorRegNum(int num);
 };
@@ -1285,9 +1297,13 @@ inline Registers_ppc64::Registers_ppc64(const void *registers) {
   memcpy(&_vectorScalarRegisters,
          static_cast<const uint8_t *>(registers) + sizeof(_registers),
          sizeof(_vectorScalarRegisters));
-  static_assert(sizeof(_registers) +
-                sizeof(_vectorScalarRegisters) == 1336,
-                "expected vector register offset to be 1336 bytes");
+#if defined(_XBOX) && _XBOX_VER == 200
+  static_assert(sizeof(_registers) + sizeof(_vectorScalarRegisters) == 2872,
+                "unexpected Xbox register context size");
+#else
+  static_assert(sizeof(_registers) + sizeof(_vectorScalarRegisters) == 1336,
+                "unexpected ppc64 register context size");
+#endif
 }
 
 inline Registers_ppc64::Registers_ppc64() {
@@ -1576,6 +1592,10 @@ inline void Registers_ppc64::setFloatRegister(int regNum, double value) {
 }
 
 inline bool Registers_ppc64::validVectorRegister(int regNum) const {
+#if defined(_XBOX) && _XBOX_VER == 200
+  if (regNum >= UNW_PPC64_V32 && regNum <= UNW_PPC64_V127)
+    return true;
+#endif
 #if defined(__VSX__)
   if (regNum >= UNW_PPC64_VS0 && regNum <= UNW_PPC64_VS31)
     return true;
@@ -1590,6 +1610,10 @@ inline bool Registers_ppc64::validVectorRegister(int regNum) const {
 
 inline int Registers_ppc64::getVectorRegNum(int num)
 {
+#if defined(_XBOX) && _XBOX_VER == 200
+  if (num >= UNW_PPC64_V32 && num <= UNW_PPC64_V127)
+    return num - UNW_PPC64_V32 + 64;
+#endif
   if (num >= UNW_PPC64_VS0 && num <= UNW_PPC64_VS31)
     return num - UNW_PPC64_VS0;
   else
@@ -1607,6 +1631,24 @@ inline void Registers_ppc64::setVectorRegister(int regNum, v128 value) {
 }
 
 inline const char *Registers_ppc64::getRegisterName(int regNum) {
+#if defined(_XBOX) && _XBOX_VER == 200
+  if (regNum >= UNW_PPC64_V32 && regNum <= UNW_PPC64_V127) {
+    static const char *const names[] = {
+        "v32", "v33", "v34", "v35", "v36", "v37", "v38", "v39",
+        "v40", "v41", "v42", "v43", "v44", "v45", "v46", "v47",
+        "v48", "v49", "v50", "v51", "v52", "v53", "v54", "v55",
+        "v56", "v57", "v58", "v59", "v60", "v61", "v62", "v63",
+        "v64", "v65", "v66", "v67", "v68", "v69", "v70", "v71",
+        "v72", "v73", "v74", "v75", "v76", "v77", "v78", "v79",
+        "v80", "v81", "v82", "v83", "v84", "v85", "v86", "v87",
+        "v88", "v89", "v90", "v91", "v92", "v93", "v94", "v95",
+        "v96", "v97", "v98", "v99", "v100", "v101", "v102", "v103",
+        "v104", "v105", "v106", "v107", "v108", "v109", "v110", "v111",
+        "v112", "v113", "v114", "v115", "v116", "v117", "v118", "v119",
+        "v120", "v121", "v122", "v123", "v124", "v125", "v126", "v127"};
+    return names[regNum - UNW_PPC64_V32];
+  }
+#endif
   switch (regNum) {
   case UNW_REG_IP:
     return "ip";

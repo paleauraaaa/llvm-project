@@ -1430,7 +1430,7 @@ unw_word_t UnwindCursor<A, R>::getReg(int regNum) {
 
 template <typename A, typename R>
 void UnwindCursor<A, R>::setReg(int regNum, unw_word_t value) {
-  _registers.setRegister(regNum, (typename A::pint_t)value);
+  _registers.setRegister(regNum, (typename R::reg_t)value);
 }
 
 template <typename A, typename R>

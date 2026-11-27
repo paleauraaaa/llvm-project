@@ -183,7 +183,12 @@ typedef struct unw_cursor_t unw_cursor_t;
 typedef struct unw_addr_space *unw_addr_space_t;
 
 typedef int unw_regnum_t;
+#if defined(_XBOX) && _XBOX_VER == 200
+// The Xbox ABI uses 32-bit addresses but 64-bit general registers.
+typedef uint64_t unw_word_t;
+#else
 typedef uintptr_t unw_word_t;
+#endif
 #if defined(__arm__) && !defined(__ARM_DWARF_EH__) && !defined(__SEH__)
 typedef uint64_t unw_fpreg_t;
 #else
@@ -191,18 +196,18 @@ typedef double unw_fpreg_t;
 #endif
 
 struct unw_proc_info_t {
-  unw_word_t __ptrauth_unwind_upi_startip start_ip; /* start address of function */
-  unw_word_t __ptrauth_unwind_upi_endip end_ip;     /* address after end of function */
-  unw_word_t __ptrauth_unwind_upi_lsda lsda;        /* address of language specific data area, */
+  uintptr_t __ptrauth_unwind_upi_startip start_ip; /* start address of function */
+  uintptr_t __ptrauth_unwind_upi_endip end_ip;     /* address after end of function */
+  uintptr_t __ptrauth_unwind_upi_lsda lsda;        /* address of language specific data area, */
                                                     /* or zero if not used */
 
-  unw_word_t __ptrauth_unwind_upi_handler_intptr handler;
-  unw_word_t  gp;                                   /* not used */
-  unw_word_t __ptrauth_unwind_upi_flags flags;      /* not used */
+  uintptr_t __ptrauth_unwind_upi_handler_intptr handler;
+  uintptr_t  gp;                                    /* not used */
+  uintptr_t __ptrauth_unwind_upi_flags flags;       /* not used */
   uint32_t   format;                                /* compact unwind encoding, or zero if none */
   uint32_t   unwind_info_size;                      /* size of DWARF unwind info, or zero if none */
-  unw_word_t __ptrauth_unwind_upi_info unwind_info; /* address of DWARF unwind info, or zero */
-  unw_word_t __ptrauth_unwind_upi_extra extra;      /* mach_header of mach-o image containing func */
+  uintptr_t __ptrauth_unwind_upi_info unwind_info;  /* address of DWARF unwind info, or zero */
+  uintptr_t __ptrauth_unwind_upi_extra extra;       /* mach_header of mach-o image containing func */
 };
 typedef struct unw_proc_info_t unw_proc_info_t;
 
@@ -596,7 +601,12 @@ enum {
   UNW_PPC64_VS60    = UNW_PPC64_V28,
   UNW_PPC64_VS61    = UNW_PPC64_V29,
   UNW_PPC64_VS62    = UNW_PPC64_V30,
-  UNW_PPC64_VS63    = UNW_PPC64_V31
+  UNW_PPC64_VS63    = UNW_PPC64_V31,
+#if defined(_XBOX) && _XBOX_VER == 200
+  // Xbox-specific register numbers, not PPC64 DWARF register numbers.
+  UNW_PPC64_V32     = 128,
+  UNW_PPC64_V127    = UNW_PPC64_V32 + 95,
+#endif
 };
 
 // 64-bit ARM64 registers

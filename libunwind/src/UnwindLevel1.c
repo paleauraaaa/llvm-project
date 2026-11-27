@@ -156,8 +156,8 @@ unwind_phase1(unw_context_t *uc, unw_cursor_t *cursor, _Unwind_Exception *except
       _LIBUNWIND_TRACE_UNWINDING(
           "unwind_phase1(ex_obj=%p): pc=0x%" PRIxPTR ", start_ip=0x%" PRIxPTR
           ", func=%s, lsda=0x%" PRIxPTR ", personality=0x%" PRIxPTR "",
-          (void *)exception_object, pc, frameInfo.start_ip, functionName,
-          frameInfo.lsda, frameInfo.handler);
+          (void *)exception_object, (uintptr_t)pc, frameInfo.start_ip,
+          functionName, frameInfo.lsda, frameInfo.handler);
     }
 #endif
 
@@ -271,7 +271,7 @@ unwind_phase2(unw_context_t *uc, unw_cursor_t *cursor,
                                  ", func=%s, sp=0x%" PRIxPTR ", lsda=0x%" PRIxPTR
                                  ", personality=0x%" PRIxPTR,
                                  (void *)exception_object, frameInfo.start_ip,
-                                 functionName, sp, frameInfo.lsda,
+                                 functionName, (uintptr_t)sp, frameInfo.lsda,
                                  frameInfo.handler);
     }
 #endif
@@ -327,7 +327,8 @@ unwind_phase2(unw_context_t *uc, unw_cursor_t *cursor,
           _LIBUNWIND_TRACE_UNWINDING("unwind_phase2(ex_obj=%p): re-entering "
                                      "user code with ip=0x%" PRIxPTR
                                      ", sp=0x%" PRIxPTR,
-                                     (void *)exception_object, pc, sp);
+                                     (void *)exception_object, (uintptr_t)pc,
+                                     (uintptr_t)sp);
         }
 
         __unw_phase2_resume(cursor, framesWalked);
@@ -594,8 +595,8 @@ _Unwind_GetGR(struct _Unwind_Context *context, int index) {
   unw_cursor_t *cursor = (unw_cursor_t *)context;
   unw_word_t result;
   __unw_get_reg(cursor, index, &result);
-  _LIBUNWIND_TRACE_API("_Unwind_GetGR(context=%p, reg=%d) => 0x%" PRIxPTR,
-                       (void *)context, index, result);
+  _LIBUNWIND_TRACE_API("_Unwind_GetGR(context=%p, reg=%d) => 0x%" PRIx64,
+                       (void *)context, index, (uint64_t)result);
   return (uintptr_t)result;
 }
 
@@ -627,7 +628,7 @@ _LIBUNWIND_EXPORT uintptr_t _Unwind_GetIP(struct _Unwind_Context *context) {
 #endif
 
   _LIBUNWIND_TRACE_API("_Unwind_GetIP(context=%p) => 0x%" PRIxPTR,
-                       (void *)context, result);
+                       (void *)context, (uintptr_t)result);
   return (uintptr_t)result;
 }
 

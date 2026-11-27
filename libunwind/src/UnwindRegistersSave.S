@@ -411,7 +411,22 @@ LnoR2Fix:
   mfvrsave    0
   std   0,  PPC64_OFFS_VRSAVE(3)
 
-#if defined(__VSX__)
+#if defined(_XBOX) && _XBOX_VER == 200
+  .irp n, 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31
+    stfd \n, (PPC64_OFFS_FP + \n * 16)(3)
+  .endr
+  // The Xbox ABI does not provide an ELF red zone.
+  stwu  1, -64(1)
+  addi  4, 1, 16
+  .irp n, PPC64_XBOX_VMX_REGISTERS
+    stvx128 \n, 0, 4
+    ld      5, 0(4)
+    std     5, (PPC64_OFFS_V + \n * 16)(3)
+    ld      5, 8(4)
+    std     5, (PPC64_OFFS_V + \n * 16 + 8)(3)
+  .endr
+  addi  1, 1, 64
+#elif defined(__VSX__)
   // save VS registers
   // (note that this also saves floating point registers and V registers,
   // because part of VS is mapped to these registers)

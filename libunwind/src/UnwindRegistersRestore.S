@@ -146,7 +146,11 @@ DEFINE_LIBUNWIND_FUNCTION(__libunwind_Registers_x86_64_jumpto)
 
 #elif defined(__powerpc64__)
 
+#if defined(_XBOX) && _XBOX_VER == 200
+DEFINE_LIBUNWIND_FUNCTION(__libunwind_Registers_ppc64_jumpto)
+#else
 DEFINE_LIBUNWIND_FUNCTION(_ZN9libunwind15Registers_ppc646jumptoEv)
+#endif
 //
 // void libunwind::Registers_ppc64::jumpto()
 //
@@ -192,7 +196,21 @@ DEFINE_LIBUNWIND_FUNCTION(_ZN9libunwind15Registers_ppc646jumptoEv)
   PPC64_LR(30)
   PPC64_LR(31)
 
-#if defined(__VSX__)
+#if defined(_XBOX) && _XBOX_VER == 200
+  .irp n, 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31
+    lfd \n, (PPC64_OFFS_FP + \n * 16)(3)
+  .endr
+  stwu  1, -64(1)
+  addi  4, 1, 16
+  .irp n, PPC64_XBOX_VMX_REGISTERS
+    ld      0, (PPC64_OFFS_V + \n * 16)(3)
+    std     0, 0(4)
+    ld      0, (PPC64_OFFS_V + \n * 16 + 8)(3)
+    std     0, 8(4)
+    lvx128  \n, 0, 4
+  .endr
+  addi  1, 1, 64
+#elif defined(__VSX__)
 
   // restore VS registers
   // (note that this also restores floating point registers and V registers,
@@ -440,7 +458,16 @@ Ldone  ## n:
 Lnovec:
   ld    0, PPC64_OFFS_CR(3)
   mtcr  0
+#if defined(_XBOX) && _XBOX_VER == 200
+  ld    0, PPC64_OFFS_XER(3)
+  mtxer 0
+  ld    0, PPC64_OFFS_LR(3)
+  mtlr  0
+  ld    0, PPC64_OFFS_VRSAVE(3)
+  mtvrsave 0
+#endif
   ld    0, PPC64_OFFS_SRR0(3)
+  // CTR is volatile and is used to transfer control to the saved PC.
   mtctr 0
 
 #if defined(_AIX)

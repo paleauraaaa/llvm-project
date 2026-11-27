@@ -56,8 +56,9 @@ private:
   static pint_t evaluateExpression(pint_t expression, A &addressSpace,
                                    const R &registers,
                                    pint_t initialStackValue);
-  static pint_t getSavedRegister(A &addressSpace, const R &registers,
-                                 pint_t cfa, const RegisterLocation &savedReg);
+  static typename R::reg_t getSavedRegister(A &addressSpace, const R &registers,
+                                           pint_t cfa,
+                                           const RegisterLocation &savedReg);
   static double getSavedFloatRegister(A &addressSpace, const R &registers,
                                   pint_t cfa, const RegisterLocation &savedReg);
   static v128 getSavedVectorRegister(A &addressSpace, const R &registers,
@@ -96,19 +97,20 @@ template <typename R> uint64_t getSparcWCookie(const R &, long) {
 }
 
 template <typename A, typename R>
-typename A::pint_t DwarfInstructions<A, R>::getSavedRegister(
+typename R::reg_t DwarfInstructions<A, R>::getSavedRegister(
     A &addressSpace, const R &registers, pint_t cfa,
     const RegisterLocation &savedReg) {
   switch (savedReg.location) {
   case CFI_Parser<A>::kRegisterInCFA:
-    return (pint_t)addressSpace.getRegister(cfa + (pint_t)savedReg.value);
+    return (typename R::reg_t)addressSpace.getRegister(cfa +
+                                                       (pint_t)savedReg.value);
 
   case CFI_Parser<A>::kRegisterInCFADecrypt: // sparc64 specific
     return (pint_t)(addressSpace.getP(cfa + (pint_t)savedReg.value) ^
            getSparcWCookie(registers, 0));
 
   case CFI_Parser<A>::kRegisterAtExpression:
-    return (pint_t)addressSpace.getRegister(evaluateExpression(
+    return (typename R::reg_t)addressSpace.getRegister(evaluateExpression(
         (pint_t)savedReg.value, addressSpace, registers, cfa));
 
   case CFI_Parser<A>::kRegisterIsExpression:

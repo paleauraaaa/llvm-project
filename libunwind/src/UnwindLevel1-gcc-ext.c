@@ -235,7 +235,7 @@ _LIBUNWIND_EXPORT uintptr_t _Unwind_GetCFA(struct _Unwind_Context *context) {
   unw_word_t result;
   __unw_get_reg(cursor, UNW_REG_SP, &result);
   _LIBUNWIND_TRACE_API("_Unwind_GetCFA(context=%p) => 0x%" PRIxPTR,
-                       (void *)context, result);
+                       (void *)context, (uintptr_t)result);
   return (uintptr_t)result;
 }
 
