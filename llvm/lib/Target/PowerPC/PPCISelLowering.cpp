@@ -6104,6 +6104,13 @@ PPCTargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
       !isTailCall)
     Callee = LowerGlobalAddress(Callee, DAG);
 
+  // An unresolved weak function has address zero, which a direct REL24
+  // branch from an Xbox image cannot reach. Materialize its address instead.
+  if (Subtarget.isTargetXbox360() && !isPatchPoint)
+    if (auto *GA = dyn_cast<GlobalAddressSDNode>(Callee))
+      if (GA->getGlobal()->hasExternalWeakLinkage())
+        Callee = LowerGlobalAddress(Callee, DAG);
+
   CallFlags CFlags(
       CallConv, isTailCall, isVarArg, isPatchPoint,
       isIndirectCall(Callee, DAG, Subtarget, isPatchPoint),

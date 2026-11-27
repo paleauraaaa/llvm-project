@@ -1565,6 +1565,12 @@ bool PPCFastISel::fastLowerCall(CallLoweringInfo &CLI) {
   if (!Callee && !Symbol)
     return false;
 
+  // SelectionDAG materializes Xbox weak function addresses for indirect calls.
+  if (Subtarget->isTargetXbox360() && !CLI.IsPatchPoint)
+    if (const auto *GV = dyn_cast_or_null<GlobalValue>(Callee))
+      if (GV->hasExternalWeakLinkage())
+        return false;
+
   // Allow SelectionDAG isel to handle tail calls and long calls.
   if (IsTailCall || Subtarget->useLongCalls())
     return false;
