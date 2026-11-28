@@ -489,6 +489,89 @@ Lnovec:
 #endif
   bctr
 
+#if defined(_XBOX) && _XBOX_VER == 200
+// The first 80 bytes are the outgoing linkage and argument area.
+#define XBOX_SEH_FRAME_SIZE 1440
+#define XBOX_SEH_SCRATCH 80
+#define XBOX_SEH_GPR(n) (96 + ((n) - 14) * 8)
+#define XBOX_SEH_FPR(n) (240 + ((n) - 14) * 8)
+#define XBOX_SEH_VR(n) (384 + ((n) - 64) * 16)
+#define XBOX_PDATA_INSTRUCTION_SIZE 4
+#define XBOX_PDATA_LENGTH_SHIFT 8
+#define XBOX_PDATA_LENGTH_MASK 0x3fffff
+#define XBOX_PDATA_PROLOGUE_MASK 0xff
+#define XBOX_PDATA_POWERPC 0x40000000
+
+// int __libunwind_xbox_seh_call(registers, funclet, argument, parent)
+// The register snapshot belongs to the target frame, not its caller.
+DEFINE_LIBUNWIND_FUNCTION(__libunwind_xbox_seh_call)
+.Lxbox_seh_call_begin:
+  mflr  0
+  stw   0, -8(1)
+  mfcr  0
+  stw   0, -12(1)
+  stwu  1, -XBOX_SEH_FRAME_SIZE(1)
+  .irp n, 14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31
+    std   \n, XBOX_SEH_GPR(\n)(1)
+    stfd  \n, XBOX_SEH_FPR(\n)(1)
+  .endr
+  .irp n, PPC64_XBOX_NONVOLATILE_VMX_REGISTERS
+    addi    0, 1, XBOX_SEH_VR(\n)
+    stvx128 \n, 0, 0
+  .endr
+.Lxbox_seh_call_prologue_end:
+  mr    8, 4
+  mr    9, 5
+  mr    10, 6
+  .irp n, 14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31
+    ld    \n, (8 * (\n + 2))(3)
+    lfd   \n, (PPC64_OFFS_FP + \n * 16)(3)
+  .endr
+  .irp n, PPC64_XBOX_NONVOLATILE_VMX_REGISTERS
+    // The register snapshot's vector slots need not be 16-byte aligned.
+    ld      0, (PPC64_OFFS_V + \n * 16)(3)
+    std     0, XBOX_SEH_SCRATCH(1)
+    ld      0, (PPC64_OFFS_V + \n * 16 + 8)(3)
+    std     0, (XBOX_SEH_SCRATCH + 8)(1)
+    addi    0, 1, XBOX_SEH_SCRATCH
+    lvx128  \n, 0, 0
+  .endr
+  ld    0, PPC64_OFFS_CR(3)
+  mtcrf 0x3c, 0
+  mtctr 8
+  mr    3, 9
+  mr    12, 10
+  bctrl
+
+  .irp n, PPC64_XBOX_NONVOLATILE_VMX_REGISTERS
+    addi    0, 1, XBOX_SEH_VR(\n)
+    lvx128  \n, 0, 0
+  .endr
+  .irp n, 14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31
+    ld    \n, XBOX_SEH_GPR(\n)(1)
+    lfd   \n, XBOX_SEH_FPR(\n)(1)
+  .endr
+  lwz   0, (XBOX_SEH_FRAME_SIZE - 12)(1)
+  mtcrf 0x3c, 0
+  lwz   0, (XBOX_SEH_FRAME_SIZE - 8)(1)
+  mtlr  0
+  addi  1, 1, XBOX_SEH_FRAME_SIZE
+  blr
+.Lxbox_seh_call_end:
+
+  .if ((.Lxbox_seh_call_end - .Lxbox_seh_call_begin) / XBOX_PDATA_INSTRUCTION_SIZE) > XBOX_PDATA_LENGTH_MASK
+    .error "Xbox SEH trampoline exceeds .pdata function length"
+  .endif
+  .if ((.Lxbox_seh_call_prologue_end - .Lxbox_seh_call_begin) / XBOX_PDATA_INSTRUCTION_SIZE) > XBOX_PDATA_PROLOGUE_MASK
+    .error "Xbox SEH trampoline exceeds .pdata prologue length"
+  .endif
+  .section .pdata,"dr"
+  .p2align 2
+  .long .Lxbox_seh_call_begin
+  .long (XBOX_PDATA_POWERPC | ((.Lxbox_seh_call_end - .Lxbox_seh_call_begin) / XBOX_PDATA_INSTRUCTION_SIZE << XBOX_PDATA_LENGTH_SHIFT) | ((.Lxbox_seh_call_prologue_end - .Lxbox_seh_call_begin) / XBOX_PDATA_INSTRUCTION_SIZE))
+  .text
+#endif
+
 #elif defined(__powerpc__)
 
 DEFINE_LIBUNWIND_FUNCTION(_ZN9libunwind13Registers_ppc6jumptoEv)

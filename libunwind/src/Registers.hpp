@@ -1185,6 +1185,8 @@ inline const char *Registers_ppc::getRegisterName(int regNum) {
 #if defined(_XBOX) && _XBOX_VER == 200
 class Registers_ppc64;
 extern "C" void __libunwind_Registers_ppc64_jumpto(Registers_ppc64 *);
+extern "C" int __libunwind_xbox_seh_call(const Registers_ppc64 *, uintptr_t,
+                                         uintptr_t, uintptr_t);
 #endif
 /// Registers_ppc64 holds the register state of a thread in a 64-bit PowerPC
 /// process.
