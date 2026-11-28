@@ -106,6 +106,23 @@ _LIBUNWIND_HIDDEN int __unw_xbox_get_seh_frame(unw_cursor_t *cursor,
   return co->getXboxSEHFrame(*frame);
 }
 
+_LIBUNWIND_HIDDEN int __unw_xbox_transfer_seh_handler(unw_cursor_t *cursor,
+                                                      uintptr_t controlPC,
+                                                      uint32_t scopeIndex,
+                                                      uint32_t exceptionCode) {
+  if (!cursor)
+    return UNW_EINVAL;
+  auto *co =
+      reinterpret_cast<UnwindCursor<LocalAddressSpace, Registers_ppc64> *>(
+          cursor);
+  UnwindCursor<LocalAddressSpace, Registers_ppc64> target(*co);
+  int result =
+      target.prepareXboxSEHHandler(controlPC, scopeIndex, exceptionCode);
+  if (result != UNW_ESUCCESS)
+    return result;
+  return __unw_resume(reinterpret_cast<unw_cursor_t *>(&target));
+}
+
 _LIBUNWIND_HIDDEN int
 __unw_xbox_get_seh_cleanup_parent(unw_cursor_t *cursor, uintptr_t *parent) {
   if (!cursor || !parent)

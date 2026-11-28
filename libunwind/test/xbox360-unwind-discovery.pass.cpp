@@ -133,7 +133,55 @@ static __attribute__((noinline)) void testRestoredNonvolatile() {
 
 #if defined(LIBUNWIND_TEST_XBOX_SEH_FIXTURE)
 extern "C" [[noreturn]] int __C_specific_handler(...) { abort(); }
+extern "C" unsigned long _exception_code(void);
+#pragma intrinsic(_exception_code)
 extern "C" int sehFixture(volatile int *);
+extern "C" int sehTransferFixture();
+
+static __attribute__((noinline)) void transferToHandler() {
+  unw_context_t context;
+  unw_cursor_t cursor;
+  unw_proc_info_t info;
+  unw_word_t ip, sp, r3, fp;
+  assert(__unw_getcontext(&context) == UNW_ESUCCESS);
+  assert(__unw_init_local(&cursor, &context) == UNW_ESUCCESS);
+  assert(__unw_step(&cursor) == UNW_STEP_SUCCESS);
+  assert(__unw_get_proc_info(&cursor, &info) == UNW_ESUCCESS);
+  assert(info.start_ip == reinterpret_cast<uintptr_t>(&sehTransferFixture));
+  assert(__unw_get_reg(&cursor, UNW_REG_IP, &ip) == UNW_ESUCCESS);
+  assert(__unw_get_reg(&cursor, UNW_REG_SP, &sp) == UNW_ESUCCESS);
+  assert(__unw_get_reg(&cursor, UNW_PPC64_R3, &r3) == UNW_ESUCCESS);
+  assert(__unw_get_reg(&cursor, UNW_PPC64_R31, &fp) == UNW_ESUCCESS);
+  assert(__unw_xbox_transfer_seh_handler(nullptr, ip - 1, 0, 0) == UNW_EINVAL);
+  assert(__unw_xbox_transfer_seh_handler(&cursor, ip - 1, UINT32_MAX, 0) !=
+         UNW_ESUCCESS);
+  assert(__unw_xbox_transfer_seh_handler(&cursor, ip + 4, 0, 0) !=
+         UNW_ESUCCESS);
+  assert(__unw_set_reg(&cursor, UNW_PPC64_R31, 0) == UNW_ESUCCESS);
+  assert(__unw_xbox_transfer_seh_handler(&cursor, ip - 1, 0, 0) ==
+         UNW_EBADFRAME);
+  assert(__unw_set_reg(&cursor, UNW_PPC64_R31, fp) == UNW_ESUCCESS);
+  unw_word_t value;
+  assert(__unw_get_reg(&cursor, UNW_REG_IP, &value) == UNW_ESUCCESS &&
+         value == ip);
+  assert(__unw_get_reg(&cursor, UNW_REG_SP, &value) == UNW_ESUCCESS &&
+         value == sp);
+  assert(__unw_get_reg(&cursor, UNW_PPC64_R3, &value) == UNW_ESUCCESS &&
+         value == r3);
+  int result = __unw_xbox_transfer_seh_handler(&cursor, ip - 1, 0, 0x20474343);
+  DbgPrint("xbox360 handler transfer failed: %d\n", result);
+  abort();
+}
+
+extern "C" __attribute__((noinline)) int sehTransferFixture() {
+  __try {
+    transferToHandler();
+    abort();
+  } __except (1) {
+    return (int)_exception_code();
+  }
+}
+
 static _Unwind_Reason_Code stopAtNativeFrame(
     int, _Unwind_Action, _Unwind_Exception_Class, _Unwind_Exception *,
     _Unwind_Context *context, void *arg) {
@@ -333,6 +381,7 @@ static __attribute__((noinline)) void testLoaderIntegration() {
   assert(scope.filterOrFinally && scope.handler);
   volatile int value = 0;
   assert(sehFixture(&value) == 0 && value == 1);
+  assert(sehTransferFixture() == 0x20474343);
 #endif
 
   makeImage();
@@ -372,6 +421,18 @@ static __attribute__((noinline)) void testLoaderIntegration() {
   assert(sehFrame.parent == imageBase + 0x420 &&
          sehFrame.parent_frame_size == 16 &&
          sehFrame.flags == XboxSEH::CHandler);
+  unw_word_t originalSyntheticIP;
+  assert(__unw_get_reg(&cursor, UNW_REG_IP, &originalSyntheticIP) ==
+         UNW_ESUCCESS);
+  putBE32(image + 0x910, 0);
+  assert(__unw_xbox_transfer_seh_handler(&cursor, imageBase + 0x424, 0, 1) ==
+         UNW_EBADFRAME);
+  putBE32(image + 0x910, XboxSEH::CHandler);
+  assert(__unw_xbox_transfer_seh_handler(&cursor, imageBase + 0x424, 0, 1) ==
+         UNW_EBADFRAME);
+  unw_word_t syntheticIP;
+  assert(__unw_get_reg(&cursor, UNW_REG_IP, &syntheticIP) == UNW_ESUCCESS &&
+         syntheticIP == originalSyntheticIP);
   put32(image + Sections + 88, 40);
   putBE32(image + 0x808, imageBase + 0x440);
   putBE32(image + 0x80c, 0x40000400);
@@ -444,6 +505,21 @@ int main() {
   XboxUnwindSection pdata = {}, seh = {};
   assert(findXboxPdata(image, ImageSize, 0x400, pdata, nullptr, &seh));
   assert(seh.offset == 0 && seh.length == 0);
+  put16(image + Nt + 6, 3);
+  memcpy(image + Sections + 80, ".rdata", 6);
+  put32(image + Sections + 88, 0x80);
+  put32(image + Sections + 92, 0xa00);
+  put32(image + Sections + 116, 0x40000040);
+  XboxUnwindSection data = {};
+  assert(findXboxPdata(image, ImageSize, 0x400, pdata, nullptr, nullptr,
+                       0xa7f, &data));
+  assert(data.offset == 0xa00 && data.length == 0x80);
+  assert(!findXboxPdata(image, ImageSize, 0x400, pdata, nullptr, nullptr,
+                        0xa80, &data));
+  put32(image + Sections + 116, 0x60000020);
+  assert(!findXboxPdata(image, ImageSize, 0x400, pdata, nullptr, nullptr,
+                        0xa00, &data));
+  makeImage();
   put16(image + Nt + 6, 3);
   memcpy(image + Sections + 80, ".xseh", 5);
   put32(image + Sections + 88, 20);

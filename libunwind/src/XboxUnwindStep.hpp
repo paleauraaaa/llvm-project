@@ -262,7 +262,8 @@ public:
     values[SP] = {Value::Stack, 0};
   }
 
-  int step();
+  int step(bool requireEstablished = false,
+           const uint32_t *parentFrameSize = nullptr);
 
 private:
   A &as;
@@ -686,7 +687,9 @@ bool Interpreter<A, R>::restore(uint32_t cfa) {
   return true;
 }
 
-template <typename A, typename R> int Interpreter<A, R>::step() {
+template <typename A, typename R>
+int Interpreter<A, R>::step(bool requireEstablished,
+                            const uint32_t *parentFrameSize) {
   uint64_t rawPC = regs.getIP();
   if (rawPC > UINT32_MAX || (rawPC & 3) || rawPC < info.start_ip ||
       rawPC > info.end_ip)
@@ -700,6 +703,8 @@ template <typename A, typename R> int Interpreter<A, R>::step() {
   uint32_t prologueSize = (info.format & XboxPdata::PrologueLengthMask) *
                           XboxPdata::InstructionSize;
   uint32_t prologueEnd = uint32_t(info.start_ip) + prologueSize;
+  if (requireEstablished && pc < prologueEnd)
+    return UNW_EBADFRAME;
   uint32_t prologuePC = pc < prologueEnd ? pc : prologueEnd;
   for (uint32_t address = uint32_t(info.start_ip); address < prologuePC;
        address += XboxPdata::InstructionSize) {
@@ -728,6 +733,8 @@ template <typename A, typename R> int Interpreter<A, R>::step() {
              isEpilogueInstruction({as.get32(begin - 4)}))
         begin -= 4;
       if (begin <= pc) {
+        if (requireEstablished)
+          return UNW_EBADFRAME;
         bodyEnd = begin;
         for (uint32_t address = begin; address < pc; address += 4)
           if (!executeEpilogue({as.get32(address)}))
@@ -740,15 +747,20 @@ template <typename A, typename R> int Interpreter<A, R>::step() {
       return UNW_EUNSPEC;
     // Outside a recognized epilogue, a changed stack or frame pointer makes
     // the prologue's symbolic frame layout unreliable.
+    // Cleanup funclets use r31 for the parent rather than their own frame.
     bool hasFramePointer = values[FP].kind == Value::Stack;
     for (uint32_t address = prologueEnd; address < bodyEnd;
          address += XboxPdata::InstructionSize) {
       Instruction ins{as.get32(address)};
       if ((!hasFramePointer && mayWriteRegister(ins, SP)) ||
-          (hasFramePointer && mayWriteRegister(ins, FP)))
+          ((hasFramePointer || (requireEstablished && !parentFrameSize)) &&
+           mayWriteRegister(ins, FP)))
         return UNW_EUNSPEC;
     }
   }
+  if (parentFrameSize && (values[FP].kind != Value::Stack ||
+                          values[FP].value != -int64_t(*parentFrameSize)))
+    return UNW_EBADFRAME;
   unsigned base = values[FP].kind == Value::Stack ? FP : SP;
   if (values[base].kind != Value::Stack)
     return UNW_EBADFRAME;

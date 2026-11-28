@@ -64,6 +64,12 @@ typedef struct {
 // Returns UNW_ENOINFO for frames without opt-in metadata and UNW_EBADFRAME
 // for malformed or unsupported metadata.
 extern int __unw_xbox_get_seh_frame(unw_cursor_t *, __unw_xbox_seh_frame *);
+// The control PC is the exact instruction address, or a return address minus
+// one. Transfers to the selected active C SEH handler; returns only on error
+// without modifying the cursor. The caller must keep the frame and module
+// alive, and is responsible for cleanup and exception ownership.
+extern int __unw_xbox_transfer_seh_handler(unw_cursor_t *, uintptr_t, uint32_t,
+                                           uint32_t);
 // Requires a cursor on a cleanup directly invoked by the SEH trampoline.
 // Returns an error without modifying the cursor or output if it cannot prove
 // that relationship.

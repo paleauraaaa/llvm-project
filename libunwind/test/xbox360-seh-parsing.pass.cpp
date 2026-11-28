@@ -168,6 +168,32 @@ int main() {
   put32(0x608, Base + 0x108);
   put32(0x60c, 0);
   assert(!readXboxSEHScope(image + 0x600, 36, 0, scope));
+
+  put32(0x60c, 0x83000100);
+  put32(0x614, Base + 0x208);
+  put32(0x618, Base + 0x20c);
+  put32(0x620, Base + 0x20c);
+  XboxRuntimeFunction frame = {Base + 0x200, Base + 0x210, 8, 0, 0, 0, 0};
+  uint32_t handler = 0;
+  assert(
+      findXboxSEHHandler(image + 0x600, 36, frame, Base + 0x208, 1, handler));
+  assert(handler == Base + 0x20c);
+  assert(
+      !findXboxSEHHandler(image + 0x600, 35, frame, Base + 0x208, 1, handler));
+  assert(
+      !findXboxSEHHandler(image + 0x600, 36, frame, Base + 0x208, 2, handler));
+  assert(
+      !findXboxSEHHandler(image + 0x600, 36, frame, Base + 0x20c, 1, handler));
+  put32(0x604, Base + 0x208);
+  put32(0x608, Base + 0x20c);
+  assert(
+      !findXboxSEHHandler(image + 0x600, 36, frame, Base + 0x208, 0, handler));
+  put32(0x620, Base + 0x210);
+  assert(
+      !findXboxSEHHandler(image + 0x600, 36, frame, Base + 0x208, 1, handler));
+  put32(0x620, Base + 0x209);
+  assert(
+      !findXboxSEHHandler(image + 0x600, 36, frame, Base + 0x208, 1, handler));
 #if defined(_XBOX) && _XBOX_VER == 200
   DbgPrint("xbox360 seh parsing: PASS\n");
 #endif

@@ -142,6 +142,19 @@ static void testBodyAndPartialPrologue() {
   regs.lr = Code + 36;
   regs.cr = 0xff0000ff;
   regs.ip = Code + 36;
+  Registers body = regs;
+  body.ip = Code + 32;
+  unw_proc_info_t info = function(10, 8);
+  XboxFrame::Interpreter<Memory, Registers> established(memory, body, info,
+                                                        Code, 0x1000);
+  uint32_t frameSize = 128;
+  assert(established.step(true, &frameSize) == UNW_STEP_SUCCESS);
+  body = regs;
+  body.ip = Code + 32;
+  XboxFrame::Interpreter<Memory, Registers> wrongSize(memory, body, info, Code,
+                                                      0x1000);
+  frameSize = 144;
+  assert(wrongSize.step(true, &frameSize) == UNW_EBADFRAME);
   assert(step(memory, regs, function(10, 8)) == UNW_STEP_SUCCESS);
   assert(regs.ip == ReturnPC && regs.lr == ReturnPC);
   assert(regs.gpr[1] == CallerSP);
@@ -156,6 +169,11 @@ static void testBodyAndPartialPrologue() {
   partial.lr = ReturnPC;
   partial.gpr[12] = ReturnPC;
   partial.ip = Code + 4;
+  Registers rejected = partial;
+  XboxFrame::Interpreter<Memory, Registers> prologue(memory, rejected, info,
+                                                     Code, 0x1000);
+  assert(prologue.step(true) == UNW_EBADFRAME);
+  assert(memcmp(&rejected, &partial, sizeof(partial)) == 0);
   assert(step(memory, partial, function(10, 8)) == UNW_STEP_SUCCESS);
   assert(partial.gpr[1] == CallerSP && partial.gpr[31] == 31);
   assert(partial.ip == ReturnPC);
@@ -231,10 +249,47 @@ static void testEpilogue() {
     regs.gpr[31] = pc > 8 ? 0x12345678 : 31;
     regs.lr = pc > 7 ? ReturnPC : Code + 20;
     regs.ip = Code + 4 * pc;
+    Registers rejected = regs;
+    unw_proc_info_t info = function(10, 4);
+    XboxFrame::Interpreter<Memory, Registers> epilogue(memory, rejected, info,
+                                                       Code, 0x1000);
+    assert(epilogue.step(true) == UNW_EBADFRAME);
+    assert(memcmp(&rejected, &regs, sizeof(regs)) == 0);
     assert(step(memory, regs, function(10, 4)) == UNW_STEP_SUCCESS);
     assert(regs.ip == ReturnPC && regs.gpr[1] == CallerSP);
     assert(regs.gpr[31] == 0x12345678);
   }
+}
+
+static void testCleanupParentFramePointer() {
+  const uint32_t ins[] = {
+      0xfbe1fff0, // std r31,-16(r1)
+      0x3becff80, // addi r31,r12,-128
+      0x9421ffc0, // stwu r1,-64(r1)
+      0x48000101, // body call
+      0x3bff0010, // addi r31,r31,16
+      0x48000101, // body call
+      0x4e800020,
+  };
+  static Memory memory;
+  putInstructions(memory, ins, 7);
+  memory.put64(CallerSP - 16, 0x1234);
+  Registers regs;
+  for (unsigned i = 14; i != 32; ++i)
+    regs.gpr[i] = i;
+  regs.gpr[1] = CallerSP - 64;
+  regs.lr = ReturnPC;
+  regs.ip = Code + 12;
+  unw_proc_info_t info = function(7, 3);
+  Registers before = regs;
+  XboxFrame::Interpreter<Memory, Registers> valid(memory, regs, info, Code,
+                                                   0x1000);
+  assert(valid.step(true) == UNW_STEP_SUCCESS);
+  regs = before;
+  regs.ip = Code + 20;
+  XboxFrame::Interpreter<Memory, Registers> changed(memory, regs, info, Code,
+                                                     0x1000);
+  assert(changed.step(true) == UNW_EUNSPEC);
 }
 
 static void testUnsupportedState() {
@@ -388,6 +443,7 @@ int main() {
   testBodyAndPartialPrologue();
   testVectorAndHelper();
   testEpilogue();
+  testCleanupParentFramePointer();
   testUnsupportedState();
   testBodyComparisons();
   testDynamicFrame();

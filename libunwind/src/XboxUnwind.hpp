@@ -60,6 +60,7 @@ constexpr size_t SectionVirtualSizeOffset = 8;
 constexpr size_t SectionVirtualAddressOffset = 12;
 constexpr size_t SectionCharacteristicsOffset = 36;
 constexpr uint32_t SectionExecutable = 0x20000000;
+constexpr uint32_t SectionReadable = 0x40000000;
 } // namespace XboxPE
 
 struct XboxUnwindSection {
@@ -229,11 +230,32 @@ inline bool readXboxSEHScope(const uint8_t *table, size_t size, uint32_t index,
   return true;
 }
 
+inline bool findXboxSEHHandler(const uint8_t *table, size_t size,
+                               const XboxRuntimeFunction &function,
+                               uint32_t controlPC, uint32_t index,
+                               uint32_t &handler) {
+  XboxSEHScope scope;
+  if (function.start >= function.end ||
+      function.prologueSize > function.end - function.start ||
+      !readXboxSEHScope(table, size, index, scope) || !scope.handler ||
+      (scope.begin & 3) || (scope.end & 3) || (scope.handler & 3) ||
+      scope.begin < function.start + function.prologueSize ||
+      scope.end > function.end || controlPC < scope.begin ||
+      controlPC >= scope.end ||
+      scope.handler < function.start + function.prologueSize ||
+      scope.handler >= function.end)
+    return false;
+  handler = scope.handler;
+  return true;
+}
+
 // PE headers are little-endian even though the Xbox 360 CPU is big-endian.
 inline bool findXboxPdata(const uint8_t *image, size_t mappedSize,
                           uintptr_t pcOffset, XboxUnwindSection &result,
                           XboxUnwindSection *codeResult = nullptr,
-                          XboxUnwindSection *sehResult = nullptr) {
+                          XboxUnwindSection *sehResult = nullptr,
+                          uintptr_t dataOffset = 0,
+                          XboxUnwindSection *dataResult = nullptr) {
   if (!image || mappedSize < XboxPE::DosHeaderSize || image[0] != 'M' ||
       image[1] != 'Z')
     return false;
@@ -267,6 +289,7 @@ inline bool findXboxPdata(const uint8_t *image, size_t mappedSize,
   XboxUnwindSection pdata = {0, 0};
   XboxUnwindSection code = {0, 0};
   XboxUnwindSection seh = {0, 0};
+  XboxUnwindSection data = {0, 0};
   bool foundCode = false;
   for (uint16_t i = 0; i != count; ++i) {
     const uint8_t *section =
@@ -277,11 +300,18 @@ inline bool findXboxPdata(const uint8_t *image, size_t mappedSize,
     if (offset > imageSize || size > imageSize - offset ||
         (size && offset < headersSize))
       return false;
-    if ((xboxReadLE32(section + XboxPE::SectionCharacteristicsOffset) &
-         XboxPE::SectionExecutable) &&
-        pcOffset >= offset && pcOffset - offset < size) {
+    uint32_t characteristics =
+        xboxReadLE32(section + XboxPE::SectionCharacteristicsOffset);
+    if ((characteristics & XboxPE::SectionExecutable) && pcOffset >= offset &&
+        pcOffset - offset < size) {
       foundCode = true;
       code = {offset, size};
+    }
+    if (dataResult && dataOffset >= offset && dataOffset - offset < size) {
+      if (data.length || !(characteristics & XboxPE::SectionReadable) ||
+          (characteristics & XboxPE::SectionExecutable))
+        return false;
+      data = {offset, size};
     }
     if (memcmp(section, ".pdata\0\0", XboxPE::SectionNameSize) == 0) {
       if (pdata.length || !size)
@@ -295,13 +325,15 @@ inline bool findXboxPdata(const uint8_t *image, size_t mappedSize,
       seh = {offset, size};
     }
   }
-  if (!foundCode || !pdata.length)
+  if (!foundCode || !pdata.length || (dataResult && !data.length))
     return false;
   result = pdata;
   if (codeResult)
     *codeResult = code;
   if (sehResult)
     *sehResult = seh;
+  if (dataResult)
+    *dataResult = data;
   return true;
 }
 
