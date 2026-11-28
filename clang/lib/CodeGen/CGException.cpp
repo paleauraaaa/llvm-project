@@ -1734,6 +1734,26 @@ struct PerformSEHTryExit final : EHScopeStack::Cleanup {
   void Emit(CodeGenFunction &, Flags) override {}
 };
 
+struct ReleaseXboxSEHException final : EHScopeStack::Cleanup {
+  Address Exception;
+  explicit ReleaseXboxSEHException(Address Exception) : Exception(Exception) {}
+
+  void Emit(CodeGenFunction &CGF, Flags) override {
+    llvm::Value *Object = CGF.Builder.CreateLoad(Exception);
+    llvm::BasicBlock *Release = CGF.createBasicBlock("seh.release");
+    llvm::BasicBlock *Continue = CGF.createBasicBlock("seh.release.cont");
+    CGF.Builder.CreateCondBr(CGF.Builder.CreateIsNotNull(Object), Release,
+                             Continue);
+    CGF.EmitBlock(Release);
+    llvm::FunctionType *Ty =
+        llvm::FunctionType::get(CGF.VoidTy, {CGF.Int8PtrTy}, false);
+    llvm::FunctionCallee Delete =
+        CGF.CGM.getModule().getOrInsertFunction("_Unwind_DeleteException", Ty);
+    CGF.EmitRuntimeCallOrInvoke(Delete, {Object});
+    CGF.EmitBlock(Continue);
+  }
+};
+
 struct PerformSEHFinally final : EHScopeStack::Cleanup {
   llvm::Function *OutlinedFinally;
   PerformSEHFinally(llvm::Function *OutlinedFinally)
@@ -2372,8 +2392,24 @@ void CodeGenFunction::ExitSEHTryStmt(const SEHTryStmt &S) {
     Builder.CreateStore(Code, SEHCodeSlotStack.back());
   }
 
+  bool XboxOwnedException = getTarget().getTriple().isOSXbox360() &&
+                            CGM.getCodeGenOpts().Xbox360Libunwind;
+  if (XboxOwnedException) {
+    CurFn->addFnAttr("xbox360-libunwind-handler-ownership");
+    llvm::Function *ObjectIntrin = CGM.getIntrinsic(
+        llvm::Intrinsic::eh_xbox_exceptionobject, {Int8PtrTy});
+    llvm::Value *Object = Builder.CreateCall(ObjectIntrin, {CPI});
+    Address Slot =
+        CreateMemTempWithoutCast(getContext().VoidPtrTy, "seh.exception");
+    Builder.CreateStore(Object, Slot);
+    EHStack.pushCleanup<ReleaseXboxSEHException>(NormalAndEHCleanup, Slot);
+  }
+
   // Emit the __except body.
   EmitStmt(Except->getBlock());
+
+  if (XboxOwnedException)
+    PopCleanupBlock();
 
   // End the lifetime of the exception code.
   SEHCodeSlotStack.pop_back();

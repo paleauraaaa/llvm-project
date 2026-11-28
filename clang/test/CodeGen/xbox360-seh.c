@@ -3,7 +3,7 @@
 // RUN: %clang_cc1 -triple powerpc64-ibm-xbox360 -target-cpu xenon -mrelocation-model static -fms-extensions -mxbox360-libunwind -O2 -mllvm -verify-machineinstrs -emit-obj -o %t.O2 %s
 // RUN: %clang_cc1 -triple powerpc64-ibm-xbox360 -target-cpu xenon -mrelocation-model static -fms-extensions -mxbox360-libunwind -O0 -S -o - %s | FileCheck %s --check-prefix=META
 // RUN: %clang_cc1 -triple powerpc64-ibm-xbox360 -target-cpu xenon -mrelocation-model static -fms-extensions -O0 -S -o - %s | FileCheck %s --check-prefix=NOMETA --implicit-check-not=.xseh
-// RUN: %clang_cc1 -triple powerpc64-ibm-xbox360 -target-cpu xenon -mrelocation-model static -fms-extensions -emit-llvm -disable-llvm-passes -o - %s | FileCheck %s --check-prefix=KERNEL --implicit-check-not=xbox360-libunwind
+// RUN: %clang_cc1 -triple powerpc64-ibm-xbox360 -target-cpu xenon -mrelocation-model static -fms-extensions -emit-llvm -disable-llvm-passes -o - %s | FileCheck %s --check-prefix=KERNEL --implicit-check-not=xbox360-libunwind --implicit-check-not=llvm.eh.xbox.exceptionobject --implicit-check-not=_Unwind_DeleteException
 // RUN: %clang_cc1 -triple powerpc64-ibm-xbox360 -target-cpu xenon -mrelocation-model static -fms-extensions -mno-xbox360-libunwind -emit-llvm -disable-llvm-passes -o - %s | FileCheck %s --check-prefix=KERNEL
 // RUN: %clang_cc1 -triple powerpc64-ibm-xbox360 -target-cpu xenon -mrelocation-model static -fms-extensions -mxbox360-libunwind -mno-xbox360-libunwind -emit-llvm -disable-llvm-passes -o - %s | FileCheck %s --check-prefix=KERNEL
 // RUN: %clang_cc1 -triple powerpc64-ibm-xbox360 -target-cpu xenon -mrelocation-model static -fms-extensions -mno-xbox360-libunwind -mxbox360-libunwind -emit-llvm -disable-llvm-passes -o - %s | FileCheck %s --implicit-check-not=__jump_unwind
@@ -20,10 +20,38 @@ void observe(int);
 // CHECK: store volatile i32
 // CHECK: invoke void @llvm.seh.try.end()
 // CHECK: call i32 @llvm.eh.exceptioncode(
+// CHECK: call ptr @llvm.eh.xbox.exceptionobject.p0(token
+// CHECK: call void @_Unwind_DeleteException(
+// META-LABEL: memory:
+// META: .section .xseh
+// META: .long 1481852161
+// META-NEXT: .long Lxbox_begin
+// META-NEXT: .long memory
+// META-NEXT: .long {{[0-9]+}}
+// META-NEXT: .long 12
 int memory(int *p) {
   __try { ++*p; }
   __except (1) { return (int)_exception_code(); }
   return 0;
+}
+
+// CHECK-LABEL: define {{.*}}void @handler_exits(
+// CHECK: call ptr @llvm.eh.xbox.exceptionobject.p0(token
+// CHECK: invoke void @observe(
+// CHECK: call void @_Unwind_DeleteException(
+// CHECK: cleanuppad within none
+// CHECK: call void @_Unwind_DeleteException(
+void handler_exits(int n) {
+  __try { observe(n); }
+  __except (1) {
+    if (n == 1)
+      goto done;
+    if (n == 2)
+      return;
+    observe(n);
+  }
+done:
+  observe(0);
 }
 
 // CHECK-LABEL: define {{.*}}void @finalizer(
