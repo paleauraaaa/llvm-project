@@ -338,6 +338,7 @@ test_seh_call:
   lwz 5, 80(1)
   lwz 6, 88(1)
   li 7, 1
+  li 8, 0
   bl __libunwind_xbox_seh_call
   .globl test_seh_after_call
 test_seh_after_call:

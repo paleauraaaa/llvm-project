@@ -35,6 +35,9 @@ constexpr unsigned LastNonvolatileCRField = 5;
 constexpr unsigned CRHighFieldMask = 0x80;
 constexpr unsigned CRInstructionMaskShift = 12;
 
+static_assert(XBOX_SEH_CALL_SCOPE_OFFSET + WordSize <=
+                  XBOX_SEH_CALL_FRAME_SIZE - 12,
+              "Xbox SEH state must not overlap the saved CR or LR");
 static_assert(XboxPdata::PowerPCInstructions ==
                   UNW_INFO_FORMAT_XBOX_PDATA_POWERPC,
               "Xbox .pdata format flags must agree");
@@ -221,6 +224,30 @@ bool getCleanupParent(A &as, uint64_t trampolineSP, uint32_t cleanup,
   if (!value || value % StackAlignment)
     return false;
   parent = value;
+  return true;
+}
+
+struct CleanupState {
+  uint32_t exception, cursor, scopeIndex;
+};
+
+template <typename A>
+bool getCleanupState(A &as, uint64_t trampolineSP, uint32_t cleanup,
+                     uint32_t &parent, CleanupState &state) {
+  uint32_t value;
+  if (trampolineSP > UINT32_MAX - XBOX_SEH_CALL_SCOPE_OFFSET -
+                         (WordSize - 1) ||
+      !getCleanupParent(as, trampolineSP, cleanup, value))
+    return false;
+  uint32_t sp = uint32_t(trampolineSP);
+  CleanupState saved = {as.get32(sp + XBOX_SEH_CALL_EXCEPTION_OFFSET),
+                        as.get32(sp + XBOX_SEH_CALL_CURSOR_OFFSET),
+                        as.get32(sp + XBOX_SEH_CALL_SCOPE_OFFSET)};
+  if (!saved.exception || saved.exception % WordSize || !saved.cursor ||
+      saved.cursor % WordSize)
+    return false;
+  parent = value;
+  state = saved;
   return true;
 }
 

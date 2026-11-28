@@ -105,6 +105,17 @@ __unw_xbox_get_seh_cleanup_parent(unw_cursor_t *cursor, uintptr_t *parent) {
           cursor);
   return co->getXboxSEHCleanupParent(*parent);
 }
+
+_LIBUNWIND_HIDDEN int
+__unw_xbox_get_seh_cleanup_state(unw_cursor_t *cursor, uintptr_t *parent,
+                                __unw_xbox_seh_cleanup_state *state) {
+  if (!cursor || !parent || !state)
+    return UNW_EINVAL;
+  auto *co =
+      reinterpret_cast<UnwindCursor<LocalAddressSpace, Registers_ppc64> *>(
+          cursor);
+  return co->getXboxSEHCleanupParent(*parent, state);
+}
 #endif
 
 /// Get value of specified register at cursor position in stack frame.

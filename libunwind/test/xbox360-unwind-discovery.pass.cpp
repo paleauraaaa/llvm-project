@@ -164,6 +164,7 @@ struct TestRegisters {
 
 static int expectedCleanupKind;
 static uintptr_t expectedParents[2];
+static __unw_xbox_seh_cleanup_state expectedStates[2];
 
 extern "C" __attribute__((noinline)) int testCleanupParent(uintptr_t depth) {
   unw_context_t context;
@@ -172,21 +173,48 @@ extern "C" __attribute__((noinline)) int testCleanupParent(uintptr_t depth) {
   assert(__unw_init_local(&cursor, &context) == UNW_ESUCCESS);
   uintptr_t parent = 0;
   int result = __unw_xbox_get_seh_cleanup_parent(&cursor, &parent);
+  __unw_xbox_seh_cleanup_state saved = {};
   if (!expectedCleanupKind) {
     assert(result == UNW_EBADFRAME && parent == 0);
+    assert(__unw_xbox_get_seh_cleanup_state(&cursor, &parent, &saved) ==
+           UNW_EBADFRAME);
     return 0;
   }
   assert(result == UNW_ESUCCESS);
   assert(parent == expectedParents[depth]);
+  if (expectedCleanupKind == 2) {
+    assert(__unw_xbox_get_seh_cleanup_state(&cursor, &parent, &saved) ==
+           UNW_EBADFRAME);
+    return 0;
+  }
+  assert(__unw_xbox_get_seh_cleanup_state(&cursor, &parent, &saved) ==
+         UNW_ESUCCESS);
+  assert(saved.exception == expectedStates[depth].exception &&
+         saved.cursor == expectedStates[depth].cursor &&
+         saved.scope_index == expectedStates[depth].scope_index);
+  __unw_xbox_seh_cleanup_state original = expectedStates[depth];
+  expectedStates[depth] = {nullptr, nullptr, original.scope_index + 1};
+  assert(__unw_xbox_get_seh_cleanup_state(&cursor, &parent, &saved) ==
+         UNW_ESUCCESS);
+  assert(saved.exception == original.exception &&
+         saved.cursor == original.cursor &&
+         saved.scope_index == original.scope_index);
+  expectedStates[depth] = original;
   if (depth) {
     Registers_ppc64 registers(&context);
     assert(__libunwind_xbox_seh_call(
                &registers, reinterpret_cast<uintptr_t>(&testCleanupParent),
-               0, expectedParents[0], XBOX_SEH_CALL_CLEANUP) == 0);
+               0, expectedParents[0], XBOX_SEH_CALL_CLEANUP,
+               &expectedStates[0]) == 0);
     parent = 0;
     assert(__unw_xbox_get_seh_cleanup_parent(&cursor, &parent) ==
            UNW_ESUCCESS);
     assert(parent == expectedParents[1]);
+    assert(__unw_xbox_get_seh_cleanup_state(&cursor, &parent, &saved) ==
+           UNW_ESUCCESS);
+    assert(saved.exception == expectedStates[1].exception &&
+           saved.cursor == expectedStates[1].cursor &&
+           saved.scope_index == expectedStates[1].scope_index);
   }
   return 0;
 }
@@ -245,22 +273,42 @@ static __attribute__((noinline)) void testLoaderIntegration() {
   assert(info.start_ip <= pc && pc < info.end_ip);
   assert(info.unwind_info_size == 8 && (info.format & 0x40000000));
   uintptr_t parent = 0;
+  __unw_xbox_seh_cleanup_state saved = {};
   assert(__unw_xbox_get_seh_cleanup_parent(nullptr, &parent) == UNW_EINVAL);
   assert(__unw_xbox_get_seh_cleanup_parent(&cursor, nullptr) == UNW_EINVAL);
   assert(__unw_xbox_get_seh_cleanup_parent(&cursor, &parent) != UNW_ESUCCESS);
+  assert(__unw_xbox_get_seh_cleanup_state(nullptr, &parent, &saved) ==
+         UNW_EINVAL);
+  assert(__unw_xbox_get_seh_cleanup_state(&cursor, nullptr, &saved) ==
+         UNW_EINVAL);
+  assert(__unw_xbox_get_seh_cleanup_state(&cursor, &parent, nullptr) ==
+         UNW_EINVAL);
+  assert(__unw_xbox_get_seh_cleanup_state(&cursor, &parent, &saved) !=
+         UNW_ESUCCESS);
   assert(parent == 0);
   Registers_ppc64 registers(&context);
   expectedParents[0] = uintptr_t(registers.getSP());
   expectedParents[1] = space.get32(expectedParents[0]);
   assert(expectedParents[0] && expectedParents[1] != expectedParents[0]);
+  _Unwind_Exception exceptions[2] = {};
+  unw_cursor_t otherCursor;
+  assert(__unw_init_local(&otherCursor, &context) == UNW_ESUCCESS);
+  expectedStates[0] = {&exceptions[0], &otherCursor, 3};
+  expectedStates[1] = {&exceptions[1], &cursor, 7};
   expectedCleanupKind = 1;
   assert(__libunwind_xbox_seh_call(
              &registers, reinterpret_cast<uintptr_t>(&testCleanupParent),
-             1, expectedParents[1], XBOX_SEH_CALL_CLEANUP) == 0);
+             1, expectedParents[1], XBOX_SEH_CALL_CLEANUP,
+             &expectedStates[1]) == 0);
+  expectedCleanupKind = 2;
+  assert(__libunwind_xbox_seh_call(
+             &registers, reinterpret_cast<uintptr_t>(&testCleanupParent),
+             1, expectedParents[1], XBOX_SEH_CALL_CLEANUP, nullptr) == 0);
   expectedCleanupKind = 0;
   assert(__libunwind_xbox_seh_call(
              &registers, reinterpret_cast<uintptr_t>(&testCleanupParent),
-             0, expectedParents[1], XBOX_SEH_CALL_FILTER) == 0);
+             0, expectedParents[1], XBOX_SEH_CALL_FILTER,
+             &expectedStates[1]) == 0);
   assert(__unw_step(&cursor) == 1);
   assert(__unw_get_proc_info(&cursor, &info) == UNW_ESUCCESS);
   assert(info.start_ip == reinterpret_cast<uintptr_t>(&main));

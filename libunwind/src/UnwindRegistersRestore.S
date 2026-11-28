@@ -501,7 +501,7 @@ Lnovec:
 #define XBOX_PDATA_PROLOGUE_MASK 0xff
 #define XBOX_PDATA_POWERPC 0x40000000
 
-// int __libunwind_xbox_seh_call(registers, funclet, argument, parent, cleanup)
+// int __libunwind_xbox_seh_call(registers, funclet, argument, parent, kind, state)
 // The register snapshot belongs to the target frame, not its caller.
 DEFINE_LIBUNWIND_FUNCTION(__libunwind_xbox_seh_call)
 .Lxbox_seh_call_begin:
@@ -522,6 +522,21 @@ DEFINE_LIBUNWIND_FUNCTION(__libunwind_xbox_seh_call)
   stw   4, XBOX_SEH_CALL_TARGET_OFFSET(1)
   stw   6, XBOX_SEH_CALL_PARENT_OFFSET(1)
   stw   7, XBOX_SEH_CALL_CLEANUP_OFFSET(1)
+  cmpwi 8, 0
+  beq   .Lxbox_seh_no_state
+  lwz   0, XBOX_SEH_STATE_EXCEPTION_OFFSET(8)
+  stw   0, XBOX_SEH_CALL_EXCEPTION_OFFSET(1)
+  lwz   0, XBOX_SEH_STATE_CURSOR_OFFSET(8)
+  stw   0, XBOX_SEH_CALL_CURSOR_OFFSET(1)
+  lwz   0, XBOX_SEH_STATE_SCOPE_OFFSET(8)
+  stw   0, XBOX_SEH_CALL_SCOPE_OFFSET(1)
+  b     .Lxbox_seh_state_saved
+.Lxbox_seh_no_state:
+  li    0, 0
+  stw   0, XBOX_SEH_CALL_EXCEPTION_OFFSET(1)
+  stw   0, XBOX_SEH_CALL_CURSOR_OFFSET(1)
+  stw   0, XBOX_SEH_CALL_SCOPE_OFFSET(1)
+.Lxbox_seh_state_saved:
   mr    8, 4
   mr    9, 5
   mr    10, 6

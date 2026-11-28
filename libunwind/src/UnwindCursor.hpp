@@ -987,7 +987,8 @@ public:
   virtual void        setInfoBasedOnIPRegister(bool isReturnAddress = false);
   virtual const char *getRegisterName(int num);
 #if defined(_XBOX) && _XBOX_VER == 200 && !defined(_LIBUNWIND_IS_BAREMETAL)
-  int getXboxSEHCleanupParent(uintptr_t &parent);
+  int getXboxSEHCleanupParent(uintptr_t &parent,
+                              __unw_xbox_seh_cleanup_state *state = nullptr);
 #endif
 #ifdef __arm__
   virtual void        saveVFPAsX();
@@ -3412,7 +3413,8 @@ int UnwindCursor<A, R>::stepThroughSigReturn() {
 
 #if defined(_XBOX) && _XBOX_VER == 200 && !defined(_LIBUNWIND_IS_BAREMETAL)
 template <typename A, typename R>
-int UnwindCursor<A, R>::getXboxSEHCleanupParent(uintptr_t &parent) {
+int UnwindCursor<A, R>::getXboxSEHCleanupParent(
+    uintptr_t &parent, __unw_xbox_seh_cleanup_state *state) {
   if (!_isXboxPdata || _info.start_ip > UINT32_MAX)
     return UNW_EBADFRAME;
   uint32_t cleanup = uint32_t(_info.start_ip);
@@ -3427,9 +3429,18 @@ int UnwindCursor<A, R>::getXboxSEHCleanupParent(uintptr_t &parent) {
           reinterpret_cast<uintptr_t>(&__libunwind_xbox_seh_call_return))
     return UNW_EBADFRAME;
   uint32_t value;
-  if (!XboxFrame::getCleanupParent(_addressSpace, caller._registers.getSP(),
-                                   cleanup, value))
+  if (state) {
+    XboxFrame::CleanupState saved;
+    if (!XboxFrame::getCleanupState(_addressSpace, caller._registers.getSP(),
+                                    cleanup, value, saved))
+      return UNW_EBADFRAME;
+    state->exception = reinterpret_cast<_Unwind_Exception *>(saved.exception);
+    state->cursor = reinterpret_cast<unw_cursor_t *>(saved.cursor);
+    state->scope_index = saved.scopeIndex;
+  } else if (!XboxFrame::getCleanupParent(
+                 _addressSpace, caller._registers.getSP(), cleanup, value)) {
     return UNW_EBADFRAME;
+  }
   parent = value;
   return UNW_ESUCCESS;
 }

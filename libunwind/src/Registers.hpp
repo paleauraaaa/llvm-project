@@ -1188,9 +1188,21 @@ inline const char *Registers_ppc::getRegisterName(int regNum) {
 #if defined(_XBOX) && _XBOX_VER == 200
 class Registers_ppc64;
 extern "C" void __libunwind_Registers_ppc64_jumpto(Registers_ppc64 *);
-// The final argument is XBOX_SEH_CALL_FILTER or XBOX_SEH_CALL_CLEANUP.
+#if defined(__powerpc64__)
+static_assert(offsetof(__unw_xbox_seh_cleanup_state, exception) ==
+                  XBOX_SEH_STATE_EXCEPTION_OFFSET &&
+              offsetof(__unw_xbox_seh_cleanup_state, cursor) ==
+                  XBOX_SEH_STATE_CURSOR_OFFSET &&
+              offsetof(__unw_xbox_seh_cleanup_state, scope_index) ==
+                  XBOX_SEH_STATE_SCOPE_OFFSET &&
+              sizeof(__unw_xbox_seh_cleanup_state) ==
+                  XBOX_SEH_STATE_SCOPE_OFFSET + 4,
+              "Xbox SEH cleanup state layout");
+#endif
+// The kind is XBOX_SEH_CALL_FILTER or XBOX_SEH_CALL_CLEANUP.
 extern "C" int __libunwind_xbox_seh_call(const Registers_ppc64 *, uintptr_t,
-                                         uintptr_t, uintptr_t, unsigned);
+                                         uintptr_t, uintptr_t, unsigned,
+                                         const __unw_xbox_seh_cleanup_state *);
 extern "C" const char __libunwind_xbox_seh_call_return;
 #endif
 /// Registers_ppc64 holds the register state of a thread in a 64-bit PowerPC
