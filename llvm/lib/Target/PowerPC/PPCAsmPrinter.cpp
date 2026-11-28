@@ -328,10 +328,19 @@ public:
 };
 
 class PPCXbox360AsmPrinter : public PPCAsmPrinter {
+  enum LibunwindFlag : unsigned {
+    CleanupFunclet = 1,
+    CatchFunclet = 2,
+    CSEHHandler = 4,
+  };
+  static constexpr uint32_t LibunwindRecordVersion = 0x58534501;
+
   MCSymbol *UnwindBegin = nullptr;
   MCSymbol *UnwindPrologueEnd = nullptr;
   const MachineInstr *LastPrologueInst = nullptr;
   bool HasHandler = false;
+  unsigned LibunwindFlags = 0;
+  bool EmitLibunwindRecord = false;
 
   void emitHandlerPrefix(Align Alignment,
                          const MachineBasicBlock *Cleanup = nullptr);
@@ -428,6 +437,15 @@ void PPCXbox360AsmPrinter::emitFunctionBodyStart() {
 void PPCXbox360AsmPrinter::beginUnwindRange(const MachineBasicBlock &MBB,
                                           bool Handler) {
   HasHandler = Handler;
+  const Function &F = MF->getFunction();
+  EmitLibunwindRecord = F.hasFnAttribute("xbox360-libunwind");
+  LibunwindFlags = MBB.isCleanupFuncletEntry() ? CleanupFunclet
+                    : MBB.isEHFuncletEntry()  ? CatchFunclet
+                                              : 0;
+  if (Handler && F.hasPersonalityFn() &&
+      classifyEHPersonality(F.getPersonalityFn()) ==
+          EHPersonality::MSVC_TableSEH)
+    LibunwindFlags |= CSEHHandler;
   LastPrologueInst = nullptr;
   for (const MachineInstr &MI : MBB)
     if (MI.getFlag(MachineInstr::FrameSetup))
@@ -562,6 +580,7 @@ void PPCXbox360AsmPrinter::emitFunctionBodyEnd() {
   UnwindBegin = OutContext.getOrCreateSymbol(Twine("$sehfilter$") + Name);
   UnwindPrologueEnd = UnwindBegin;
   HasHandler = false;
+  EmitLibunwindRecord = false;
   OutStreamer->emitLabel(UnwindBegin);
   EmitToStreamer(*OutStreamer, MCInstBuilder(PPC::LI).addReg(PPC::R3).addImm(1));
   EmitToStreamer(*OutStreamer, MCInstBuilder(PPC::BLR));
@@ -589,6 +608,22 @@ void PPCXbox360AsmPrinter::endUnwindRange() {
       PPCXboxPDataExpr::create(OutContext, UnwindBegin, UnwindPrologueEnd, End,
                               HasHandler),
       4);
+  if (EmitLibunwindRecord) {
+    if (!isUInt<32>(MF->getFrameInfo().getStackSize()))
+      report_fatal_error("Xbox 360 libunwind parent frame size exceeds 32 bits");
+    MCSectionCOFF *SEH =
+        OutContext.getCOFFSection(".xseh", COFF::IMAGE_SCN_CNT_INITIALIZED_DATA |
+                                              COFF::IMAGE_SCN_MEM_READ);
+    if (TextCOFF->getCharacteristics() & COFF::IMAGE_SCN_LNK_COMDAT)
+      SEH = OutContext.getAssociativeCOFFSection(SEH, CurrentFnSym, 0);
+    OutStreamer->switchSection(SEH);
+    OutStreamer->emitValueToAlignment(Align(4));
+    OutStreamer->emitIntValue(LibunwindRecordVersion, 4);
+    OutStreamer->emitSymbolValue(UnwindBegin, 4);
+    OutStreamer->emitSymbolValue(CurrentFnSym, 4);
+    OutStreamer->emitIntValue(MF->getFrameInfo().getStackSize(), 4);
+    OutStreamer->emitIntValue(LibunwindFlags, 4);
+  }
   OutStreamer->switchSection(Text);
   UnwindBegin = nullptr;
 }

@@ -1,7 +1,9 @@
 // RUN: %clang_cc1 -triple powerpc64-ibm-xbox360 -target-cpu xenon -mrelocation-model static -fms-extensions -mxbox360-libunwind -emit-llvm -disable-llvm-passes -o - %s | FileCheck %s --implicit-check-not=__jump_unwind
 // RUN: %clang_cc1 -triple powerpc64-ibm-xbox360 -target-cpu xenon -mrelocation-model static -fms-extensions -mxbox360-libunwind -O0 -mllvm -verify-machineinstrs -emit-obj -o %t.O0 %s
 // RUN: %clang_cc1 -triple powerpc64-ibm-xbox360 -target-cpu xenon -mrelocation-model static -fms-extensions -mxbox360-libunwind -O2 -mllvm -verify-machineinstrs -emit-obj -o %t.O2 %s
-// RUN: %clang_cc1 -triple powerpc64-ibm-xbox360 -target-cpu xenon -mrelocation-model static -fms-extensions -emit-llvm -disable-llvm-passes -o - %s | FileCheck %s --check-prefix=KERNEL
+// RUN: %clang_cc1 -triple powerpc64-ibm-xbox360 -target-cpu xenon -mrelocation-model static -fms-extensions -mxbox360-libunwind -O0 -S -o - %s | FileCheck %s --check-prefix=META
+// RUN: %clang_cc1 -triple powerpc64-ibm-xbox360 -target-cpu xenon -mrelocation-model static -fms-extensions -O0 -S -o - %s | FileCheck %s --check-prefix=NOMETA --implicit-check-not=.xseh
+// RUN: %clang_cc1 -triple powerpc64-ibm-xbox360 -target-cpu xenon -mrelocation-model static -fms-extensions -emit-llvm -disable-llvm-passes -o - %s | FileCheck %s --check-prefix=KERNEL --implicit-check-not=xbox360-libunwind
 // RUN: %clang_cc1 -triple powerpc64-ibm-xbox360 -target-cpu xenon -mrelocation-model static -fms-extensions -mno-xbox360-libunwind -emit-llvm -disable-llvm-passes -o - %s | FileCheck %s --check-prefix=KERNEL
 // RUN: %clang_cc1 -triple powerpc64-ibm-xbox360 -target-cpu xenon -mrelocation-model static -fms-extensions -mxbox360-libunwind -mno-xbox360-libunwind -emit-llvm -disable-llvm-passes -o - %s | FileCheck %s --check-prefix=KERNEL
 // RUN: %clang_cc1 -triple powerpc64-ibm-xbox360 -target-cpu xenon -mrelocation-model static -fms-extensions -mno-xbox360-libunwind -mxbox360-libunwind -emit-llvm -disable-llvm-passes -o - %s | FileCheck %s --implicit-check-not=__jump_unwind
@@ -12,7 +14,7 @@ int _abnormal_termination(void);
 void observe(int);
 
 // CHECK-LABEL: define {{.*}}i32 @memory(
-// CHECK-SAME: personality ptr @__C_specific_handler
+// CHECK-SAME: #[[LIBUNWIND:[0-9]+]] personality ptr @__C_specific_handler
 // CHECK: invoke void @llvm.seh.try.begin()
 // CHECK: load volatile i32
 // CHECK: store volatile i32
@@ -28,6 +30,7 @@ int memory(int *p) {
 // CHECK: call ppc_xbox360_sehcc void
 // CHECK: cleanuppad within none
 // CHECK: call ppc_xbox360_sehcc void
+// CHECK: define internal ppc_xbox360_sehcc void {{.*}} #[[HELPER:[0-9]+]]
 void finalizer(int *p) {
   __try { ++*p; }
   __finally { observe(*p + _abnormal_termination()); }
@@ -49,3 +52,32 @@ int early_return(int *p) {
   __try { return *p; }
   __finally { observe(_abnormal_termination()); }
 }
+
+// CHECK-LABEL: define {{.*}}void @nested_helper(
+// CHECK: define internal ppc_xbox360_sehcc void {{.*}}nested_helper{{.*}} #[[HELPER]]
+// CHECK-SAME: personality ptr @__C_specific_handler
+// CHECK: cleanuppad within none
+// NOMETA: nested_helper:
+// META-LABEL: "?fin$0@0@nested_helper@@":
+// META: .section .xseh
+// META: .long 1481852161
+// META-NEXT: .long Lxbox_begin
+// META-NEXT: .long "?fin$0@0@nested_helper@@"
+// META-NEXT: .long [[FRAME:[0-9]+]]
+// META-NEXT: .long 4
+// META: .section .xseh
+// META: .long 1481852161
+// META-NEXT: .long Lxbox_begin
+// META-NEXT: .long "?fin$0@0@nested_helper@@"
+// META-NEXT: .long [[FRAME]]
+// META-NEXT: .long 1
+void nested_helper(int *p) {
+  __try { observe(*p); }
+  __finally {
+    __try { observe(*p); }
+    __finally { observe(*p); }
+  }
+}
+
+// CHECK: attributes #[[LIBUNWIND]] = { {{.*}}"xbox360-libunwind"{{.*}} }
+// CHECK: attributes #[[HELPER]] = { {{.*}}"xbox360-libunwind"{{.*}} }

@@ -365,6 +365,10 @@ void CodeGenFunction::FinishFunction(SourceLocation EndLoc) {
   assert(DeferredDeactivationCleanupStack.empty() &&
          "mismatched activate/deactivate of cleanups!");
 
+  if (getTarget().getTriple().isOSXbox360() &&
+      CGM.getCodeGenOpts().Xbox360Libunwind)
+    CurFn->addFnAttr("xbox360-libunwind");
+
   if (CGM.shouldEmitConvergenceTokens()) {
     ConvergenceTokenStack.pop_back();
     assert(ConvergenceTokenStack.empty() &&
