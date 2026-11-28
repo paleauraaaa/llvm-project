@@ -10,6 +10,7 @@
 
 #undef NDEBUG
 #include "../src/XboxUnwind.hpp"
+#include "../src/XboxUnwindState.h"
 #include <assert.h>
 #include <string.h>
 
@@ -46,6 +47,29 @@ static XboxPdataResult find(uint32_t pc, XboxRuntimeFunction &function,
 }
 
 int main() {
+  _Unwind_Exception exception = {};
+  assert(!__libunwind_xbox_is_forced(&exception));
+  assert(__libunwind_xbox_set_seh_target(&exception, 0x1000, 0));
+  assert(__libunwind_xbox_has_seh_target(&exception));
+  assert(!__libunwind_xbox_is_forced(&exception));
+  assert(exception.private_2 == 0x1000);
+  assert(__libunwind_xbox_seh_target_scope(&exception) == 0);
+  exception.private_1 = 0;
+  assert(__libunwind_xbox_set_seh_target(&exception, 0x2000, UINTPTR_MAX >> 1));
+  assert(__libunwind_xbox_seh_target_scope(&exception) == (UINTPTR_MAX >> 1));
+  exception.private_1 = 0;
+  assert(!__libunwind_xbox_set_seh_target(&exception, 0x2000,
+                                          (UINTPTR_MAX >> 1) + 1));
+  assert(!__libunwind_xbox_set_seh_target(&exception, 0x2001, 0));
+  assert(!__libunwind_xbox_set_seh_target(&exception, 0, 0));
+  assert(exception.private_2 == 0x2000);
+  exception.private_1 = 0x1000;
+  exception.private_2 = 0x1234;
+  assert(__libunwind_xbox_is_forced(&exception));
+  assert(!__libunwind_xbox_has_seh_target(&exception));
+  assert(!__libunwind_xbox_set_seh_target(&exception, 0x1000, 0));
+  assert(exception.private_2 == 0x1234);
+
   XboxRuntimeFunction f = {};
   makeRecords();
   assert(find(Base + 0x100, f) == XboxPdataResult::Found);

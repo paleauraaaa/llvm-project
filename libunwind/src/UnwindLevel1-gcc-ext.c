@@ -22,6 +22,10 @@
 #include "Unwind-EHABI.h"
 #include "unwind.h"
 
+#if defined(_XBOX) && _XBOX_VER == 200 && !defined(__USING_SJLJ_EXCEPTIONS__)
+#include "XboxUnwindState.h"
+#endif
+
 #if defined(_AIX)
 #include <sys/debug.h>
 #endif
@@ -46,7 +50,11 @@ _Unwind_Resume_or_Rethrow(_Unwind_Exception *exception_object) {
   // If this is non-forced and a stopping place was found, then this is a
   // re-throw.
   // Call _Unwind_RaiseException() as if this was a new exception
+#if defined(_XBOX) && _XBOX_VER == 200 && !defined(__USING_SJLJ_EXCEPTIONS__)
+  if (!__libunwind_xbox_is_forced(exception_object)) {
+#else
   if (exception_object->PRIVATE_1 == 0) {
+#endif
     return _Unwind_RaiseException(exception_object);
     // Will return if there is no catch clause, so that __cxa_rethrow can call
     // std::terminate().

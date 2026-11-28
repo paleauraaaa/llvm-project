@@ -25,7 +25,7 @@ struct _Unwind_Exception {
 #if defined(__SEH__) && !defined(__USING_SJLJ_EXCEPTIONS__)
   uintptr_t private_[6];
 #else
-  uintptr_t private_1; // non-zero means forced unwind
+  uintptr_t private_1; // unwinder state (forced-unwind callback or Xbox tag)
   uintptr_t private_2; // holds sp that phase1 found for phase2 to use
 #endif
 #if __SIZEOF_POINTER__ == 4

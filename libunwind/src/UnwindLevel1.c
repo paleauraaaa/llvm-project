@@ -31,6 +31,10 @@
 #include "shadow_stack_unwind.h"
 #include "unwind.h"
 
+#if defined(_XBOX) && _XBOX_VER == 200 && !defined(__USING_SJLJ_EXCEPTIONS__)
+#include "XboxUnwindState.h"
+#endif
+
 #if !defined(_LIBUNWIND_ARM_EHABI) && !defined(__USING_SJLJ_EXCEPTIONS__) &&   \
     !defined(__wasm__)
 
@@ -528,7 +532,11 @@ _Unwind_Resume(_Unwind_Exception *exception_object) {
   unw_cursor_t cursor;
   __unw_getcontext(&uc);
 
+#if defined(_XBOX) && _XBOX_VER == 200
+  if (__libunwind_xbox_is_forced(exception_object))
+#else
   if (exception_object->private_1 != 0)
+#endif
     unwind_phase2_forced(&uc, &cursor, exception_object,
                          (_Unwind_Stop_Fn) exception_object->private_1,
                          (void *)exception_object->private_2);
@@ -552,6 +560,13 @@ _Unwind_ForcedUnwind(_Unwind_Exception *exception_object,
   unw_context_t uc;
   unw_cursor_t cursor;
   __unw_getcontext(&uc);
+
+#if defined(_XBOX) && _XBOX_VER == 200
+  if (!stop || ((uintptr_t)stop & 1)) {
+    _LIBUNWIND_TRACE_UNWINDING("invalid Xbox forced-unwind stop function");
+    return _URC_FATAL_PHASE2_ERROR;
+  }
+#endif
 
   // Mark that this is a forced unwind, so _Unwind_Resume() can do
   // the right thing.
