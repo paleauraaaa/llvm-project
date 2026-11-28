@@ -119,6 +119,25 @@ extern "C" uint64_t EH_FRM_LEN;
 extern char __exidx_start;
 extern char __exidx_end;
 
+#elif defined(_XBOX) && _XBOX_VER == 200
+
+#include "XboxUnwind.hpp"
+
+// The loader entry layout and this kernel signature require hardware
+// confirmation. The return value is deliberately not used. Use a private
+// declaration because some Xbox headers declare this export without a type.
+struct XboxLoaderEntry {
+  uint8_t reserved0[0x1c];
+  uintptr_t imageBase;
+  uint8_t reserved1[0x18];
+  uint32_t imageSize;
+};
+static_assert(offsetof(XboxLoaderEntry, imageBase) == 0x1c, "loader layout");
+static_assert(offsetof(XboxLoaderEntry, imageSize) == 0x38, "loader layout");
+extern "C" __declspec(dllimport) void *
+libunwind_XexPcToFileHeader(void *, XboxLoaderEntry **)
+    __asm__("XexPcToFileHeader");
+
 #elif defined(_LIBUNWIND_SUPPORT_DWARF_UNWIND) && defined(_WIN32)
 
 #include <windows.h>
@@ -164,6 +183,10 @@ struct UnwindInfoSections {
 #if defined(_LIBUNWIND_ARM_EHABI)
   uintptr_t       arm_section;
   size_t          arm_section_length;
+#endif
+#if defined(_XBOX) && _XBOX_VER == 200
+  uintptr_t       xbox_pdata_section = 0;
+  size_t          xbox_pdata_section_length = 0;
 #endif
 };
 
@@ -584,6 +607,30 @@ inline bool LocalAddressSpace::findUnwindSections(
                              (void *)info.arm_section, (void *)info.arm_section_length);
   if (info.arm_section && info.arm_section_length)
     return true;
+#elif defined(_XBOX) && _XBOX_VER == 200
+  if (targetAddr > UINTPTR_MAX)
+    return false;
+  XboxLoaderEntry *module = nullptr;
+  libunwind_XexPcToFileHeader(
+      reinterpret_cast<void *>(static_cast<uintptr_t>(targetAddr)), &module);
+  if (!module || !module->imageBase ||
+      targetAddr < module->imageBase ||
+      targetAddr - module->imageBase >= module->imageSize ||
+      module->imageSize > UINTPTR_MAX - module->imageBase) {
+    _LIBUNWIND_TRACE_UNWINDING("findUnwindSections: Xbox module not found");
+    return false;
+  }
+  XboxUnwindSection pdata;
+  if (!findXboxPdata(reinterpret_cast<const uint8_t *>(module->imageBase),
+                     module->imageSize, targetAddr - module->imageBase,
+                     pdata)) {
+    _LIBUNWIND_TRACE_UNWINDING("findUnwindSections: invalid or missing Xbox .pdata");
+    return false;
+  }
+  info.dso_base = module->imageBase;
+  info.xbox_pdata_section = module->imageBase + pdata.offset;
+  info.xbox_pdata_section_length = pdata.length;
+  return true;
 #elif defined(_LIBUNWIND_SUPPORT_DWARF_UNWIND) && defined(_WIN32)
   HMODULE mods[1024];
   HANDLE process = GetCurrentProcess();

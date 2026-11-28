@@ -25,6 +25,10 @@
 #endif
 
 // Platform specific configuration defines.
+#if defined(_XBOX) && _XBOX_VER == 200 && defined(__SEH__)
+#error Xbox 360 native SEH unwinding is not implemented
+#endif
+
 #ifdef __APPLE__
   #if defined(FOR_DYLD)
     #define _LIBUNWIND_SUPPORT_COMPACT_UNWIND 1
@@ -139,7 +143,8 @@
 #ifndef _LIBUNWIND_REMEMBER_HEAP_ALLOC
 #if defined(_LIBUNWIND_REMEMBER_STACK_ALLOC) || defined(__APPLE__) ||          \
     defined(__linux__) || defined(__ANDROID__) || defined(__MINGW32__) ||      \
-    defined(_LIBUNWIND_IS_BAREMETAL)
+    defined(_LIBUNWIND_IS_BAREMETAL) ||                                       \
+    (defined(_XBOX) && _XBOX_VER == 200)
 #define _LIBUNWIND_REMEMBER_ALLOC(_size) __builtin_alloca(_size)
 #define _LIBUNWIND_REMEMBER_FREE(_ptr)                                         \
   do {                                                                         \

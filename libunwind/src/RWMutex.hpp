@@ -13,7 +13,7 @@
 #ifndef __RWMUTEX_HPP__
 #define __RWMUTEX_HPP__
 
-#if defined(_WIN32)
+#if defined(_WIN32) && !(defined(_XBOX) && _XBOX_VER == 200)
 #include <windows.h>
 #elif !defined(_LIBUNWIND_HAS_NO_THREADS) && !defined(RUST_SGX)
 #include <pthread.h>
@@ -32,6 +32,19 @@ public:
   bool unlock_shared() { return true; }
   bool lock() { return true; }
   bool unlock() { return true; }
+};
+
+#elif defined(_XBOX) && _XBOX_VER == 200
+
+class _LIBUNWIND_HIDDEN RWMutex {
+public:
+  bool lock_shared() { return pthread_mutex_lock(&_lock) == 0; }
+  bool unlock_shared() { return pthread_mutex_unlock(&_lock) == 0; }
+  bool lock() { return pthread_mutex_lock(&_lock) == 0; }
+  bool unlock() { return pthread_mutex_unlock(&_lock) == 0; }
+
+private:
+  pthread_mutex_t _lock = PTHREAD_MUTEX_INITIALIZER;
 };
 
 #elif defined(_WIN32)
