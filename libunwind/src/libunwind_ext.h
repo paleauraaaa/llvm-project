@@ -62,10 +62,26 @@ typedef struct {
   uint32_t flags;
 } __unw_xbox_seh_frame;
 
+typedef struct {
+  uint32_t begin;
+  uint32_t end;
+  uint32_t filter_or_finally;
+  uint32_t handler;
+} __unw_xbox_seh_scope;
+
+#define UNW_XBOX_SEH_SCOPE_INACTIVE 0
+#define UNW_XBOX_SEH_SCOPE_ACTIVE 1
+#define UNW_XBOX_SEH_SCOPE_END 2
+
 #if !defined(_LIBUNWIND_IS_BAREMETAL)
 // Returns UNW_ENOINFO for frames without opt-in metadata and UNW_EBADFRAME
 // for malformed or unsupported metadata.
 extern int __unw_xbox_get_seh_frame(unw_cursor_t *, __unw_xbox_seh_frame *);
+// Enumerate bounded C SEH scope records for the cursor's exact instruction
+// address or return address minus one. The output changes only for an active
+// scope, whose callable target must reside in the same executable image.
+extern int __unw_xbox_get_seh_scope(unw_cursor_t *, uintptr_t, uint32_t,
+                                    __unw_xbox_seh_scope *);
 // The control PC is the exact instruction address, or a return address minus
 // one. Transfers to the selected active C SEH handler; returns only on error
 // without modifying the cursor. The caller must keep the frame and module
@@ -87,6 +103,18 @@ extern int __unw_xbox_get_seh_cleanup_state(
 // rather than searching or unwinding the physically present abandoned frames.
 extern int __unw_xbox_get_seh_collision_state(
     unw_cursor_t *, uintptr_t *, __unw_xbox_seh_cleanup_state *);
+// Prepare a continuation from state recovered by either helper above. The
+// control PC is the suspended frame's exact PC or return address minus one.
+// The outputs must not overlap the input state or suspended cursor. On success
+// the destination is a copy of that cursor, and next_scope is the index after
+// the cleanup. The input must describe the cleanup actually invoked for that
+// scope, not just an arbitrary scope in the saved frame.
+// On error neither output changes. This does not transfer exception ownership;
+// phase 2 must prepare it before committing the handoff separately. After a
+// successful handoff, the abandoned unwind must never be resumed.
+extern int __unw_xbox_continue_seh_cleanup(
+    const __unw_xbox_seh_cleanup_state *, uintptr_t, unw_cursor_t *,
+    uint32_t *next_scope);
 // Commit only when the replacement unwind is leaving this cleanup. Publish the
 // replacement and mark the cleanup abandoned before deleting the displaced
 // exception. The cursor may identify the cleanup or a collision boundary.

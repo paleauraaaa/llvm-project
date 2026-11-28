@@ -175,6 +175,21 @@ static __attribute__((noinline)) void transferToHandler() {
          !(scope.handler && scope.begin <= ip - 1 && ip - 1 < scope.end))
     ++scopeIndex;
   assert(readXboxSEHScope(table, tableSize, scopeIndex, scope));
+  __unw_xbox_seh_scope checked = {};
+  assert(__unw_xbox_get_seh_scope(nullptr, ip - 1, scopeIndex, &checked) ==
+         UNW_EINVAL);
+  assert(__unw_xbox_get_seh_scope(&cursor, ip - 1, scopeIndex, nullptr) ==
+         UNW_EINVAL);
+  assert(__unw_xbox_get_seh_scope(&cursor, ip + 4, scopeIndex, &checked) ==
+         UNW_EBADFRAME);
+  assert(__unw_xbox_get_seh_scope(&cursor, ip - 1, scopeIndex, &checked) ==
+         UNW_XBOX_SEH_SCOPE_ACTIVE);
+  assert(checked.begin == scope.begin && checked.end == scope.end &&
+         checked.filter_or_finally == scope.filterOrFinally &&
+         checked.handler == scope.handler);
+  assert(__unw_xbox_get_seh_scope(&cursor, ip - 1, UINT32_MAX, &checked) ==
+         UNW_XBOX_SEH_SCOPE_END);
+  assert(checked.begin == scope.begin && checked.handler == scope.handler);
   assert(__unw_xbox_transfer_seh_handler(nullptr, ip - 1, 0, 0, nullptr) ==
          UNW_EINVAL);
   assert(__unw_xbox_transfer_seh_handler(&cursor, ip - 1, UINT32_MAX, 0,
@@ -257,6 +272,19 @@ static unsigned ownershipReleases;
 static jmp_buf ownershipEscape;
 static unw_context_t ownershipContexts[2];
 static unw_cursor_t ownershipBoundaries[2];
+static uintptr_t continuationControlPC;
+
+static void checkContinuation(const __unw_xbox_seh_cleanup_state &state) {
+  unw_cursor_t cursor;
+  uint32_t nextScope = 0;
+  assert(__unw_xbox_continue_seh_cleanup(&state, continuationControlPC, &cursor,
+                                         &nextScope) == UNW_ESUCCESS);
+  assert(nextScope == state.scope_index + 1);
+  __unw_xbox_seh_scope scope = {};
+  assert(__unw_xbox_get_seh_scope(&cursor, continuationControlPC, nextScope,
+                                  &scope) == UNW_XBOX_SEH_SCOPE_ACTIVE);
+  assert(scope.handler != 0);
+}
 
 static void checkCollisionBoundary(unsigned depth,
                                    _Unwind_Exception *expected) {
@@ -271,6 +299,8 @@ static void checkCollisionBoundary(unsigned depth,
       assert(parent == expectedParents[0] && state.exception == expected &&
              state.abandoned && state.cursor == expectedStates[0].cursor &&
              state.scope_index == expectedStates[0].scope_index);
+      if (continuationControlPC)
+        checkContinuation(state);
       return;
     }
     assert(__unw_step(cursor) == UNW_STEP_SUCCESS);
@@ -298,6 +328,8 @@ static void releaseDisplacedException(_Unwind_Reason_Code reason,
          state.exception == ownershipReplacement && state.abandoned &&
          state.cursor == expectedStates[0].cursor &&
          state.scope_index == expectedStates[0].scope_index);
+  if (continuationControlPC)
+    checkContinuation(state);
   checkCollisionBoundary(0, ownershipReplacement);
   ++ownershipReleases;
   if (ownershipNestedReplacement) {
@@ -335,6 +367,8 @@ extern "C" __attribute__((noinline)) int testCleanupParent(uintptr_t depth) {
          saved.cursor == expectedStates[depth].cursor &&
          saved.scope_index == expectedStates[depth].scope_index &&
          !saved.abandoned);
+  if (continuationControlPC)
+    checkContinuation(saved);
   if (expectedCleanupKind == 3 || expectedCleanupKind == 4) {
     ownershipCursor = &cursor;
     if (expectedCleanupKind == 4) {
@@ -604,6 +638,136 @@ static __attribute__((noinline)) void testLoaderIntegration() {
   assert(sehFrame.parent == imageBase + 0x420 &&
          sehFrame.parent_frame_size == 16 &&
          sehFrame.flags == XboxSEH::CHandler);
+  put16(image + Nt + 6, 4);
+  memcpy(image + Sections + 120, ".rdata", 6);
+  put32(image + Sections + 128, 0x80);
+  put32(image + Sections + 132, 0xa00);
+  put32(image + Sections + 156, 0x40000040);
+  putBE32(image + 0xa00, 2);
+  putBE32(image + 0xa04, imageBase + 0x428);
+  putBE32(image + 0xa08, imageBase + 0x430);
+  putBE32(image + 0xa0c, 1);
+  putBE32(image + 0xa10, imageBase + 0x42c);
+  putBE32(image + 0xa14, imageBase + 0x428);
+  putBE32(image + 0xa18, imageBase + 0x42c);
+  putBE32(image + 0xa1c, imageBase + 0x440);
+  putBE32(image + 0xa20, 0);
+  assert(__unw_set_reg(&cursor, UNW_REG_IP, imageBase + 0x42c) ==
+         UNW_ESUCCESS);
+  __unw_xbox_seh_scope checkedScope = {};
+  assert(__unw_xbox_get_seh_scope(&cursor, imageBase + 0x42c, 0,
+                                  &checkedScope) == UNW_XBOX_SEH_SCOPE_ACTIVE);
+  assert(checkedScope.begin == imageBase + 0x428 &&
+         checkedScope.end == imageBase + 0x430 &&
+         checkedScope.filter_or_finally == 1 &&
+         checkedScope.handler == imageBase + 0x42c);
+  assert(__unw_xbox_get_seh_scope(&cursor, imageBase + 0x42c, 1,
+                                  &checkedScope) ==
+         UNW_XBOX_SEH_SCOPE_INACTIVE);
+  assert(checkedScope.handler == imageBase + 0x42c);
+  putBE32(image + 0xa0c, imageBase + 0xa00);
+  assert(__unw_xbox_get_seh_scope(&cursor, imageBase + 0x42c, 0,
+                                  &checkedScope) == UNW_EBADFRAME);
+  assert(checkedScope.filter_or_finally == 1);
+  putBE32(image + 0xa0c, 1);
+  putBE32(image + 0xa00, 8);
+  assert(__unw_xbox_get_seh_scope(&cursor, imageBase + 0x42c, 8,
+                                  &checkedScope) == UNW_EBADFRAME);
+  putBE32(image + 0xa00, 3);
+  putBE32(image + 0xa24, imageBase + 0x428);
+  putBE32(image + 0xa28, imageBase + 0x430);
+  putBE32(image + 0xa2c, 1);
+  putBE32(image + 0xa30, imageBase + 0x42c);
+  __unw_xbox_seh_cleanup_state continuationState = {&exceptions[0], &cursor, 1,
+                                                    0};
+  unw_cursor_t continuation;
+  assert(__unw_init_local(&continuation, &context) == UNW_ESUCCESS);
+  unw_word_t continuationIP;
+  assert(__unw_get_reg(&continuation, UNW_REG_IP, &continuationIP) ==
+         UNW_ESUCCESS);
+  uint32_t nextScope = 99;
+  assert(__unw_xbox_continue_seh_cleanup(nullptr, imageBase + 0x42b,
+                                         &continuation, &nextScope) ==
+         UNW_EINVAL);
+  assert(__unw_xbox_continue_seh_cleanup(&continuationState,
+                                         imageBase + 0x42b, nullptr,
+                                         &nextScope) == UNW_EINVAL);
+  assert(__unw_xbox_continue_seh_cleanup(&continuationState,
+                                         imageBase + 0x42b, &continuation,
+                                         nullptr) == UNW_EINVAL);
+  assert(__unw_xbox_continue_seh_cleanup(&continuationState,
+                                         imageBase + 0x42b, &cursor,
+                                         &nextScope) == UNW_EINVAL);
+  assert(__unw_xbox_continue_seh_cleanup(&continuationState,
+                                         imageBase + 0x434, &continuation,
+                                         &nextScope) == UNW_EBADFRAME);
+  assert(__unw_xbox_continue_seh_cleanup(&continuationState,
+                                         imageBase + 0x42c, &continuation,
+                                         &nextScope) == UNW_EBADFRAME);
+  continuationState.scope_index = 0;
+  assert(__unw_xbox_continue_seh_cleanup(&continuationState,
+                                         imageBase + 0x42b, &continuation,
+                                         &nextScope) == UNW_EBADFRAME);
+  continuationState.scope_index = UINT32_MAX;
+  assert(__unw_xbox_continue_seh_cleanup(&continuationState,
+                                         imageBase + 0x42b, &continuation,
+                                         &nextScope) == UNW_EBADFRAME);
+  continuationState.scope_index = 1;
+  continuationState.abandoned = 2;
+  assert(__unw_xbox_continue_seh_cleanup(&continuationState,
+                                         imageBase + 0x42b, &continuation,
+                                         &nextScope) == UNW_EBADFRAME);
+  unw_word_t unchangedIP;
+  assert(__unw_get_reg(&continuation, UNW_REG_IP, &unchangedIP) ==
+             UNW_ESUCCESS &&
+         unchangedIP == continuationIP && nextScope == 99);
+  continuationState.abandoned = 0;
+  assert(__unw_xbox_continue_seh_cleanup(&continuationState,
+                                         imageBase + 0x42b, &continuation,
+                                         &nextScope) == UNW_ESUCCESS);
+  assert(nextScope == 2 && !continuationState.abandoned);
+  continuationState.abandoned = 1;
+  assert(__unw_xbox_continue_seh_cleanup(&continuationState,
+                                         imageBase + 0x42b, &continuation,
+                                         &nextScope) == UNW_ESUCCESS);
+  assert(nextScope == 2);
+  assert(continuationState.exception == &exceptions[0] &&
+         continuationState.cursor == &cursor && continuationState.abandoned);
+  assert(__unw_get_reg(&continuation, UNW_REG_IP, &continuationIP) ==
+             UNW_ESUCCESS &&
+         continuationIP == imageBase + 0x42c);
+  assert(__unw_xbox_get_seh_scope(&continuation, imageBase + 0x42b, nextScope,
+                                  &checkedScope) == UNW_XBOX_SEH_SCOPE_ACTIVE);
+  assert(checkedScope.handler == imageBase + 0x42c);
+  assert(__unw_xbox_get_seh_scope(&continuation, imageBase + 0x42b,
+                                  nextScope + 1, &checkedScope) ==
+         UNW_XBOX_SEH_SCOPE_END);
+  modules[1].imageBase = reinterpret_cast<uintptr_t>(base);
+  modules[1].imageSize = xboxReadLE32(base + nt + 24 + 56);
+  expectedStates[0] = {&exceptions[0], &cursor, 1, 0};
+  ownershipNestedReplacement = nullptr;
+  ownershipReleases = 0;
+  continuationControlPC = imageBase + 0x42b;
+  expectedCleanupKind = 3;
+  assert(__libunwind_xbox_seh_call(
+             &registers, reinterpret_cast<uintptr_t>(&testCleanupParent), 0,
+             expectedParents[0], XBOX_SEH_CALL_CLEANUP, &expectedStates[0]) ==
+         0);
+  assert(ownershipReleases == 1);
+  ownershipNestedReplacement = &nestedReplacement;
+  ownershipReleases = 0;
+  expectedCleanupKind = 4;
+  assert(__libunwind_xbox_seh_call(
+             &registers, reinterpret_cast<uintptr_t>(&testCleanupParent), 0,
+             expectedParents[0], XBOX_SEH_CALL_CLEANUP, &expectedStates[0]) ==
+         0);
+  assert(ownershipReleases == 2);
+  continuationControlPC = 0;
+  assert(__unw_set_reg(&cursor, UNW_REG_IP, imageBase + 0x424) ==
+         UNW_ESUCCESS);
+  assert(__unw_get_reg(&continuation, UNW_REG_IP, &unchangedIP) ==
+             UNW_ESUCCESS &&
+         unchangedIP == imageBase + 0x42c);
   unw_word_t originalSyntheticIP;
   assert(__unw_get_reg(&cursor, UNW_REG_IP, &originalSyntheticIP) ==
          UNW_ESUCCESS);

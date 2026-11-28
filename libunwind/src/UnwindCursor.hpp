@@ -988,6 +988,8 @@ public:
   virtual const char *getRegisterName(int num);
 #if defined(_XBOX) && _XBOX_VER == 200 && !defined(_LIBUNWIND_IS_BAREMETAL)
   int getXboxSEHFrame(__unw_xbox_seh_frame &frame);
+  int getXboxSEHScope(uintptr_t controlPC, uint32_t scopeIndex,
+                      __unw_xbox_seh_scope &scope, bool validateTarget = true);
   int prepareXboxSEHHandler(uintptr_t controlPC, uint32_t scopeIndex,
                             uint32_t exceptionCode,
                             _Unwind_Exception *exception);
@@ -3478,26 +3480,19 @@ int UnwindCursor<A, R>::getXboxSEHFrame(__unw_xbox_seh_frame &frame) {
 }
 
 template <typename A, typename R>
-int UnwindCursor<A, R>::prepareXboxSEHHandler(uintptr_t controlPC,
-                                              uint32_t scopeIndex,
-                                              uint32_t exceptionCode,
-                                              _Unwind_Exception *exception) {
+int UnwindCursor<A, R>::getXboxSEHScope(uintptr_t controlPC,
+                                        uint32_t scopeIndex,
+                                        __unw_xbox_seh_scope &result,
+                                        bool validateTarget) {
   __unw_xbox_seh_frame frame;
   int status = getXboxSEHFrame(frame);
   if (status != UNW_ESUCCESS)
     return status;
-  if (!(frame.flags & XboxSEH::CHandler) ||
-      (exception && !(frame.flags & XboxSEH::HandlerOwnership)))
+  if (!(frame.flags & XboxSEH::CHandler))
     return UNW_EBADFRAME;
   uint64_t ip = _registers.getIP();
-  uint64_t sp = _registers.getSP();
-  uint64_t fp = _registers.getRegister(UNW_PPC64_R31);
   if (controlPC > UINT32_MAX || ip > UINT32_MAX ||
-      (controlPC != ip && (!ip || controlPC != ip - 1)) || sp > UINT32_MAX ||
-      fp > UINT32_MAX || !sp || !fp || (sp & 15) ||
-      frame.parent_frame_size > UINT32_MAX - fp ||
-      ((fp + frame.parent_frame_size) & 15) ||
-      sp > fp + frame.parent_frame_size)
+      (controlPC != ip && (!ip || controlPC != ip - 1)))
     return UNW_EBADFRAME;
 
   UnwindInfoSections sections;
@@ -3519,12 +3514,55 @@ int UnwindCursor<A, R>::prepareXboxSEHHandler(uintptr_t controlPC,
                               function) != XboxPdataResult::Found ||
       function.start != _info.start_ip || function.handlerData != _info.lsda)
     return UNW_EBADFRAME;
-  uint32_t handler;
-  if (!findXboxSEHHandler(image + tableOffset,
-                          data.length - (tableOffset - data.offset), function,
-                          uint32_t(controlPC), scopeIndex, handler))
+  XboxSEHScope scope;
+  XboxSEHScopeResult scopeResult = findXboxSEHActiveScope(
+      image + tableOffset, data.length - (tableOffset - data.offset), function,
+      uint32_t(controlPC), scopeIndex, scope);
+  if (scopeResult == XboxSEHScopeResult::Invalid)
+    return UNW_EBADFRAME;
+  if (scopeResult == XboxSEHScopeResult::Inactive)
+    return UNW_XBOX_SEH_SCOPE_INACTIVE;
+  if (scopeResult == XboxSEHScopeResult::End)
+    return UNW_XBOX_SEH_SCOPE_END;
+  if (validateTarget && scope.filterOrFinally != 1 &&
+      !_addressSpace.isXboxCodeRange(scope.filterOrFinally,
+                                     XboxPdata::InstructionSize,
+                                     uint32_t(sections.dso_base),
+                                     uint32_t(sections.xbox_image_size)))
+    return UNW_EBADFRAME;
+  result = {scope.begin, scope.end, scope.filterOrFinally, scope.handler};
+  return UNW_XBOX_SEH_SCOPE_ACTIVE;
+}
+
+template <typename A, typename R>
+int UnwindCursor<A, R>::prepareXboxSEHHandler(uintptr_t controlPC,
+                                              uint32_t scopeIndex,
+                                              uint32_t exceptionCode,
+                                              _Unwind_Exception *exception) {
+  __unw_xbox_seh_frame frame;
+  int status = getXboxSEHFrame(frame);
+  if (status != UNW_ESUCCESS)
+    return status;
+  if (!(frame.flags & XboxSEH::CHandler) ||
+      (exception && !(frame.flags & XboxSEH::HandlerOwnership)))
+    return UNW_EBADFRAME;
+  uint64_t sp = _registers.getSP();
+  uint64_t fp = _registers.getRegister(UNW_PPC64_R31);
+  if (sp > UINT32_MAX || fp > UINT32_MAX || !sp || !fp || (sp & 15) ||
+      frame.parent_frame_size > UINT32_MAX - fp ||
+      ((fp + frame.parent_frame_size) & 15) ||
+      sp > fp + frame.parent_frame_size)
+    return UNW_EBADFRAME;
+  __unw_xbox_seh_scope scope;
+  if (getXboxSEHScope(controlPC, scopeIndex, scope, false) !=
+          UNW_XBOX_SEH_SCOPE_ACTIVE ||
+      !scope.handler)
     return UNW_EBADFRAME;
 
+  UnwindInfoSections sections;
+  if (!_addressSpace.template findUnwindSections<R>(_info.start_ip, sections) ||
+      sections.dso_base != _info.extra)
+    return UNW_EBADFRAME;
   R callerRegisters = _registers;
   XboxFrame::Interpreter<A, R> interpreter(_addressSpace, callerRegisters,
                                            _info, sections.dso_base,
@@ -3549,7 +3587,7 @@ int UnwindCursor<A, R>::prepareXboxSEHHandler(uintptr_t controlPC,
   }
   _registers.setRegister(UNW_PPC64_R3, exceptionCode);
   _registers.setRegister(UNW_PPC64_R4, uintptr_t(exception));
-  _registers.setIP(handler);
+  _registers.setIP(scope.handler);
   return UNW_ESUCCESS;
 }
 

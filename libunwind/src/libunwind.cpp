@@ -106,6 +106,17 @@ _LIBUNWIND_HIDDEN int __unw_xbox_get_seh_frame(unw_cursor_t *cursor,
   return co->getXboxSEHFrame(*frame);
 }
 
+_LIBUNWIND_HIDDEN int __unw_xbox_get_seh_scope(
+    unw_cursor_t *cursor, uintptr_t controlPC, uint32_t scopeIndex,
+    __unw_xbox_seh_scope *scope) {
+  if (!cursor || !scope)
+    return UNW_EINVAL;
+  auto *co =
+      reinterpret_cast<UnwindCursor<LocalAddressSpace, Registers_ppc64> *>(
+          cursor);
+  return co->getXboxSEHScope(controlPC, scopeIndex, *scope);
+}
+
 _LIBUNWIND_HIDDEN int __unw_xbox_transfer_seh_handler(
     unw_cursor_t *cursor, uintptr_t controlPC, uint32_t scopeIndex,
     uint32_t exceptionCode, _Unwind_Exception *exception) {
@@ -153,6 +164,28 @@ __unw_xbox_get_seh_collision_state(unw_cursor_t *cursor, uintptr_t *parent,
       reinterpret_cast<UnwindCursor<LocalAddressSpace, Registers_ppc64> *>(
           cursor);
   return co->getXboxSEHCollisionState(*parent, *state);
+}
+
+_LIBUNWIND_HIDDEN int __unw_xbox_continue_seh_cleanup(
+    const __unw_xbox_seh_cleanup_state *state, uintptr_t controlPC,
+    unw_cursor_t *destination, uint32_t *nextScope) {
+  if (!state || !state->exception || !state->cursor || !destination ||
+      !nextScope || destination == state->cursor)
+    return UNW_EINVAL;
+  if ((reinterpret_cast<uintptr_t>(state->exception) & 3) ||
+      reinterpret_cast<uintptr_t>(state->cursor) % alignof(unw_cursor_t) ||
+      state->scope_index == UINT32_MAX || state->abandoned > 1)
+    return UNW_EBADFRAME;
+  using XboxCursor = UnwindCursor<LocalAddressSpace, Registers_ppc64>;
+  auto *source = reinterpret_cast<XboxCursor *>(state->cursor);
+  __unw_xbox_seh_scope scope;
+  if (source->getXboxSEHScope(controlPC, state->scope_index, scope) !=
+          UNW_XBOX_SEH_SCOPE_ACTIVE ||
+      scope.handler)
+    return UNW_EBADFRAME;
+  new (reinterpret_cast<XboxCursor *>(destination)) XboxCursor(*source);
+  *nextScope = state->scope_index + 1;
+  return UNW_ESUCCESS;
 }
 
 _LIBUNWIND_HIDDEN int __unw_xbox_replace_seh_cleanup_exception(
