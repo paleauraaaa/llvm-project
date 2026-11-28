@@ -5150,6 +5150,12 @@ bool CompilerInvocation::CreateFromArgsImpl(
   ParseCodeGenArgs(Res.getCodeGenOpts(), Args, DashX, Diags, T,
                    Res.getFrontendOpts().OutputFile, LangOpts);
 
+  if (T.isOSXbox360() && LangOpts.CXXExceptions &&
+      LangOpts.CXXABI == TargetCXXABI::GenericItanium &&
+      !Res.getCodeGenOpts().Xbox360Libunwind)
+    Diags.Report(diag::err_opt_not_valid_without_opt)
+        << "-fc++-abi=itanium" << "-mxbox360-libunwind";
+
   // FIXME: Override value name discarding when asan or msan is used because the
   // backend passes depend on the name of the alloca in order to print out
   // names.

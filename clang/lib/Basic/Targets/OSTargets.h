@@ -914,6 +914,13 @@ public:
     this->SizeType = TargetInfo::UnsignedInt;
     this->resetDataLayout("E-m:w-S128-p:32:32-Fi32-i64:64-i128:128-n32:64-v128:128");
   }
+
+  void adjust(DiagnosticsEngine &Diags, LangOptions &Opts,
+              const TargetInfo *Aux) override {
+    Target::adjust(Diags, Opts, Aux);
+    if (Opts.CXXABI == TargetCXXABI::GenericItanium)
+      this->TheCXXABI.set(TargetCXXABI::GenericItanium);
+  }
 };
 
 void getFuchsiaDefines(MacroBuilder &Builder, const LangOptions &Opts,

@@ -254,6 +254,10 @@ const EHPersonality &EHPersonality::get(CodeGenModule &CGM,
   if (FD && FD->usesSEHTry())
     return getSEHPersonalityMSVC(T);
 
+  if (T.isOSXbox360() && CGOpts.Xbox360Libunwind && L.CPlusPlus &&
+      Target.getCXXABI().isItaniumFamily())
+    return EHPersonality::GNU_CPlusPlus;
+
   if (L.ObjC)
     return L.CPlusPlus ? getObjCXXPersonality(Target, CGOpts, L)
                        : getObjCPersonality(Target, CGOpts, L);
