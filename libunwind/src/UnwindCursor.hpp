@@ -989,7 +989,8 @@ public:
 #if defined(_XBOX) && _XBOX_VER == 200 && !defined(_LIBUNWIND_IS_BAREMETAL)
   int getXboxSEHFrame(__unw_xbox_seh_frame &frame);
   int prepareXboxSEHHandler(uintptr_t controlPC, uint32_t scopeIndex,
-                            uint32_t exceptionCode);
+                            uint32_t exceptionCode,
+                            _Unwind_Exception *exception);
   int getXboxSEHCleanupParent(uintptr_t &parent,
                               __unw_xbox_seh_cleanup_state *state = nullptr);
 #endif
@@ -3473,12 +3474,14 @@ int UnwindCursor<A, R>::getXboxSEHFrame(__unw_xbox_seh_frame &frame) {
 template <typename A, typename R>
 int UnwindCursor<A, R>::prepareXboxSEHHandler(uintptr_t controlPC,
                                               uint32_t scopeIndex,
-                                              uint32_t exceptionCode) {
+                                              uint32_t exceptionCode,
+                                              _Unwind_Exception *exception) {
   __unw_xbox_seh_frame frame;
   int status = getXboxSEHFrame(frame);
   if (status != UNW_ESUCCESS)
     return status;
-  if (!(frame.flags & XboxSEH::CHandler))
+  if (!(frame.flags & XboxSEH::CHandler) ||
+      (exception && !(frame.flags & XboxSEH::HandlerOwnership)))
     return UNW_EBADFRAME;
   uint64_t ip = _registers.getIP();
   uint64_t sp = _registers.getSP();
@@ -3539,6 +3542,7 @@ int UnwindCursor<A, R>::prepareXboxSEHHandler(uintptr_t controlPC,
     return UNW_EBADFRAME;
   }
   _registers.setRegister(UNW_PPC64_R3, exceptionCode);
+  _registers.setRegister(UNW_PPC64_R4, uintptr_t(exception));
   _registers.setIP(handler);
   return UNW_ESUCCESS;
 }

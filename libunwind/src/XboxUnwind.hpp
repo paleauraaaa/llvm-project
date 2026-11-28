@@ -36,7 +36,9 @@ constexpr uint32_t MetadataVersion = 0x58534501;
 constexpr uint32_t CleanupFunclet = 1;
 constexpr uint32_t CatchFunclet = 2;
 constexpr uint32_t CHandler = 4;
-constexpr uint32_t KnownFlags = CleanupFunclet | CatchFunclet | CHandler;
+constexpr uint32_t HandlerOwnership = 8;
+constexpr uint32_t KnownFlags =
+    CleanupFunclet | CatchFunclet | CHandler | HandlerOwnership;
 } // namespace XboxSEH
 
 namespace XboxPE {
@@ -187,6 +189,8 @@ inline XboxPdataResult findXboxSEHMetadata(const uint8_t *image,
         xboxReadBE32(record + 4), xboxReadBE32(record + 8),
         xboxReadBE32(record + 12), xboxReadBE32(record + 16)};
     if ((entry.flags & ~XboxSEH::KnownFlags) ||
+        ((entry.flags & XboxSEH::HandlerOwnership) &&
+         !(entry.flags & XboxSEH::CHandler)) ||
         (entry.flags & (XboxSEH::CleanupFunclet | XboxSEH::CatchFunclet)) ==
             (XboxSEH::CleanupFunclet | XboxSEH::CatchFunclet) ||
         entry.start < imageBase || entry.start - imageBase >= imageSize ||

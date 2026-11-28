@@ -136,7 +136,18 @@ extern "C" [[noreturn]] int __C_specific_handler(...) { abort(); }
 extern "C" unsigned long _exception_code(void);
 #pragma intrinsic(_exception_code)
 extern "C" int sehFixture(volatile int *);
-extern "C" int sehTransferFixture();
+extern "C" int sehTransferFixture(int);
+static _Unwind_Exception handledException;
+static bool handlerEntered;
+static unsigned exceptionReleases;
+static unsigned expectedReleases;
+
+static void releaseHandledException(_Unwind_Reason_Code reason,
+                                    _Unwind_Exception *exception) {
+  assert(reason == _URC_FOREIGN_EXCEPTION_CAUGHT);
+  assert(exception == &handledException && handlerEntered);
+  ++exceptionReleases;
+}
 
 static __attribute__((noinline)) void transferToHandler() {
   unw_context_t context;
@@ -152,13 +163,28 @@ static __attribute__((noinline)) void transferToHandler() {
   assert(__unw_get_reg(&cursor, UNW_REG_SP, &sp) == UNW_ESUCCESS);
   assert(__unw_get_reg(&cursor, UNW_PPC64_R3, &r3) == UNW_ESUCCESS);
   assert(__unw_get_reg(&cursor, UNW_PPC64_R31, &fp) == UNW_ESUCCESS);
-  assert(__unw_xbox_transfer_seh_handler(nullptr, ip - 1, 0, 0) == UNW_EINVAL);
-  assert(__unw_xbox_transfer_seh_handler(&cursor, ip - 1, UINT32_MAX, 0) !=
+  assert(info.lsda >= modules[0].imageBase &&
+         info.lsda - modules[0].imageBase < modules[0].imageSize);
+  const auto *table = reinterpret_cast<const uint8_t *>(info.lsda);
+  size_t tableSize =
+      modules[0].imageSize - (info.lsda - modules[0].imageBase);
+  uint32_t scopeIndex = 0;
+  XboxSEHScope scope;
+  while (readXboxSEHScope(table, tableSize, scopeIndex, scope) &&
+         !(scope.handler && scope.begin <= ip - 1 && ip - 1 < scope.end))
+    ++scopeIndex;
+  assert(readXboxSEHScope(table, tableSize, scopeIndex, scope));
+  assert(__unw_xbox_transfer_seh_handler(nullptr, ip - 1, 0, 0, nullptr) ==
+         UNW_EINVAL);
+  assert(__unw_xbox_transfer_seh_handler(&cursor, ip - 1, UINT32_MAX, 0,
+                                         &handledException) !=
          UNW_ESUCCESS);
-  assert(__unw_xbox_transfer_seh_handler(&cursor, ip + 4, 0, 0) !=
+  assert(__unw_xbox_transfer_seh_handler(&cursor, ip + 4, scopeIndex, 0,
+                                         &handledException) !=
          UNW_ESUCCESS);
   assert(__unw_set_reg(&cursor, UNW_PPC64_R31, 0) == UNW_ESUCCESS);
-  assert(__unw_xbox_transfer_seh_handler(&cursor, ip - 1, 0, 0) ==
+  assert(__unw_xbox_transfer_seh_handler(&cursor, ip - 1, scopeIndex, 0,
+                                         &handledException) ==
          UNW_EBADFRAME);
   assert(__unw_set_reg(&cursor, UNW_PPC64_R31, fp) == UNW_ESUCCESS);
   unw_word_t value;
@@ -168,18 +194,28 @@ static __attribute__((noinline)) void transferToHandler() {
          value == sp);
   assert(__unw_get_reg(&cursor, UNW_PPC64_R3, &value) == UNW_ESUCCESS &&
          value == r3);
-  int result = __unw_xbox_transfer_seh_handler(&cursor, ip - 1, 0, 0x20474343);
+  int result = __unw_xbox_transfer_seh_handler(
+      &cursor, ip - 1, scopeIndex, 0x20474343, &handledException);
   DbgPrint("xbox360 handler transfer failed: %d\n", result);
   abort();
 }
 
-extern "C" __attribute__((noinline)) int sehTransferFixture() {
+extern "C" __attribute__((noinline)) int sehTransferFixture(int mode) {
+  int result = 0;
   __try {
     transferToHandler();
     abort();
   } __except (1) {
-    return (int)_exception_code();
+    assert(exceptionReleases == expectedReleases);
+    handlerEntered = true;
+    result = (int)_exception_code();
+    if (mode == 0)
+      return result;
+    if (mode == 1)
+      goto done;
   }
+done:
+  return result;
 }
 
 static _Unwind_Reason_Code stopAtNativeFrame(
@@ -381,7 +417,13 @@ static __attribute__((noinline)) void testLoaderIntegration() {
   assert(scope.filterOrFinally && scope.handler);
   volatile int value = 0;
   assert(sehFixture(&value) == 0 && value == 1);
-  assert(sehTransferFixture() == 0x20474343);
+  handledException.exception_cleanup = releaseHandledException;
+  for (int mode = 0; mode != 3; ++mode) {
+    handlerEntered = false;
+    expectedReleases = mode;
+    assert(sehTransferFixture(mode) == 0x20474343);
+    assert(exceptionReleases == expectedReleases + 1);
+  }
 #endif
 
   makeImage();
@@ -425,10 +467,12 @@ static __attribute__((noinline)) void testLoaderIntegration() {
   assert(__unw_get_reg(&cursor, UNW_REG_IP, &originalSyntheticIP) ==
          UNW_ESUCCESS);
   putBE32(image + 0x910, 0);
-  assert(__unw_xbox_transfer_seh_handler(&cursor, imageBase + 0x424, 0, 1) ==
+  assert(__unw_xbox_transfer_seh_handler(&cursor, imageBase + 0x424, 0, 1,
+                                         nullptr) ==
          UNW_EBADFRAME);
   putBE32(image + 0x910, XboxSEH::CHandler);
-  assert(__unw_xbox_transfer_seh_handler(&cursor, imageBase + 0x424, 0, 1) ==
+  assert(__unw_xbox_transfer_seh_handler(&cursor, imageBase + 0x424, 0, 1,
+                                         nullptr) ==
          UNW_EBADFRAME);
   unw_word_t syntheticIP;
   assert(__unw_get_reg(&cursor, UNW_REG_IP, &syntheticIP) == UNW_ESUCCESS &&

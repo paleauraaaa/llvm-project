@@ -123,6 +123,13 @@ int main() {
                              metadata) == XboxPdataResult::Found);
   assert(metadata.parent == Base + 0x100 && metadata.parentFrameSize == 96 &&
          metadata.flags == (XboxSEH::CleanupFunclet | XboxSEH::CHandler));
+  put32(0x710, XboxSEH::CleanupFunclet | XboxSEH::CHandler |
+                   XboxSEH::HandlerOwnership);
+  assert(findXboxSEHMetadata(image, sizeof(image), Base, 0x700, 20, f,
+                             metadata) == XboxPdataResult::Found);
+  put32(0x710, XboxSEH::CleanupFunclet | XboxSEH::HandlerOwnership);
+  assert(findXboxSEHMetadata(image, sizeof(image), Base, 0x700, 20, f,
+                             metadata) == XboxPdataResult::Invalid);
   assert(findXboxSEHMetadata(image, sizeof(image), Base, 0x700, 19, f,
                              metadata) == XboxPdataResult::Invalid);
   put32(0x700, XboxSEH::MetadataVersion + 1);
