@@ -234,20 +234,47 @@ inline bool readXboxSEHScope(const uint8_t *table, size_t size, uint32_t index,
   return true;
 }
 
+enum class XboxSEHScopeResult { Active, Inactive, End, Invalid };
+
+// Callers must also validate executable targets before invoking a funclet.
+inline XboxSEHScopeResult
+findXboxSEHActiveScope(const uint8_t *table, size_t size,
+                       const XboxRuntimeFunction &function, uint32_t controlPC,
+                       uint32_t index, XboxSEHScope &result) {
+  if (!table || size < XboxSEH::ScopeCountSize ||
+      function.start >= function.end ||
+      function.prologueSize > function.end - function.start)
+    return XboxSEHScopeResult::Invalid;
+  uint32_t count = xboxReadBE32(table);
+  if (count > (size - XboxSEH::ScopeCountSize) / XboxSEH::ScopeRecordSize)
+    return XboxSEHScopeResult::Invalid;
+  if (index >= count)
+    return XboxSEHScopeResult::End;
+  XboxSEHScope scope;
+  if (!readXboxSEHScope(table, size, index, scope) || (scope.begin & 3) ||
+      (scope.end & 3) || scope.begin < function.start + function.prologueSize ||
+      scope.end > function.end ||
+      (scope.handler &&
+       ((scope.handler & 3) ||
+        scope.handler < function.start + function.prologueSize ||
+        scope.handler >= function.end)) ||
+      (scope.filterOrFinally != 1 && (scope.filterOrFinally & 3)) ||
+      (!scope.handler && scope.filterOrFinally == 1))
+    return XboxSEHScopeResult::Invalid;
+  if (controlPC < scope.begin || controlPC >= scope.end)
+    return XboxSEHScopeResult::Inactive;
+  result = scope;
+  return XboxSEHScopeResult::Active;
+}
+
 inline bool findXboxSEHHandler(const uint8_t *table, size_t size,
                                const XboxRuntimeFunction &function,
                                uint32_t controlPC, uint32_t index,
                                uint32_t &handler) {
   XboxSEHScope scope;
-  if (function.start >= function.end ||
-      function.prologueSize > function.end - function.start ||
-      !readXboxSEHScope(table, size, index, scope) || !scope.handler ||
-      (scope.begin & 3) || (scope.end & 3) || (scope.handler & 3) ||
-      scope.begin < function.start + function.prologueSize ||
-      scope.end > function.end || controlPC < scope.begin ||
-      controlPC >= scope.end ||
-      scope.handler < function.start + function.prologueSize ||
-      scope.handler >= function.end)
+  if (findXboxSEHActiveScope(table, size, function, controlPC, index, scope) !=
+          XboxSEHScopeResult::Active ||
+      !scope.handler)
     return false;
   handler = scope.handler;
   return true;

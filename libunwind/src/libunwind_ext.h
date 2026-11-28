@@ -52,6 +52,8 @@ typedef struct {
   _Unwind_Exception *exception;
   unw_cursor_t *cursor;
   uint32_t scope_index;
+  // Output only: a collision has committed and this cleanup is abandoned.
+  uint32_t abandoned;
 } __unw_xbox_seh_cleanup_state;
 
 typedef struct {
@@ -75,10 +77,25 @@ extern int __unw_xbox_transfer_seh_handler(unw_cursor_t *, uintptr_t, uint32_t,
 // Returns an error without modifying the cursor or output if it cannot prove
 // that relationship.
 extern int __unw_xbox_get_seh_cleanup_parent(unw_cursor_t *, uintptr_t *);
-// The exception and cursor must stay alive, and the cursor must remain
-// unchanged, while the cleanup runs.
+// The exception must stay alive until the cleanup returns or a collision
+// commits. The cursor must stay alive and unchanged until the cleanup returns
+// or the replacement unwind has resumed from it.
 extern int __unw_xbox_get_seh_cleanup_state(
     unw_cursor_t *, uintptr_t *, __unw_xbox_seh_cleanup_state *);
+// Identify a collision boundary after a displaced-exception callback. A new
+// unwind crossing it must resume from the saved cursor after scope_index,
+// rather than searching or unwinding the physically present abandoned frames.
+extern int __unw_xbox_get_seh_collision_state(
+    unw_cursor_t *, uintptr_t *, __unw_xbox_seh_cleanup_state *);
+// Commit only when the replacement unwind is leaving this cleanup. Publish the
+// replacement and mark the cleanup abandoned before deleting the displaced
+// exception. The cursor may identify the cleanup or a collision boundary.
+// Only the thread owning the cleanup stack may call this. After success, the
+// suspended unwind must never resume.
+// On error, no ownership is transferred and the outputs are unchanged.
+extern int __unw_xbox_replace_seh_cleanup_exception(
+    unw_cursor_t *, _Unwind_Exception *, _Unwind_Exception *, uintptr_t *,
+    __unw_xbox_seh_cleanup_state *);
 #endif
 #endif
 extern int __unw_is_fpreg(unw_cursor_t *, unw_regnum_t);

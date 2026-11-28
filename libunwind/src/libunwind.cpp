@@ -143,6 +143,50 @@ __unw_xbox_get_seh_cleanup_state(unw_cursor_t *cursor, uintptr_t *parent,
           cursor);
   return co->getXboxSEHCleanupParent(*parent, state);
 }
+
+_LIBUNWIND_HIDDEN int
+__unw_xbox_get_seh_collision_state(unw_cursor_t *cursor, uintptr_t *parent,
+                                  __unw_xbox_seh_cleanup_state *state) {
+  if (!cursor || !parent || !state)
+    return UNW_EINVAL;
+  auto *co =
+      reinterpret_cast<UnwindCursor<LocalAddressSpace, Registers_ppc64> *>(
+          cursor);
+  return co->getXboxSEHCollisionState(*parent, *state);
+}
+
+_LIBUNWIND_HIDDEN int __unw_xbox_replace_seh_cleanup_exception(
+    unw_cursor_t *cursor, _Unwind_Exception *expected,
+    _Unwind_Exception *replacement, uintptr_t *parent,
+    __unw_xbox_seh_cleanup_state *state) {
+  uintptr_t replacementAddress = reinterpret_cast<uintptr_t>(replacement);
+  if (!cursor || !expected || !replacement || expected == replacement ||
+      (replacementAddress & 3) || !parent || !state)
+    return UNW_EINVAL;
+  auto *co =
+      reinterpret_cast<UnwindCursor<LocalAddressSpace, Registers_ppc64> *>(
+          cursor);
+  uintptr_t parentValue, slot;
+  __unw_xbox_seh_cleanup_state saved;
+  int result = co->getXboxSEHCollisionState(parentValue, saved, &slot);
+  if (result != UNW_ESUCCESS)
+    result = co->getXboxSEHCleanupParent(parentValue, &saved, &slot);
+  if (result != UNW_ESUCCESS)
+    return result;
+  if (saved.exception != expected)
+    return UNW_EBADFRAME;
+  saved.exception = replacement;
+  saved.abandoned = 1;
+  *parent = parentValue;
+  *state = saved;
+  *reinterpret_cast<volatile uint32_t *>(slot) =
+      uint32_t(replacementAddress) | XBOX_SEH_EXCEPTION_ABANDONED;
+  co->callXboxSEHDeleteException(expected, parentValue, saved);
+  if (*reinterpret_cast<volatile uint32_t *>(slot) !=
+      (uint32_t(replacementAddress) | XBOX_SEH_EXCEPTION_ABANDONED))
+    _LIBUNWIND_ABORT("Xbox collided unwind returned after ownership changed");
+  return UNW_ESUCCESS;
+}
 #endif
 
 /// Get value of specified register at cursor position in stack frame.

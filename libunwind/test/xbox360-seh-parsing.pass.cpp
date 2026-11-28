@@ -201,6 +201,34 @@ int main() {
   put32(0x620, Base + 0x209);
   assert(
       !findXboxSEHHandler(image + 0x600, 36, frame, Base + 0x208, 1, handler));
+
+  put32(0x620, Base + 0x20c);
+  scope = {};
+  assert(findXboxSEHActiveScope(image + 0x600, 36, frame, Base + 0x208, 1,
+                                scope) == XboxSEHScopeResult::Active);
+  assert(scope.filterOrFinally == 1 && scope.handler == Base + 0x20c);
+  XboxSEHScope previous = scope;
+  assert(findXboxSEHActiveScope(image + 0x600, 36, frame, Base + 0x20c, 1,
+                                scope) == XboxSEHScopeResult::Inactive);
+  assert(scope.begin == previous.begin && scope.handler == previous.handler);
+  assert(findXboxSEHActiveScope(image + 0x600, 36, frame, Base + 0x208, 2,
+                                scope) == XboxSEHScopeResult::End);
+  assert(findXboxSEHActiveScope(image + 0x600, 35, frame, Base + 0x208, 2,
+                                scope) == XboxSEHScopeResult::Invalid);
+  put32(0x61c, Base + 0x301);
+  assert(findXboxSEHActiveScope(image + 0x600, 36, frame, Base + 0x208, 1,
+                                scope) == XboxSEHScopeResult::Invalid);
+  put32(0x620, 0);
+  put32(0x61c, 1);
+  assert(findXboxSEHActiveScope(image + 0x600, 36, frame, Base + 0x208, 1,
+                                scope) == XboxSEHScopeResult::Invalid);
+  put32(0x61c, Base + 0x300);
+  assert(findXboxSEHActiveScope(image + 0x600, 36, frame, Base + 0x208, 1,
+                                scope) == XboxSEHScopeResult::Active);
+  assert(scope.filterOrFinally == Base + 0x300 && scope.handler == 0);
+  put32(0x614, Base + 0x204);
+  assert(findXboxSEHActiveScope(image + 0x600, 36, frame, Base + 0x208, 1,
+                                scope) == XboxSEHScopeResult::Invalid);
 #if defined(_XBOX) && _XBOX_VER == 200
   DbgPrint("xbox360 seh parsing: PASS\n");
 #endif

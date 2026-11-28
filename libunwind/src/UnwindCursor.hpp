@@ -992,7 +992,13 @@ public:
                             uint32_t exceptionCode,
                             _Unwind_Exception *exception);
   int getXboxSEHCleanupParent(uintptr_t &parent,
-                              __unw_xbox_seh_cleanup_state *state = nullptr);
+                              __unw_xbox_seh_cleanup_state *state = nullptr,
+                              uintptr_t *exceptionSlot = nullptr);
+  int getXboxSEHCollisionState(uintptr_t &parent,
+                               __unw_xbox_seh_cleanup_state &state,
+                               uintptr_t *exceptionSlot = nullptr);
+  void callXboxSEHDeleteException(_Unwind_Exception *, uintptr_t,
+                                  const __unw_xbox_seh_cleanup_state &);
 #endif
 #ifdef __arm__
   virtual void        saveVFPAsX();
@@ -3549,7 +3555,10 @@ int UnwindCursor<A, R>::prepareXboxSEHHandler(uintptr_t controlPC,
 
 template <typename A, typename R>
 int UnwindCursor<A, R>::getXboxSEHCleanupParent(
-    uintptr_t &parent, __unw_xbox_seh_cleanup_state *state) {
+    uintptr_t &parent, __unw_xbox_seh_cleanup_state *state,
+    uintptr_t *exceptionSlot) {
+  if (exceptionSlot && !state)
+    return UNW_EINVAL;
   if (!_isXboxPdata || _info.start_ip > UINT32_MAX)
     return UNW_EBADFRAME;
   uint32_t cleanup = uint32_t(_info.start_ip);
@@ -3572,12 +3581,52 @@ int UnwindCursor<A, R>::getXboxSEHCleanupParent(
     state->exception = reinterpret_cast<_Unwind_Exception *>(saved.exception);
     state->cursor = reinterpret_cast<unw_cursor_t *>(saved.cursor);
     state->scope_index = saved.scopeIndex;
+    state->abandoned = saved.abandoned;
   } else if (!XboxFrame::getCleanupParent(
                  _addressSpace, caller._registers.getSP(), cleanup, value)) {
     return UNW_EBADFRAME;
   }
   parent = value;
+  if (exceptionSlot)
+    *exceptionSlot = caller._registers.getSP() + XBOX_SEH_CALL_EXCEPTION_OFFSET;
   return UNW_ESUCCESS;
+}
+
+template <typename A, typename R>
+int UnwindCursor<A, R>::getXboxSEHCollisionState(
+    uintptr_t &parent, __unw_xbox_seh_cleanup_state &state,
+    uintptr_t *exceptionSlot) {
+  if (!_isXboxPdata ||
+      _info.start_ip !=
+          reinterpret_cast<uintptr_t>(&__libunwind_xbox_seh_call) ||
+      _registers.getIP() !=
+          reinterpret_cast<uintptr_t>(&__libunwind_xbox_seh_call_return))
+    return UNW_EBADFRAME;
+  uint32_t value;
+  XboxFrame::CleanupState saved;
+  if (!XboxFrame::getCallState(
+          _addressSpace, _registers.getSP(),
+          uint32_t(reinterpret_cast<uintptr_t>(&_Unwind_DeleteException)),
+          XBOX_SEH_CALL_COLLISION, value, saved))
+    return UNW_EBADFRAME;
+  state.exception = reinterpret_cast<_Unwind_Exception *>(saved.exception);
+  state.cursor = reinterpret_cast<unw_cursor_t *>(saved.cursor);
+  state.scope_index = saved.scopeIndex;
+  state.abandoned = 1;
+  parent = value;
+  if (exceptionSlot)
+    *exceptionSlot = _registers.getSP() + XBOX_SEH_CALL_EXCEPTION_OFFSET;
+  return UNW_ESUCCESS;
+}
+
+template <typename A, typename R>
+void UnwindCursor<A, R>::callXboxSEHDeleteException(
+    _Unwind_Exception *exception, uintptr_t parent,
+    const __unw_xbox_seh_cleanup_state &state) {
+  __libunwind_xbox_seh_call(
+      &_registers, reinterpret_cast<uintptr_t>(&_Unwind_DeleteException),
+      reinterpret_cast<uintptr_t>(exception), parent, XBOX_SEH_CALL_COLLISION,
+      &state);
 }
 #endif
 

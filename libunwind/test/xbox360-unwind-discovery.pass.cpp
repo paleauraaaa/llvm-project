@@ -18,6 +18,7 @@
 #include "../src/Registers.hpp"
 #include "../src/RWMutex.hpp"
 #include "../src/libunwind_ext.h"
+#include <setjmp.h>
 #include <unwind.h>
 #endif
 
@@ -249,6 +250,63 @@ struct TestRegisters {
 static int expectedCleanupKind;
 static uintptr_t expectedParents[2];
 static __unw_xbox_seh_cleanup_state expectedStates[2];
+static unw_cursor_t *ownershipCursor;
+static _Unwind_Exception *ownershipReplacement;
+static _Unwind_Exception *ownershipNestedReplacement;
+static unsigned ownershipReleases;
+static jmp_buf ownershipEscape;
+static unw_context_t ownershipContexts[2];
+static unw_cursor_t ownershipBoundaries[2];
+
+static void checkCollisionBoundary(unsigned depth,
+                                   _Unwind_Exception *expected) {
+  unw_cursor_t *cursor = &ownershipBoundaries[depth];
+  assert(__unw_getcontext(&ownershipContexts[depth]) == UNW_ESUCCESS);
+  assert(__unw_init_local(cursor, &ownershipContexts[depth]) == UNW_ESUCCESS);
+  for (unsigned i = 0; i != 16; ++i) {
+    uintptr_t parent = 0;
+    __unw_xbox_seh_cleanup_state state = {};
+    if (__unw_xbox_get_seh_collision_state(cursor, &parent, &state) ==
+        UNW_ESUCCESS) {
+      assert(parent == expectedParents[0] && state.exception == expected &&
+             state.abandoned && state.cursor == expectedStates[0].cursor &&
+             state.scope_index == expectedStates[0].scope_index);
+      return;
+    }
+    assert(__unw_step(cursor) == UNW_STEP_SUCCESS);
+  }
+  abort();
+}
+
+static void releaseNestedDisplacedException(_Unwind_Reason_Code reason,
+                                            _Unwind_Exception *exception) {
+  assert(reason == _URC_FOREIGN_EXCEPTION_CAUGHT);
+  assert(exception == ownershipReplacement);
+  checkCollisionBoundary(1, ownershipNestedReplacement);
+  ++ownershipReleases;
+}
+
+static void releaseDisplacedException(_Unwind_Reason_Code reason,
+                                      _Unwind_Exception *exception) {
+  assert(reason == _URC_FOREIGN_EXCEPTION_CAUGHT);
+  assert(exception == expectedStates[0].exception);
+  uintptr_t parent = 0;
+  __unw_xbox_seh_cleanup_state state = {};
+  assert(__unw_xbox_get_seh_cleanup_state(ownershipCursor, &parent, &state) ==
+         UNW_ESUCCESS);
+  assert(parent == expectedParents[0] &&
+         state.exception == ownershipReplacement && state.abandoned &&
+         state.cursor == expectedStates[0].cursor &&
+         state.scope_index == expectedStates[0].scope_index);
+  checkCollisionBoundary(0, ownershipReplacement);
+  ++ownershipReleases;
+  if (ownershipNestedReplacement) {
+    assert(__unw_xbox_replace_seh_cleanup_exception(
+               &ownershipBoundaries[0], ownershipReplacement,
+               ownershipNestedReplacement, &parent, &state) == UNW_ESUCCESS);
+    longjmp(ownershipEscape, 1);
+  }
+}
 
 extern "C" __attribute__((noinline)) int testCleanupParent(uintptr_t depth) {
   unw_context_t context;
@@ -275,9 +333,61 @@ extern "C" __attribute__((noinline)) int testCleanupParent(uintptr_t depth) {
          UNW_ESUCCESS);
   assert(saved.exception == expectedStates[depth].exception &&
          saved.cursor == expectedStates[depth].cursor &&
-         saved.scope_index == expectedStates[depth].scope_index);
+         saved.scope_index == expectedStates[depth].scope_index &&
+         !saved.abandoned);
+  if (expectedCleanupKind == 3 || expectedCleanupKind == 4) {
+    ownershipCursor = &cursor;
+    if (expectedCleanupKind == 4) {
+      // Simulate a non-returning nested collision without native dispatch.
+      if (setjmp(ownershipEscape) == 0) {
+        uintptr_t resultParent = 0;
+        __unw_xbox_seh_cleanup_state resultState = {};
+        __unw_xbox_replace_seh_cleanup_exception(&cursor, saved.exception,
+                                                 ownershipReplacement,
+                                                 &resultParent, &resultState);
+        abort();
+      }
+      uintptr_t resultParent = 0;
+      __unw_xbox_seh_cleanup_state resultState = {};
+      assert(__unw_xbox_get_seh_cleanup_state(&cursor, &resultParent,
+                                              &resultState) == UNW_ESUCCESS);
+      assert(ownershipReleases == 2 && resultParent == expectedParents[0] &&
+             resultState.exception == ownershipReplacement &&
+             resultState.cursor == expectedStates[0].cursor &&
+             resultState.scope_index == expectedStates[0].scope_index &&
+             resultState.abandoned);
+      return 0;
+    }
+    uintptr_t resultParent = 0;
+    __unw_xbox_seh_cleanup_state resultState = {};
+    assert(__unw_xbox_replace_seh_cleanup_exception(
+               &cursor, saved.exception, saved.exception, &resultParent,
+               &resultState) == UNW_EINVAL);
+    assert(__unw_xbox_replace_seh_cleanup_exception(
+               &cursor, saved.exception,
+               reinterpret_cast<_Unwind_Exception *>(1), &resultParent,
+               &resultState) == UNW_EINVAL);
+    assert(__unw_xbox_replace_seh_cleanup_exception(
+               &cursor, ownershipReplacement, saved.exception, &resultParent,
+               &resultState) == UNW_EBADFRAME);
+    assert(resultParent == 0 && resultState.exception == nullptr &&
+           ownershipReleases == 0);
+    assert(__unw_xbox_replace_seh_cleanup_exception(
+               &cursor, saved.exception, ownershipReplacement, &resultParent,
+               &resultState) == UNW_ESUCCESS);
+    assert(ownershipReleases == 1 && resultParent == expectedParents[0] &&
+           resultState.exception == ownershipReplacement &&
+           resultState.cursor == saved.cursor &&
+           resultState.scope_index == saved.scope_index &&
+           resultState.abandoned);
+    assert(__unw_xbox_replace_seh_cleanup_exception(
+               &cursor, saved.exception, ownershipReplacement, &resultParent,
+               &resultState) == UNW_EBADFRAME);
+    assert(ownershipReleases == 1);
+    return 0;
+  }
   __unw_xbox_seh_cleanup_state original = expectedStates[depth];
-  expectedStates[depth] = {nullptr, nullptr, original.scope_index + 1};
+  expectedStates[depth] = {nullptr, nullptr, original.scope_index + 1, 0};
   assert(__unw_xbox_get_seh_cleanup_state(&cursor, &parent, &saved) ==
          UNW_ESUCCESS);
   assert(saved.exception == original.exception &&
@@ -369,6 +479,10 @@ static __attribute__((noinline)) void testLoaderIntegration() {
          UNW_EINVAL);
   assert(__unw_xbox_get_seh_cleanup_state(&cursor, &parent, &saved) !=
          UNW_ESUCCESS);
+  assert(__unw_xbox_get_seh_collision_state(nullptr, &parent, &saved) ==
+         UNW_EINVAL);
+  assert(__unw_xbox_get_seh_collision_state(&cursor, &parent, &saved) ==
+         UNW_EBADFRAME);
   assert(parent == 0);
   Registers_ppc64 registers(&context);
   expectedParents[0] = uintptr_t(registers.getSP());
@@ -377,8 +491,8 @@ static __attribute__((noinline)) void testLoaderIntegration() {
   _Unwind_Exception exceptions[2] = {};
   unw_cursor_t otherCursor;
   assert(__unw_init_local(&otherCursor, &context) == UNW_ESUCCESS);
-  expectedStates[0] = {&exceptions[0], &otherCursor, 3};
-  expectedStates[1] = {&exceptions[1], &cursor, 7};
+  expectedStates[0] = {&exceptions[0], &otherCursor, 3, 0};
+  expectedStates[1] = {&exceptions[1], &cursor, 7, 0};
   expectedCleanupKind = 1;
   assert(__libunwind_xbox_seh_call(
              &registers, reinterpret_cast<uintptr_t>(&testCleanupParent),
@@ -393,6 +507,33 @@ static __attribute__((noinline)) void testLoaderIntegration() {
              &registers, reinterpret_cast<uintptr_t>(&testCleanupParent),
              0, expectedParents[1], XBOX_SEH_CALL_FILTER,
              &expectedStates[1]) == 0);
+  _Unwind_Exception replacement = {};
+  ownershipReplacement = &replacement;
+  exceptions[0].exception_cleanup = releaseDisplacedException;
+  exceptions[0].private_1 = 4;
+  assert(__unw_xbox_replace_seh_cleanup_exception(
+             nullptr, &exceptions[0], &replacement, &parent, &saved) ==
+         UNW_EINVAL);
+  assert(__unw_xbox_replace_seh_cleanup_exception(
+             &cursor, &exceptions[0], &replacement, &parent, &saved) !=
+         UNW_ESUCCESS);
+  expectedCleanupKind = 3;
+  assert(__libunwind_xbox_seh_call(
+             &registers, reinterpret_cast<uintptr_t>(&testCleanupParent),
+             0, expectedParents[0], XBOX_SEH_CALL_CLEANUP,
+             &expectedStates[0]) == 0);
+  assert(ownershipReleases == 1);
+  _Unwind_Exception nestedReplacement = {};
+  replacement.exception_cleanup = releaseNestedDisplacedException;
+  replacement.private_1 = 4;
+  ownershipNestedReplacement = &nestedReplacement;
+  ownershipReleases = 0;
+  expectedCleanupKind = 4;
+  assert(__libunwind_xbox_seh_call(
+             &registers, reinterpret_cast<uintptr_t>(&testCleanupParent),
+             0, expectedParents[0], XBOX_SEH_CALL_CLEANUP,
+             &expectedStates[0]) == 0);
+  assert(ownershipReleases == 2);
   assert(__unw_step(&cursor) == 1);
   assert(__unw_get_proc_info(&cursor, &info) == UNW_ESUCCESS);
   assert(info.start_ip == reinterpret_cast<uintptr_t>(&main));

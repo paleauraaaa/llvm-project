@@ -1190,16 +1190,18 @@ class Registers_ppc64;
 extern "C" void __libunwind_Registers_ppc64_jumpto(Registers_ppc64 *);
 #if defined(__powerpc64__)
 static_assert(offsetof(__unw_xbox_seh_cleanup_state, exception) ==
-                  XBOX_SEH_STATE_EXCEPTION_OFFSET &&
-              offsetof(__unw_xbox_seh_cleanup_state, cursor) ==
-                  XBOX_SEH_STATE_CURSOR_OFFSET &&
-              offsetof(__unw_xbox_seh_cleanup_state, scope_index) ==
-                  XBOX_SEH_STATE_SCOPE_OFFSET &&
-              sizeof(__unw_xbox_seh_cleanup_state) ==
-                  XBOX_SEH_STATE_SCOPE_OFFSET + 4,
+                      XBOX_SEH_STATE_EXCEPTION_OFFSET &&
+                  offsetof(__unw_xbox_seh_cleanup_state, cursor) ==
+                      XBOX_SEH_STATE_CURSOR_OFFSET &&
+                  offsetof(__unw_xbox_seh_cleanup_state, scope_index) ==
+                      XBOX_SEH_STATE_SCOPE_OFFSET &&
+                  offsetof(__unw_xbox_seh_cleanup_state, abandoned) ==
+                      XBOX_SEH_STATE_SCOPE_OFFSET + 4 &&
+                  sizeof(__unw_xbox_seh_cleanup_state) ==
+                      XBOX_SEH_STATE_SCOPE_OFFSET + 8,
               "Xbox SEH cleanup state layout");
 #endif
-// The kind is XBOX_SEH_CALL_FILTER or XBOX_SEH_CALL_CLEANUP.
+// The kind identifies a filter, cleanup, or collision boundary.
 extern "C" int __libunwind_xbox_seh_call(const Registers_ppc64 *, uintptr_t,
                                          uintptr_t, uintptr_t, unsigned,
                                          const __unw_xbox_seh_cleanup_state *);

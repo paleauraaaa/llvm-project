@@ -209,16 +209,16 @@ inline bool addOffset(uint32_t base, int32_t offset, uint32_t &result) {
 }
 
 template <typename A>
-bool getCleanupParent(A &as, uint64_t trampolineSP, uint32_t cleanup,
-                      uint32_t &parent) {
-  if (!trampolineSP ||
-      trampolineSP > UINT32_MAX - XBOX_SEH_CALL_CLEANUP_OFFSET -
-                         (WordSize - 1) ||
+bool getCallParent(A &as, uint64_t trampolineSP, uint32_t target, uint32_t kind,
+                   uint32_t &parent) {
+  if (!trampolineSP || trampolineSP > UINT32_MAX -
+                                          XBOX_SEH_CALL_CLEANUP_OFFSET -
+                                          (WordSize - 1) ||
       trampolineSP % StackAlignment)
     return false;
   uint32_t sp = uint32_t(trampolineSP);
-  if (as.get32(sp + XBOX_SEH_CALL_CLEANUP_OFFSET) != XBOX_SEH_CALL_CLEANUP ||
-      as.get32(sp + XBOX_SEH_CALL_TARGET_OFFSET) != cleanup)
+  if (as.get32(sp + XBOX_SEH_CALL_CLEANUP_OFFSET) != kind ||
+      as.get32(sp + XBOX_SEH_CALL_TARGET_OFFSET) != target)
     return false;
   uint32_t value = as.get32(sp + XBOX_SEH_CALL_PARENT_OFFSET);
   if (!value || value % StackAlignment)
@@ -227,28 +227,44 @@ bool getCleanupParent(A &as, uint64_t trampolineSP, uint32_t cleanup,
   return true;
 }
 
+template <typename A>
+bool getCleanupParent(A &as, uint64_t trampolineSP, uint32_t cleanup,
+                      uint32_t &parent) {
+  return getCallParent(as, trampolineSP, cleanup, XBOX_SEH_CALL_CLEANUP,
+                       parent);
+}
+
 struct CleanupState {
   uint32_t exception, cursor, scopeIndex;
+  bool abandoned;
 };
 
 template <typename A>
-bool getCleanupState(A &as, uint64_t trampolineSP, uint32_t cleanup,
-                     uint32_t &parent, CleanupState &state) {
+bool getCallState(A &as, uint64_t trampolineSP, uint32_t target, uint32_t kind,
+                  uint32_t &parent, CleanupState &state) {
   uint32_t value;
-  if (trampolineSP > UINT32_MAX - XBOX_SEH_CALL_SCOPE_OFFSET -
-                         (WordSize - 1) ||
-      !getCleanupParent(as, trampolineSP, cleanup, value))
+  if (trampolineSP > UINT32_MAX - XBOX_SEH_CALL_SCOPE_OFFSET - (WordSize - 1) ||
+      !getCallParent(as, trampolineSP, target, kind, value))
     return false;
   uint32_t sp = uint32_t(trampolineSP);
-  CleanupState saved = {as.get32(sp + XBOX_SEH_CALL_EXCEPTION_OFFSET),
+  uint32_t taggedException = as.get32(sp + XBOX_SEH_CALL_EXCEPTION_OFFSET);
+  CleanupState saved = {taggedException & ~XBOX_SEH_EXCEPTION_ABANDONED,
                         as.get32(sp + XBOX_SEH_CALL_CURSOR_OFFSET),
-                        as.get32(sp + XBOX_SEH_CALL_SCOPE_OFFSET)};
+                        as.get32(sp + XBOX_SEH_CALL_SCOPE_OFFSET),
+                        bool(taggedException & XBOX_SEH_EXCEPTION_ABANDONED)};
   if (!saved.exception || saved.exception % WordSize || !saved.cursor ||
       saved.cursor % WordSize)
     return false;
   parent = value;
   state = saved;
   return true;
+}
+
+template <typename A>
+bool getCleanupState(A &as, uint64_t trampolineSP, uint32_t cleanup,
+                     uint32_t &parent, CleanupState &state) {
+  return getCallState(as, trampolineSP, cleanup, XBOX_SEH_CALL_CLEANUP, parent,
+                      state);
 }
 
 template <typename A, typename R> class Interpreter {

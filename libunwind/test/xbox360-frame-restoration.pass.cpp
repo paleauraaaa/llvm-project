@@ -422,10 +422,19 @@ static void testCleanupParent() {
   XboxFrame::CleanupState state = {};
   assert(XboxFrame::getCleanupState(memory, sp, cleanup, parent, state));
   assert(parent == 0x3800 && state.exception == 0x3100 &&
-         state.cursor == 0x3200 && state.scopeIndex == 7);
+         state.cursor == 0x3200 && state.scopeIndex == 7 && !state.abandoned);
+  memory.put32(sp + XBOX_SEH_CALL_EXCEPTION_OFFSET,
+               0x3100 | XBOX_SEH_EXCEPTION_ABANDONED);
+  assert(XboxFrame::getCleanupState(memory, sp, cleanup, parent, state));
+  assert(state.exception == 0x3100 && state.cursor == 0x3200 &&
+         state.scopeIndex == 7 && state.abandoned);
+  memory.put32(sp + XBOX_SEH_CALL_EXCEPTION_OFFSET, 1);
+  assert(!XboxFrame::getCleanupState(memory, sp, cleanup, parent, state));
+  memory.put32(sp + XBOX_SEH_CALL_EXCEPTION_OFFSET, 0x3103);
+  assert(!XboxFrame::getCleanupState(memory, sp, cleanup, parent, state));
   memory.put32(sp + XBOX_SEH_CALL_EXCEPTION_OFFSET, 0);
   assert(!XboxFrame::getCleanupState(memory, sp, cleanup, parent, state));
-  memory.put32(sp + XBOX_SEH_CALL_EXCEPTION_OFFSET, 0x3101);
+  memory.put32(sp + XBOX_SEH_CALL_EXCEPTION_OFFSET, 0x3102);
   assert(!XboxFrame::getCleanupState(memory, sp, cleanup, parent, state));
   memory.put32(sp + XBOX_SEH_CALL_EXCEPTION_OFFSET, 0x3100);
   memory.put32(sp + XBOX_SEH_CALL_CURSOR_OFFSET, 0);
@@ -436,7 +445,16 @@ static void testCleanupParent() {
   assert(!XboxFrame::getCleanupState(memory, UINT64_C(0xfffffa70), cleanup,
                                      parent, state));
   assert(parent == 0x3800 && state.exception == 0x3100 &&
-         state.cursor == 0x3200 && state.scopeIndex == 7);
+         state.cursor == 0x3200 && state.scopeIndex == 7 && state.abandoned);
+  memory.put32(sp + XBOX_SEH_CALL_CURSOR_OFFSET, 0x3200);
+  memory.put32(sp + XBOX_SEH_CALL_CLEANUP_OFFSET, XBOX_SEH_CALL_COLLISION);
+  memory.put32(sp + XBOX_SEH_CALL_EXCEPTION_OFFSET, 0x3100);
+  assert(!XboxFrame::getCleanupState(memory, sp, cleanup, parent, state));
+  assert(XboxFrame::getCallState(memory, sp, cleanup, XBOX_SEH_CALL_COLLISION,
+                                 parent, state));
+  assert(state.exception == 0x3100 && !state.abandoned);
+  assert(!XboxFrame::getCallState(memory, sp, cleanup + 4,
+                                  XBOX_SEH_CALL_COLLISION, parent, state));
 }
 
 int main() {
