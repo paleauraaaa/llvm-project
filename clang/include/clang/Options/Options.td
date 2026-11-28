@@ -6118,6 +6118,12 @@ defm backchain : BoolMOption<"backchain",
   PosFlag<SetTrue, [], [ClangOption], "Link stack frames through backchain on System Z">,
   NegFlag<SetFalse>, BothFlags<[], [ClangOption, CC1Option]>>;
 
+defm xbox360_libunwind : BoolMOption<"xbox360-libunwind",
+  CodeGenOpts<"Xbox360Libunwind">, DefaultFalse,
+  PosFlag<SetTrue, [], [], "Use libunwind-compatible local SEH cleanup on Xbox 360">,
+  NegFlag<SetFalse, [], [], "Use kernel-compatible local SEH unwinding on Xbox 360">,
+  BothFlags<[TargetSpecific], [ClangOption, CC1Option]>>;
+
 defm zos_ppa1_name : BoolMOption<"zos-ppa1-name",
   CodeGenOpts<"ZOSPPA1Name">, DefaultTrue,
   PosFlag<SetTrue, [], [], "Emit the function name in PPA1 on z/OS">,

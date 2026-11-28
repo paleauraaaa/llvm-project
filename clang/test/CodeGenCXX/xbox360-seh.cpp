@@ -1,12 +1,16 @@
-// RUN: %clang_cc1 -triple powerpc64-ibm-xbox360 -target-cpu xenon -mrelocation-model static -fms-extensions -fexceptions -fcxx-exceptions -emit-llvm -disable-llvm-passes -o - %s | FileCheck %s --check-prefix=IR
-// RUN: %clang_cc1 -triple powerpc64-ibm-xbox360 -target-cpu xenon -mrelocation-model static -fms-extensions -fexceptions -fcxx-exceptions -O0 -mllvm -verify-machineinstrs -emit-obj -o %t.O0 %s
-// RUN: %clang_cc1 -triple powerpc64-ibm-xbox360 -target-cpu xenon -mrelocation-model static -fms-extensions -fexceptions -fcxx-exceptions -O1 -mllvm -verify-machineinstrs -emit-obj -o %t.O1 %s
-// RUN: %clang_cc1 -triple powerpc64-ibm-xbox360 -target-cpu xenon -mrelocation-model static -fms-extensions -fexceptions -fcxx-exceptions -O2 -mllvm -verify-machineinstrs -emit-obj -o %t.O2 %s
-// RUN: %clang_cc1 -triple powerpc64-ibm-xbox360 -target-cpu xenon -mrelocation-model static -fms-extensions -fexceptions -fcxx-exceptions -fasync-exceptions -Os -mllvm -verify-machineinstrs -emit-obj -o %t.Os %s
-// RUN: %clang_cc1 -triple powerpc64-ibm-xbox360 -target-cpu xenon -mrelocation-model static -fms-extensions -O2 -mllvm -verify-machineinstrs -emit-obj -o %t.noeh %s
-// RUN: llvm-readobj --relocations %t.O0 | FileCheck %s --check-prefix=OBJ
-// RUN: llvm-readobj --relocations %t.O2 | FileCheck %s --check-prefix=OBJ
-// RUN: %clang_cc1 -triple powerpc64-ibm-xbox360 -target-cpu xenon -mrelocation-model static -fms-extensions -fexceptions -fcxx-exceptions -O2 -S -o - %s | FileCheck %s --check-prefix=ASM
+// RUN: %clang_cc1 -triple powerpc64-ibm-xbox360 -target-cpu xenon -mrelocation-model static -fms-extensions -mxbox360-libunwind -fexceptions -fcxx-exceptions -emit-llvm -disable-llvm-passes -o - %s | FileCheck %s --check-prefix=IR --implicit-check-not=__jump_unwind
+// RUN: %clang_cc1 -triple powerpc64-ibm-xbox360 -target-cpu xenon -mrelocation-model static -fms-extensions -mxbox360-libunwind -fexceptions -fcxx-exceptions -O0 -mllvm -verify-machineinstrs -emit-obj -o %t.O0 %s
+// RUN: %clang_cc1 -triple powerpc64-ibm-xbox360 -target-cpu xenon -mrelocation-model static -fms-extensions -mxbox360-libunwind -fexceptions -fcxx-exceptions -O1 -mllvm -verify-machineinstrs -emit-obj -o %t.O1 %s
+// RUN: %clang_cc1 -triple powerpc64-ibm-xbox360 -target-cpu xenon -mrelocation-model static -fms-extensions -mxbox360-libunwind -fexceptions -fcxx-exceptions -O2 -mllvm -verify-machineinstrs -emit-obj -o %t.O2 %s
+// RUN: %clang_cc1 -triple powerpc64-ibm-xbox360 -target-cpu xenon -mrelocation-model static -fms-extensions -mxbox360-libunwind -fexceptions -fcxx-exceptions -fasync-exceptions -Os -mllvm -verify-machineinstrs -emit-obj -o %t.Os %s
+// RUN: %clang_cc1 -triple powerpc64-ibm-xbox360 -target-cpu xenon -mrelocation-model static -fms-extensions -mxbox360-libunwind -O2 -mllvm -verify-machineinstrs -emit-obj -o %t.noeh %s
+// RUN: llvm-readobj --relocations %t.O0 | FileCheck %s --check-prefix=OBJ --implicit-check-not=__jump_unwind
+// RUN: llvm-readobj --relocations %t.O2 | FileCheck %s --check-prefix=OBJ --implicit-check-not=__jump_unwind
+// RUN: %clang_cc1 -triple powerpc64-ibm-xbox360 -target-cpu xenon -mrelocation-model static -fms-extensions -mxbox360-libunwind -fexceptions -fcxx-exceptions -O2 -S -o - %s | FileCheck %s --check-prefix=ASM --implicit-check-not=__jump_unwind
+// RUN: %clang_cc1 -triple powerpc64-ibm-xbox360 -target-cpu xenon -mrelocation-model static -fms-extensions -fexceptions -fcxx-exceptions -emit-llvm -disable-llvm-passes -o - %s | FileCheck %s --check-prefix=KERNEL
+// RUN: %clang_cc1 -triple powerpc64-ibm-xbox360 -target-cpu xenon -mrelocation-model static -fms-extensions -fexceptions -fcxx-exceptions -O2 -S -o - %s | FileCheck %s --check-prefix=KERNEL-ASM
+// RUN: %clang_cc1 -triple powerpc64-ibm-xbox360 -target-cpu xenon -mrelocation-model static -fms-extensions -mno-xbox360-libunwind -fexceptions -fcxx-exceptions -O2 -mllvm -verify-machineinstrs -emit-obj -o %t.kernel %s
+// RUN: llvm-readobj --relocations %t.kernel | FileCheck %s --check-prefix=KERNEL-OBJ
 
 extern "C" unsigned long _exception_code();
 extern "C" void *_exception_info();
@@ -74,20 +78,19 @@ extern "C" int finalizer(int n) {
 // IR: invoke void @llvm.seh.try.end()
 // IR: [[DEST:%.*]] = load i32, ptr %cleanup.dest.slot
 // IR: [[ABNORMAL:%.*]] = icmp ne i32 [[DEST]], 0
-// IR: br i1 [[ABNORMAL]], label %seh.localunwind, label %seh.finally.normal
-// IR: seh.localunwind:
-// IR: invoke void @__jump_unwind(ptr {{%.*}}, ptr blockaddress(@early_return, %seh.localunwind.cont))
-// IR-NEXT: to label %seh.localunwind.cont unwind label %ehcleanup
-// IR: seh.finally.normal:
-// IR: call ppc_xbox360_sehcc void @"?fin$0@0@early_return@@"(i8 noundef 0,
-// IR: seh.localunwind.cont:
+// IR: [[FLAG:%.*]] = zext i1 [[ABNORMAL]] to i8
+// IR: call ppc_xbox360_sehcc void @"?fin$0@0@early_return@@"(i8 noundef [[FLAG]],
+// KERNEL-LABEL: define {{.*}}i32 @early_return(
+// KERNEL: invoke void @__jump_unwind(ptr {{%.*}}, ptr blockaddress(@early_return, %seh.localunwind.cont))
+// KERNEL-NEXT: to label %seh.localunwind.cont unwind label %ehcleanup
+// KERNEL: call ppc_xbox360_sehcc void @"?fin$0@0@early_return@@"(i8 noundef 0,
+// KERNEL: seh.localunwind.cont:
 extern "C" int early_return(int n) {
   __try { return risky(n); }
   __finally { observe(n + _abnormal_termination()); }
 }
 
 // IR-LABEL: define {{.*}}i32 @leave(
-// IR-NOT: @__jump_unwind
 // IR: __try.__leave:
 // IR-NEXT: invoke void @llvm.seh.try.end()
 // IR: call ppc_xbox360_sehcc void @"?fin$0@0@leave@@"(i8 noundef 0,
@@ -190,20 +193,47 @@ outside:
 }
 
 // IR-LABEL: define {{.*}}i32 @nested_return(
-// IR: invoke void @__jump_unwind
-// IR: seh.localunwind.cont:
-// IR: invoke void @__jump_unwind
-// IR: seh.localunwind.cont{{[0-9]+}}:
+// IR: [[INNERFLAG:%.*]] = zext i1 {{%.*}} to i8
+// IR: invoke ppc_xbox360_sehcc void @"?fin$1@0@nested_return@@"(i8 noundef [[INNERFLAG]],
+// IR-NEXT: to label %{{.*}} unwind label %[[OUTERCLEANUP:ehcleanup[0-9]+]]
+// IR: invoke void @llvm.seh.try.end()
+// IR: call ppc_xbox360_sehcc void @"?fin$0@0@nested_return@@"
+// IR: [[OUTERCLEANUP]]:
+// KERNEL-LABEL: define {{.*}}i32 @nested_return(
+// KERNEL: invoke void @__jump_unwind
+// KERNEL: seh.localunwind.cont:
+// KERNEL: invoke void @__jump_unwind
+// KERNEL: seh.localunwind.cont{{[0-9]+}}:
+// KERNEL-ASM-LABEL: nested_return:
+// KERNEL-ASM: li {{[0-9]+}}, [[RESUME:Ltmp[0-9]+]]@l
+// KERNEL-ASM: [[UNWIND_BEGIN:Ltmp[0-9]+]]:
+// KERNEL-ASM-NEXT: bl __jump_unwind
+// KERNEL-ASM-NEXT: [[UNWIND_END:Ltmp[0-9]+]]:
+// KERNEL-ASM: [[RESUME]]:
+// KERNEL-ASM: [[OUTER_BOUNDARY:Ltmp[0-9]+]]:
+// KERNEL-ASM-NEXT: nop
+// KERNEL-ASM-NEXT: [[OUTER_END:Ltmp[0-9]+]]:
+// KERNEL-ASM: bl __jump_unwind
+// KERNEL-ASM: [[INNER_HANDLER:LBB[0-9]+_[0-9]+]]: {{.*}}Block address taken
+// KERNEL-ASM: $sehxdata$nested_return:
+// KERNEL-ASM: .long [[SCOPE_BEGIN:Ltmp[0-9]+]]
+// KERNEL-ASM-NEXT: .long {{Ltmp[0-9]+}}
+// KERNEL-ASM-NEXT: .long [[INNER_HANDLER]]
+// KERNEL-ASM-NEXT: .long 0
+// KERNEL-ASM-NEXT: .long [[UNWIND_BEGIN]]
+// KERNEL-ASM-NEXT: .long [[UNWIND_END]]
+// KERNEL-ASM-NEXT: .long [[INNER_HANDLER]]
+// KERNEL-ASM-NEXT: .long 0
+// KERNEL-ASM-NEXT: .long [[SCOPE_BEGIN]]
+// KERNEL-ASM-NEXT: .long [[OUTER_END]]
 // ASM-LABEL: nested_return:
-// ASM: li {{[0-9]+}}, [[RESUME:Ltmp[0-9]+]]@l
-// ASM: [[UNWIND_BEGIN:Ltmp[0-9]+]]:
-// ASM-NEXT: bl __jump_unwind
-// ASM-NEXT: [[UNWIND_END:Ltmp[0-9]+]]:
-// ASM: [[RESUME]]:
-// ASM: [[OUTER_BOUNDARY:Ltmp[0-9]+]]:
-// ASM-NEXT: nop
-// ASM-NEXT: [[OUTER_END:Ltmp[0-9]+]]:
-// ASM: bl __jump_unwind
+// ASM: bl risky
+// ASM: nop
+// ASM-NEXT: [[INNER_END:Ltmp[0-9]+]]: {{.*}}EH_LABEL
+// ASM: bl "?fin$1@0@nested_return@@"
+// ASM: nop
+// ASM: [[OUTER_END:Ltmp[0-9]+]]: {{.*}}EH_LABEL
+// ASM: bl "?fin$0@0@nested_return@@"
 // ASM: [[INNER_HANDLER:LBB[0-9]+_[0-9]+]]: {{.*}}Block address taken
 // ASM: addi 31, 12,
 // ASM: stwu 1, -[[PRIVATE:[0-9]+]](1)
@@ -211,11 +241,7 @@ outside:
 // ASM: addi 1, 1, [[PRIVATE]]
 // ASM: $sehxdata$nested_return:
 // ASM: .long [[SCOPE_BEGIN:Ltmp[0-9]+]]
-// ASM-NEXT: .long {{Ltmp[0-9]+}}
-// ASM-NEXT: .long [[INNER_HANDLER]]
-// ASM-NEXT: .long 0
-// ASM-NEXT: .long [[UNWIND_BEGIN]]
-// ASM-NEXT: .long [[UNWIND_END]]
+// ASM-NEXT: .long [[INNER_END]]
 // ASM-NEXT: .long [[INNER_HANDLER]]
 // ASM-NEXT: .long 0
 // ASM-NEXT: .long [[SCOPE_BEGIN]]
@@ -254,8 +280,7 @@ extern "C" int dynamic_return(int n) {
 
 // ASM-LABEL: large_return:
 // ASM: bl _RtlCheckStack12
-// ASM: bl __jump_unwind
-// ASM: add 1, 31, 12
+// ASM: bl "?fin$0@0@large_return@@"
 extern "C" int large_return(int n) {
   char buffer[40000];
   __try { escape(buffer); return risky(n); }
@@ -300,4 +325,4 @@ extern "C" void helper_local_exit(int n) {
 // OBJ-DAG: IMAGE_REL_PPC_ADDR32 $sehxdata$memory
 // OBJ-DAG: IMAGE_REL_PPC_ADDR32 {{.*}}filt
 // OBJ-DAG: IMAGE_REL_PPC_ADDR32 $sehxdata$nested_finally
-// OBJ-DAG: IMAGE_REL_PPC_REL24 __jump_unwind
+// KERNEL-OBJ: IMAGE_REL_PPC_REL24 __jump_unwind

@@ -964,7 +964,8 @@ void CodeGenFunction::PopCleanupBlock(bool FallthroughIsBranchThrough,
 
       // IV.  Pop the cleanup and emit it.
       // Local unwind must still name the exited scope, not its parent.
-      if (getTarget().getTriple().isOSXbox360() && Fn->isSEHFinally())
+      if (getTarget().getTriple().isOSXbox360() &&
+          !CGM.getCodeGenOpts().Xbox360Libunwind && Fn->isSEHFinally())
         cleanupFlags.setSEHUnwindDest(getInvokeDest());
       Scope.MarkEmitted();
       EHStack.popCleanup();

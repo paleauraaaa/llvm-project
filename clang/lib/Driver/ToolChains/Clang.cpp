@@ -7319,6 +7319,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   Args.addOptInFlag(CmdArgs, options::OPT_mspeculative_load_hardening,
                     options::OPT_mno_speculative_load_hardening);
 
+  Args.addOptInFlag(CmdArgs, options::OPT_mxbox360_libunwind,
+                    options::OPT_mno_xbox360_libunwind);
+
   RenderSSPOptions(D, TC, Args, CmdArgs, KernelOrKext);
   RenderSCPOptions(TC, Args, CmdArgs);
   RenderTrivialAutoVarInitOptions(D, TC, Args, CmdArgs);

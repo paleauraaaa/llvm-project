@@ -1776,7 +1776,8 @@ struct PerformSEHFinally final : EHScopeStack::Cleanup {
     }
 
     llvm::BasicBlock *UnwindCont = nullptr;
-    if (CGF.getTarget().getTriple().isOSXbox360() && !F.isForEHCleanup() &&
+    if (CGF.getTarget().getTriple().isOSXbox360() &&
+        !CGM.getCodeGenOpts().Xbox360Libunwind && !F.isForEHCleanup() &&
         F.hasExitSwitch() && F.getSEHUnwindDest()) {
       llvm::BasicBlock *Unwind = CGF.createBasicBlock("seh.localunwind");
       llvm::BasicBlock *Normal = CGF.createBasicBlock("seh.finally.normal");
