@@ -229,6 +229,18 @@ public:
     memcpy(&val, (void *)addr, sizeof(val));
     return val;
   }
+#if defined(_XBOX) && _XBOX_VER == 200 && !defined(_LIBUNWIND_IS_BAREMETAL)
+  bool isXboxCodeRange(uint32_t address, uint32_t size, uint32_t imageBase,
+                       uint32_t imageSize) {
+    if (address < imageBase || !size)
+      return false;
+    XboxUnwindSection pdata, code;
+    uint32_t offset = address - imageBase;
+    return findXboxPdata(reinterpret_cast<const uint8_t *>(imageBase),
+                         imageSize, offset, pdata, &code) &&
+           size <= code.length - (offset - code.offset);
+  }
+#endif
   uintptr_t       getP(pint_t addr);
   uint64_t        getRegister(pint_t addr);
   static uint64_t getULEB128(pint_t &addr, pint_t end);

@@ -65,7 +65,27 @@ Anything older *may* work.
 Notes and Known Issues
 ----------------------
 
-* TODO
+* Xbox 360 register contexts support 64-bit general registers and VMX128
+  registers with 32-bit addresses. Module discovery uses the expected
+  ``XexPcToFileHeader`` loader entry and mapped PE headers to locate native
+  ``.pdata``. The kernel contract, loader entry layout, header availability,
+  and module lifetime have not been verified on hardware; the module must
+  remain loaded during unwinding. Xenia does not implement this loader API.
+  The cursor parses packed ``.pdata`` records and exposes native handler and
+  handler-data addresses through ``unw_get_proc_info``; these handlers use the
+  native SEH ABI, not the Itanium personality ABI. Frame walking interprets
+  supported straight-line prologues, bounded save helpers and recognized
+  epilogues to restore nonvolatile registers, including VMX128. The decoder
+  rejects detected unsupported or ambiguous sequences; arbitrary hand-written
+  control flow and stack-probe helpers are not fully supported. Native
+  exception dispatch is not implemented, and Itanium unwinding fails rather
+  than calling a native SEH handler with the wrong ABI. ``_Unwind_Find_FDE``
+  does not return native ``.pdata`` as a DWARF FDE. This is not a complete port.
+  Builds that emit ``_RtlCheckStack12`` also need a real stack-probe helper;
+  discovery tests may use a fail-fast stub only while DWARF parsing is unused.
+  The context resume sequence uses the volatile CTR register for the saved PC.
+  The low-level ``unw_word_t`` is 64 bits, while the ``_Unwind_GetGR`` and
+  ``_Unwind_SetGR`` interfaces retain their pointer-sized ABI.
 
 
 Getting Involved

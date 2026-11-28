@@ -19,6 +19,8 @@
 #define UNW_STEP_SUCCESS 1
 #define UNW_STEP_END     0
 
+#define UNW_INFO_FORMAT_XBOX_PDATA_POWERPC (1U << 30)
+
 #ifdef __cplusplus
 extern "C" {
 #endif

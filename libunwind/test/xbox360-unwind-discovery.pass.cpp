@@ -94,7 +94,9 @@ int __unw_getcontext(unw_context_t *);
 int __unw_init_local(unw_cursor_t *, unw_context_t *);
 int __unw_get_proc_info(unw_cursor_t *, unw_proc_info_t *);
 int __unw_step(unw_cursor_t *);
+int __unw_get_reg(unw_cursor_t *, unw_regnum_t, unw_word_t *);
 int __unw_set_reg(unw_cursor_t *, unw_regnum_t, unw_word_t);
+int main();
 }
 
 #if defined(LIBUNWIND_TEST_XBOX_FAIL_FAST_STACK_PROBE)
@@ -102,12 +104,51 @@ int __unw_set_reg(unw_cursor_t *, unw_regnum_t, unw_word_t);
 extern "C" [[noreturn]] void _RtlCheckStack12() { abort(); }
 #endif
 
+static _Unwind_Reason_Code countFrames(_Unwind_Context *, void *arg) {
+  unsigned &count = *static_cast<unsigned *>(arg);
+  return ++count == 2 ? _URC_END_OF_STACK : _URC_NO_REASON;
+}
+
+static __attribute__((noinline)) void checkRestoredNonvolatile() {
+  __asm__ volatile("li 14, 17" ::: "r14");
+  unw_context_t context;
+  unw_cursor_t cursor;
+  unw_word_t value;
+  assert(__unw_getcontext(&context) == UNW_ESUCCESS);
+  assert(__unw_init_local(&cursor, &context) == UNW_ESUCCESS);
+  assert(__unw_step(&cursor) == 1);
+  assert(__unw_get_reg(&cursor, UNW_PPC64_R14, &value) == UNW_ESUCCESS);
+  assert(value == UINT64_C(0x123456789abcdef0));
+}
+
+static __attribute__((noinline)) void testRestoredNonvolatile() {
+  register uint64_t value __asm__("r14") = UINT64_C(0x123456789abcdef0);
+  __asm__ volatile("" : "+r"(value));
+  checkRestoredNonvolatile();
+  __asm__ volatile("" : "+r"(value));
+  assert(value == UINT64_C(0x123456789abcdef0));
+}
+
 #if defined(LIBUNWIND_TEST_XBOX_SEH_FIXTURE)
 extern "C" [[noreturn]] int __C_specific_handler(...) { abort(); }
-static _Unwind_Reason_Code failIfTraced(_Unwind_Context *, void *) { abort(); }
+extern "C" int sehFixture(volatile int *);
+static _Unwind_Reason_Code stopAtNativeFrame(
+    int, _Unwind_Action, _Unwind_Exception_Class, _Unwind_Exception *,
+    _Unwind_Context *context, void *arg) {
+  if (_Unwind_GetRegionStart(context) ==
+      reinterpret_cast<uintptr_t>(&sehFixture))
+    *static_cast<bool *>(arg) = true;
+  return _URC_NO_REASON;
+}
 extern "C" __attribute__((noinline)) int sehFixture(volatile int *value) {
   __try {
     ++*value;
+    _Unwind_Exception exception = {};
+    assert(_Unwind_RaiseException(&exception) == _URC_FATAL_PHASE1_ERROR);
+    bool seenNative = false;
+    assert(_Unwind_ForcedUnwind(&exception, stopAtNativeFrame, &seenNative) ==
+           _URC_FATAL_PHASE2_ERROR);
+    assert(seenNative);
   } __except (1) {
     return -1;
   }
@@ -119,7 +160,7 @@ struct TestRegisters {
   typedef uint64_t link_hardened_reg_arg_t;
 };
 
-static void testLoaderIntegration() {
+static __attribute__((noinline)) void testLoaderIntegration() {
   makeImage();
   makeImage(image2);
   modules[0].imageBase = reinterpret_cast<uintptr_t>(image);
@@ -134,6 +175,10 @@ static void testLoaderIntegration() {
     assert(sections.xbox_pdata_section == module.imageBase + 0x800);
     assert(sections.xbox_pdata_section_length == 0x80);
     assert(sections.dwarf_section == 0);
+    assert(space.isXboxCodeRange(module.imageBase + 0x4fc, 4,
+                                 module.imageBase, module.imageSize));
+    assert(!space.isXboxCodeRange(module.imageBase + 0x4fc, 8,
+                                  module.imageBase, module.imageSize));
     assert(!space.findUnwindSections<TestRegisters>(module.imageBase + 0x500,
                                                    sections));
   }
@@ -168,7 +213,13 @@ static void testLoaderIntegration() {
   assert(__unw_get_proc_info(&cursor, &info) == UNW_ESUCCESS);
   assert(info.start_ip <= pc && pc < info.end_ip);
   assert(info.unwind_info_size == 8 && (info.format & 0x40000000));
-  assert(__unw_step(&cursor) == UNW_EUNSPEC);
+  assert(__unw_step(&cursor) == 1);
+  assert(__unw_get_proc_info(&cursor, &info) == UNW_ESUCCESS);
+  assert(info.start_ip == reinterpret_cast<uintptr_t>(&main));
+  unsigned frames = 0;
+  assert(_Unwind_Backtrace(countFrames, &frames) == _URC_END_OF_STACK);
+  assert(frames == 2);
+  testRestoredNonvolatile();
 
 #if defined(LIBUNWIND_TEST_XBOX_SEH_FIXTURE)
   uintptr_t sehPC = reinterpret_cast<uintptr_t>(&sehFixture);
@@ -184,9 +235,8 @@ static void testLoaderIntegration() {
       modules[0].imageSize - (info.lsda - modules[0].imageBase), 0, scope));
   assert(scope.begin >= info.start_ip && scope.end <= info.end_ip);
   assert(scope.filterOrFinally && scope.handler);
-  _Unwind_Exception exception = {};
-  assert(_Unwind_RaiseException(&exception) == _URC_FATAL_PHASE1_ERROR);
-  assert(_Unwind_Backtrace(failIfTraced, nullptr) == _URC_FATAL_PHASE1_ERROR);
+  volatile int value = 0;
+  assert(sehFixture(&value) == 0 && value == 1);
 #endif
 
   makeImage();
@@ -217,6 +267,34 @@ static void testLoaderIntegration() {
   assert(__unw_set_reg(&cursor, UNW_REG_IP, imageBase + 0x424) == UNW_ESUCCESS);
   assert(__unw_get_proc_info(&cursor, &info) == UNW_ENOINFO);
   assert(__unw_step(&cursor) == UNW_EBADFRAME);
+
+  makeImage();
+  makeImage(image2);
+  modules[1].imageBase = reinterpret_cast<uintptr_t>(image2);
+  modules[1].imageSize = ImageSize;
+  putBE32(image + 0x800, imageBase + 0x420);
+  putBE32(image + 0x804, 0x40000200);
+  putBE32(image + 0x420, 0x60000000);
+  putBE32(image + 0x424, 0x4e800020);
+  putBE32(image2 + 0x800, modules[1].imageBase + 0x420);
+  putBE32(image2 + 0x804, 0x40000000);
+  assert(__unw_set_reg(&cursor, UNW_PPC64_LR,
+                       modules[1].imageBase + 0x424) == UNW_ESUCCESS);
+  assert(__unw_set_reg(&cursor, UNW_REG_IP, imageBase + 0x420) == UNW_ESUCCESS);
+  unw_word_t originalSP, originalIP, originalLR;
+  assert(__unw_get_reg(&cursor, UNW_REG_SP, &originalSP) == UNW_ESUCCESS);
+  assert(__unw_get_reg(&cursor, UNW_REG_IP, &originalIP) == UNW_ESUCCESS);
+  assert(__unw_get_reg(&cursor, UNW_PPC64_LR, &originalLR) == UNW_ESUCCESS);
+  for (unsigned attempt = 0; attempt != 2; ++attempt) {
+    assert(__unw_step(&cursor) == UNW_EBADFRAME);
+    unw_word_t sp, ip, lr;
+    assert(__unw_get_reg(&cursor, UNW_REG_SP, &sp) == UNW_ESUCCESS);
+    assert(__unw_get_reg(&cursor, UNW_REG_IP, &ip) == UNW_ESUCCESS);
+    assert(__unw_get_reg(&cursor, UNW_PPC64_LR, &lr) == UNW_ESUCCESS);
+    assert(sp == originalSP && ip == originalIP && lr == originalLR);
+    assert(__unw_get_proc_info(&cursor, &info) == UNW_ESUCCESS);
+    assert(info.start_ip == imageBase + 0x420);
+  }
 }
 #endif
 

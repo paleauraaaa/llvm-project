@@ -58,6 +58,9 @@
 #include "Registers.hpp"
 #include "RWMutex.hpp"
 #include "Unwind-EHABI.h"
+#if defined(_XBOX) && _XBOX_VER == 200 && !defined(_LIBUNWIND_IS_BAREMETAL)
+#include "XboxUnwindStep.hpp"
+#endif
 
 #if defined(_LIBUNWIND_SUPPORT_SEH_UNWIND)
 // Provide a definition for the DISPATCHER_CONTEXT struct for old (Win7 and
@@ -3409,8 +3412,6 @@ template <typename A, typename R> int UnwindCursor<A, R>::step(bool stage2) {
 #if defined(_XBOX) && _XBOX_VER == 200 && !defined(_LIBUNWIND_IS_BAREMETAL)
   if (_xboxPdataError)
     return UNW_EBADFRAME;
-  if (_isXboxPdata)
-    return UNW_EUNSPEC;
 #endif
   // Bottom of stack is defined when unwind info cannot be found.
   if (_unwindInfoMissing)
@@ -3418,6 +3419,35 @@ template <typename A, typename R> int UnwindCursor<A, R>::step(bool stage2) {
 
   // Use unwinding info to modify register set as if function returned.
   int result;
+#if defined(_XBOX) && _XBOX_VER == 200 && !defined(_LIBUNWIND_IS_BAREMETAL)
+  if (_isXboxPdata) {
+    UnwindInfoSections sections;
+    if (!_addressSpace.template findUnwindSections<R>(_info.start_ip, sections) ||
+        sections.dso_base != _info.extra ||
+        sections.xbox_image_size > UINT32_MAX)
+      return UNW_EBADFRAME;
+    R originalRegisters = _registers;
+    unw_proc_info_t originalInfo = _info;
+    XboxFrame::Interpreter<A, R> interpreter(
+        _addressSpace, _registers, _info, sections.dso_base,
+        sections.xbox_image_size);
+    result = interpreter.step();
+    if (result != UNW_STEP_SUCCESS) {
+      _LIBUNWIND_TRACE_UNWINDING("Xbox frame restoration failed: %d", result);
+      return result;
+    }
+    this->setInfoBasedOnIPRegister(true);
+    if (_xboxPdataError) {
+      _registers = originalRegisters;
+      _info = originalInfo;
+      _unwindInfoMissing = false;
+      _isXboxPdata = true;
+      _xboxPdataError = false;
+      return UNW_EBADFRAME;
+    }
+    return _unwindInfoMissing ? UNW_STEP_END : UNW_STEP_SUCCESS;
+  } else
+#endif
 #if defined(_LIBUNWIND_CHECK_LINUX_SIGRETURN) ||                               \
     defined(_LIBUNWIND_CHECK_HAIKU_SIGRETURN)
   if (_isSigReturn) {
@@ -3447,11 +3477,8 @@ template <typename A, typename R> int UnwindCursor<A, R>::step(bool stage2) {
   if (result == UNW_STEP_SUCCESS) {
     this->setInfoBasedOnIPRegister(true);
 #if defined(_XBOX) && _XBOX_VER == 200 && !defined(_LIBUNWIND_IS_BAREMETAL)
-    // Native handlers do not use the Itanium personality ABI.
     if (_xboxPdataError)
       return UNW_EBADFRAME;
-    if (_isXboxPdata)
-      return UNW_EUNSPEC;
 #endif
     if (_unwindInfoMissing)
       return UNW_STEP_END;

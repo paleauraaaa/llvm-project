@@ -231,7 +231,7 @@ _LIBUNWIND_EXPORT const void *_Unwind_Find_FDE(const void *pc,
     return NULL;
 #if defined(_XBOX) && _XBOX_VER == 200
   // Xbox packed runtime functions are not DWARF FDEs.
-  if (info.format & 0x40000000)
+  if (info.format & UNW_INFO_FORMAT_XBOX_PDATA_POWERPC)
     return NULL;
 #endif
   bases->tbase = (uintptr_t)info.extra;

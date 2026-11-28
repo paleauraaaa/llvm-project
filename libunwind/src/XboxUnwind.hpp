@@ -178,7 +178,8 @@ inline bool readXboxSEHScope(const uint8_t *table, size_t size, uint32_t index,
 
 // PE headers are little-endian even though the Xbox 360 CPU is big-endian.
 inline bool findXboxPdata(const uint8_t *image, size_t mappedSize,
-                          uintptr_t pcOffset, XboxUnwindSection &result) {
+                          uintptr_t pcOffset, XboxUnwindSection &result,
+                          XboxUnwindSection *codeResult = nullptr) {
   if (!image || mappedSize < XboxPE::DosHeaderSize || image[0] != 'M' ||
       image[1] != 'Z')
     return false;
@@ -210,6 +211,7 @@ inline bool findXboxPdata(const uint8_t *image, size_t mappedSize,
     return false;
 
   XboxUnwindSection pdata = {0, 0};
+  XboxUnwindSection code = {0, 0};
   bool foundCode = false;
   for (uint16_t i = 0; i != count; ++i) {
     const uint8_t *section =
@@ -222,8 +224,10 @@ inline bool findXboxPdata(const uint8_t *image, size_t mappedSize,
       return false;
     if ((xboxReadLE32(section + XboxPE::SectionCharacteristicsOffset) &
          XboxPE::SectionExecutable) &&
-        pcOffset >= offset && pcOffset - offset < size)
+        pcOffset >= offset && pcOffset - offset < size) {
       foundCode = true;
+      code = {offset, size};
+    }
     if (memcmp(section, ".pdata\0\0", XboxPE::SectionNameSize) == 0) {
       if (pdata.length || !size)
         return false;
@@ -233,6 +237,8 @@ inline bool findXboxPdata(const uint8_t *image, size_t mappedSize,
   if (!foundCode || !pdata.length)
     return false;
   result = pdata;
+  if (codeResult)
+    *codeResult = code;
   return true;
 }
 

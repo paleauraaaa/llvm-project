@@ -164,6 +164,12 @@ unwind_phase1(unw_context_t *uc, unw_cursor_t *cursor, _Unwind_Exception *except
     // If there is a personality routine, ask it if it will want to stop at
     // this frame.
     if (frameInfo.handler != 0) {
+#if defined(_XBOX) && _XBOX_VER == 200
+      if (frameInfo.format & UNW_INFO_FORMAT_XBOX_PDATA_POWERPC) {
+        _LIBUNWIND_TRACE_UNWINDING("Xbox native SEH dispatch is unsupported");
+        return _URC_FATAL_PHASE1_ERROR;
+      }
+#endif
       _Unwind_Personality_Fn p = get_handler_function(&frameInfo);
       _LIBUNWIND_TRACE_UNWINDING(
           "unwind_phase1(ex_obj=%p): calling personality function %p",
@@ -293,6 +299,12 @@ unwind_phase2(unw_context_t *uc, unw_cursor_t *cursor,
     ++framesWalked;
     // If there is a personality routine, tell it we are unwinding.
     if (frameInfo.handler != 0) {
+#if defined(_XBOX) && _XBOX_VER == 200
+      if (frameInfo.format & UNW_INFO_FORMAT_XBOX_PDATA_POWERPC) {
+        _LIBUNWIND_TRACE_UNWINDING("Xbox native SEH dispatch is unsupported");
+        return _URC_FATAL_PHASE2_ERROR;
+      }
+#endif
       _Unwind_Personality_Fn p = get_handler_function(&frameInfo);
       _Unwind_Action action = _UA_CLEANUP_PHASE;
       if (sp == exception_object->private_2) {
@@ -364,7 +376,8 @@ unwind_phase2_forced(unw_context_t *uc, unw_cursor_t *cursor,
   // frame walked is unwind_phase2_forced.
   unsigned framesWalked = 1;
   // Walk each frame until we reach where search phase said to stop
-  while (__unw_step_stage2(cursor) > 0) {
+  int stepResult;
+  while ((stepResult = __unw_step_stage2(cursor)) > 0) {
 
     // Update info about this frame.
     unw_proc_info_t frameInfo;
@@ -413,6 +426,12 @@ unwind_phase2_forced(unw_context_t *uc, unw_cursor_t *cursor,
     ++framesWalked;
     // If there is a personality routine, tell it we are unwinding.
     if (frameInfo.handler != 0) {
+#if defined(_XBOX) && _XBOX_VER == 200
+      if (frameInfo.format & UNW_INFO_FORMAT_XBOX_PDATA_POWERPC) {
+        _LIBUNWIND_TRACE_UNWINDING("Xbox native SEH dispatch is unsupported");
+        return _URC_FATAL_PHASE2_ERROR;
+      }
+#endif
       _Unwind_Personality_Fn p = get_handler_function(&frameInfo);
       _LIBUNWIND_TRACE_UNWINDING(
           "unwind_phase2_forced(ex_obj=%p): calling personality function %p",
@@ -447,6 +466,10 @@ unwind_phase2_forced(unw_context_t *uc, unw_cursor_t *cursor,
     }
   }
 
+#if defined(_XBOX) && _XBOX_VER == 200
+  if (stepResult < 0)
+    return _URC_FATAL_PHASE2_ERROR;
+#endif
   // Call stop function one last time and tell it we've reached the end
   // of the stack.
   _LIBUNWIND_TRACE_UNWINDING("unwind_phase2_forced(ex_obj=%p): calling stop "
