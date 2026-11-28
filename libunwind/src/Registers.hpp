@@ -19,6 +19,9 @@
 #include "libunwind.h"
 #include "libunwind_ext.h"
 #include "shadow_stack_unwind.h"
+#if defined(_XBOX) && _XBOX_VER == 200
+#include "XboxSEHCallFrame.h"
+#endif
 
 #if defined(__APPLE__)
 #include <sys/sysctl.h>
@@ -1185,8 +1188,10 @@ inline const char *Registers_ppc::getRegisterName(int regNum) {
 #if defined(_XBOX) && _XBOX_VER == 200
 class Registers_ppc64;
 extern "C" void __libunwind_Registers_ppc64_jumpto(Registers_ppc64 *);
+// The final argument is XBOX_SEH_CALL_FILTER or XBOX_SEH_CALL_CLEANUP.
 extern "C" int __libunwind_xbox_seh_call(const Registers_ppc64 *, uintptr_t,
-                                         uintptr_t, uintptr_t);
+                                         uintptr_t, uintptr_t, unsigned);
+extern "C" const char __libunwind_xbox_seh_call_return;
 #endif
 /// Registers_ppc64 holds the register state of a thread in a 64-bit PowerPC
 /// process.

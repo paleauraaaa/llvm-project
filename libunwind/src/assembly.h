@@ -33,6 +33,7 @@
 #define PPC64_OFFS_FP     312
 #define PPC64_OFFS_V      824
 #if defined(_XBOX) && _XBOX_VER == 200
+#include "XboxSEHCallFrame.h"
 #define PPC64_XBOX_OFFS_FPSCR (PPC64_OFFS_FP + 8)
 #define PPC64_XBOX_OFFS_VSCR0 (PPC64_OFFS_FP + 24)
 #define PPC64_XBOX_OFFS_VSCR1 (PPC64_OFFS_FP + 40)

@@ -46,6 +46,12 @@ extern void __unw_save_vfp_as_X(unw_cursor_t *);
 
 extern const char *__unw_regname(unw_cursor_t *, unw_regnum_t);
 extern int __unw_get_proc_info(unw_cursor_t *, unw_proc_info_t *);
+#if defined(_XBOX) && _XBOX_VER == 200 && !defined(_LIBUNWIND_IS_BAREMETAL)
+// Requires a cursor on a cleanup directly invoked by the SEH trampoline.
+// Returns an error without modifying the cursor or output if it cannot prove
+// that relationship.
+extern int __unw_xbox_get_seh_cleanup_parent(unw_cursor_t *, uintptr_t *);
+#endif
 extern int __unw_is_fpreg(unw_cursor_t *, unw_regnum_t);
 extern int __unw_is_signal_frame(unw_cursor_t *);
 extern int __unw_get_proc_name(unw_cursor_t *, char *, size_t, unw_word_t *);

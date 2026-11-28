@@ -986,6 +986,9 @@ public:
   virtual bool        getFunctionName(char *buf, size_t len, unw_word_t *off);
   virtual void        setInfoBasedOnIPRegister(bool isReturnAddress = false);
   virtual const char *getRegisterName(int num);
+#if defined(_XBOX) && _XBOX_VER == 200 && !defined(_LIBUNWIND_IS_BAREMETAL)
+  int getXboxSEHCleanupParent(uintptr_t &parent);
+#endif
 #ifdef __arm__
   virtual void        saveVFPAsX();
 #endif
@@ -3406,6 +3409,31 @@ int UnwindCursor<A, R>::stepThroughSigReturn() {
   return UNW_STEP_SUCCESS;
 }
 #endif // defined(_LIBUNWIND_CHECK_HAIKU_SIGRETURN)
+
+#if defined(_XBOX) && _XBOX_VER == 200 && !defined(_LIBUNWIND_IS_BAREMETAL)
+template <typename A, typename R>
+int UnwindCursor<A, R>::getXboxSEHCleanupParent(uintptr_t &parent) {
+  if (!_isXboxPdata || _info.start_ip > UINT32_MAX)
+    return UNW_EBADFRAME;
+  uint32_t cleanup = uint32_t(_info.start_ip);
+  UnwindCursor<A, R> caller(*this);
+  int result = caller.step();
+  if (result != UNW_STEP_SUCCESS)
+    return result < 0 ? result : UNW_ENOINFO;
+  if (!caller._isXboxPdata ||
+      caller._info.start_ip !=
+          reinterpret_cast<uintptr_t>(&__libunwind_xbox_seh_call) ||
+      caller._registers.getIP() !=
+          reinterpret_cast<uintptr_t>(&__libunwind_xbox_seh_call_return))
+    return UNW_EBADFRAME;
+  uint32_t value;
+  if (!XboxFrame::getCleanupParent(_addressSpace, caller._registers.getSP(),
+                                   cleanup, value))
+    return UNW_EBADFRAME;
+  parent = value;
+  return UNW_ESUCCESS;
+}
+#endif
 
 template <typename A, typename R> int UnwindCursor<A, R>::step(bool stage2) {
   (void)stage2;

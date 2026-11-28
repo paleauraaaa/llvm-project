@@ -491,7 +491,6 @@ Lnovec:
 
 #if defined(_XBOX) && _XBOX_VER == 200
 // The first 80 bytes are the outgoing linkage and argument area.
-#define XBOX_SEH_FRAME_SIZE 1440
 #define XBOX_SEH_SCRATCH 80
 #define XBOX_SEH_GPR(n) (96 + ((n) - 14) * 8)
 #define XBOX_SEH_FPR(n) (240 + ((n) - 14) * 8)
@@ -502,7 +501,7 @@ Lnovec:
 #define XBOX_PDATA_PROLOGUE_MASK 0xff
 #define XBOX_PDATA_POWERPC 0x40000000
 
-// int __libunwind_xbox_seh_call(registers, funclet, argument, parent)
+// int __libunwind_xbox_seh_call(registers, funclet, argument, parent, cleanup)
 // The register snapshot belongs to the target frame, not its caller.
 DEFINE_LIBUNWIND_FUNCTION(__libunwind_xbox_seh_call)
 .Lxbox_seh_call_begin:
@@ -510,7 +509,7 @@ DEFINE_LIBUNWIND_FUNCTION(__libunwind_xbox_seh_call)
   stw   0, -8(1)
   mfcr  0
   stw   0, -12(1)
-  stwu  1, -XBOX_SEH_FRAME_SIZE(1)
+  stwu  1, -XBOX_SEH_CALL_FRAME_SIZE(1)
   .irp n, 14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31
     std   \n, XBOX_SEH_GPR(\n)(1)
     stfd  \n, XBOX_SEH_FPR(\n)(1)
@@ -520,6 +519,9 @@ DEFINE_LIBUNWIND_FUNCTION(__libunwind_xbox_seh_call)
     stvx128 \n, 0, 0
   .endr
 .Lxbox_seh_call_prologue_end:
+  stw   4, XBOX_SEH_CALL_TARGET_OFFSET(1)
+  stw   6, XBOX_SEH_CALL_PARENT_OFFSET(1)
+  stw   7, XBOX_SEH_CALL_CLEANUP_OFFSET(1)
   mr    8, 4
   mr    9, 5
   mr    10, 6
@@ -542,6 +544,9 @@ DEFINE_LIBUNWIND_FUNCTION(__libunwind_xbox_seh_call)
   mr    3, 9
   mr    12, 10
   bctrl
+  .globl SYMBOL_NAME(__libunwind_xbox_seh_call_return)
+  HIDDEN_SYMBOL(SYMBOL_NAME(__libunwind_xbox_seh_call_return))
+SYMBOL_NAME(__libunwind_xbox_seh_call_return):
 
   .irp n, PPC64_XBOX_NONVOLATILE_VMX_REGISTERS
     addi    0, 1, XBOX_SEH_VR(\n)
@@ -551,11 +556,11 @@ DEFINE_LIBUNWIND_FUNCTION(__libunwind_xbox_seh_call)
     ld    \n, XBOX_SEH_GPR(\n)(1)
     lfd   \n, XBOX_SEH_FPR(\n)(1)
   .endr
-  lwz   0, (XBOX_SEH_FRAME_SIZE - 12)(1)
+  lwz   0, (XBOX_SEH_CALL_FRAME_SIZE - 12)(1)
   mtcrf 0x3c, 0
-  lwz   0, (XBOX_SEH_FRAME_SIZE - 8)(1)
+  lwz   0, (XBOX_SEH_CALL_FRAME_SIZE - 8)(1)
   mtlr  0
-  addi  1, 1, XBOX_SEH_FRAME_SIZE
+  addi  1, 1, XBOX_SEH_CALL_FRAME_SIZE
   blr
 .Lxbox_seh_call_end:
 
@@ -1424,4 +1429,4 @@ DEFINE_LIBUNWIND_FUNCTION(_ZN9libunwind19Registers_loongarch6jumptoEv)
 
 NO_EXEC_STACK_DIRECTIVE
 
-#endif /* !defined(__wasm__) */
+#endif /* !defined(__wasm__) */ 

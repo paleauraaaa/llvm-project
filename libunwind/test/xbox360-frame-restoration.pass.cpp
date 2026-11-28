@@ -333,6 +333,34 @@ static void testDynamicFrame() {
   assert(regs.gpr[31] == 0x87654321);
 }
 
+static void testCleanupParent() {
+  static Memory memory;
+  const uint32_t sp = 0x2000, cleanup = 0x1200;
+  memory.put32(sp + XBOX_SEH_CALL_TARGET_OFFSET, cleanup);
+  memory.put32(sp + XBOX_SEH_CALL_PARENT_OFFSET, 0x3800);
+  memory.put32(sp + XBOX_SEH_CALL_CLEANUP_OFFSET, 1);
+  uint32_t parent = 0;
+  assert(XboxFrame::getCleanupParent(memory, sp, cleanup, parent));
+  assert(parent == 0x3800 && parent != sp);
+  assert(!XboxFrame::getCleanupParent(memory, sp, cleanup + 4, parent));
+  memory.put32(sp + XBOX_SEH_CALL_CLEANUP_OFFSET, 0);
+  assert(!XboxFrame::getCleanupParent(memory, sp, cleanup, parent));
+  memory.put32(sp + XBOX_SEH_CALL_CLEANUP_OFFSET, 2);
+  assert(!XboxFrame::getCleanupParent(memory, sp, cleanup, parent));
+  memory.put32(sp + XBOX_SEH_CALL_CLEANUP_OFFSET, 1);
+  memory.put32(sp + XBOX_SEH_CALL_PARENT_OFFSET, 0);
+  assert(!XboxFrame::getCleanupParent(memory, sp, cleanup, parent));
+  memory.put32(sp + XBOX_SEH_CALL_PARENT_OFFSET, 0x3804);
+  assert(!XboxFrame::getCleanupParent(memory, sp, cleanup, parent));
+  assert(!XboxFrame::getCleanupParent(memory, sp + 4, cleanup, parent));
+  assert(!XboxFrame::getCleanupParent(memory, 0, cleanup, parent));
+  assert(!XboxFrame::getCleanupParent(memory, UINT64_C(0x100000000), cleanup,
+                                      parent));
+  assert(!XboxFrame::getCleanupParent(memory, UINT64_C(0xfffffff0), cleanup,
+                                      parent));
+  assert(parent == 0x3800);
+}
+
 int main() {
   testBodyAndPartialPrologue();
   testVectorAndHelper();
@@ -340,6 +368,7 @@ int main() {
   testUnsupportedState();
   testBodyComparisons();
   testDynamicFrame();
+  testCleanupParent();
 #if defined(__powerpc64__) && defined(_XBOX) && _XBOX_VER == 200
   DbgPrint("libunwind xbox frame restoration: PASS\n");
 #endif

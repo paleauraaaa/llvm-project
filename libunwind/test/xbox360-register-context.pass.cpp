@@ -57,6 +57,7 @@ extern "C" int test_seh_call(const Registers_ppc64 *, SEHCallValues *,
 extern "C" int DbgPrint(const char *, ...);
 extern "C" const uint8_t __ImageBase;
 extern "C" const uint8_t test_seh_after_call;
+extern "C" const uint8_t test_seh_funclet;
 
 static const Registers_ppc64 *sehTarget;
 
@@ -139,6 +140,12 @@ extern "C" void test_seh_frame(uint32_t pc, uint32_t sp) {
   info.end_ip = function.end;
   info.format = function.packed;
   SEHFrameMemory memory;
+  uint32_t parent = 0;
+  uint32_t cleanup = reinterpret_cast<uintptr_t>(&test_seh_funclet);
+  assert(pc == reinterpret_cast<uintptr_t>(&__libunwind_xbox_seh_call_return));
+  assert(XboxFrame::getCleanupParent(memory, sp, cleanup, parent));
+  assert(parent == 0x12345670);
+  assert(!XboxFrame::getCleanupParent(memory, sp, cleanup + 4, parent));
   SEHFrameRegisters regs = {sp, pc, pc};
   XboxFrame::Interpreter<SEHFrameMemory, SEHFrameRegisters> interpreter(
       memory, regs, info, base, size);
@@ -330,6 +337,7 @@ test_seh_call:
   addi 4, 4, test_seh_funclet@l
   lwz 5, 80(1)
   lwz 6, 88(1)
+  li 7, 1
   bl __libunwind_xbox_seh_call
   .globl test_seh_after_call
 test_seh_after_call:

@@ -9,6 +9,7 @@
 #ifndef __XBOXUNWINDSTEP_HPP__
 #define __XBOXUNWINDSTEP_HPP__
 
+#include "XboxSEHCallFrame.h"
 #include "XboxUnwind.hpp"
 #include "libunwind.h"
 #include "libunwind_ext.h"
@@ -201,6 +202,25 @@ inline bool addOffset(uint32_t base, int32_t offset, uint32_t &result) {
       return false;
     result = base - amount;
   }
+  return true;
+}
+
+template <typename A>
+bool getCleanupParent(A &as, uint64_t trampolineSP, uint32_t cleanup,
+                      uint32_t &parent) {
+  if (!trampolineSP ||
+      trampolineSP > UINT32_MAX - XBOX_SEH_CALL_CLEANUP_OFFSET -
+                         (WordSize - 1) ||
+      trampolineSP % StackAlignment)
+    return false;
+  uint32_t sp = uint32_t(trampolineSP);
+  if (as.get32(sp + XBOX_SEH_CALL_CLEANUP_OFFSET) != XBOX_SEH_CALL_CLEANUP ||
+      as.get32(sp + XBOX_SEH_CALL_TARGET_OFFSET) != cleanup)
+    return false;
+  uint32_t value = as.get32(sp + XBOX_SEH_CALL_PARENT_OFFSET);
+  if (!value || value % StackAlignment)
+    return false;
+  parent = value;
   return true;
 }
 

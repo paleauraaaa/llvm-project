@@ -15,7 +15,9 @@
 
 #if defined(_XBOX) && _XBOX_VER == 200
 #include "../src/AddressSpace.hpp"
+#include "../src/Registers.hpp"
 #include "../src/RWMutex.hpp"
+#include "../src/libunwind_ext.h"
 #include <unwind.h>
 #endif
 
@@ -160,6 +162,35 @@ struct TestRegisters {
   typedef uint64_t link_hardened_reg_arg_t;
 };
 
+static int expectedCleanupKind;
+static uintptr_t expectedParents[2];
+
+extern "C" __attribute__((noinline)) int testCleanupParent(uintptr_t depth) {
+  unw_context_t context;
+  unw_cursor_t cursor;
+  assert(__unw_getcontext(&context) == UNW_ESUCCESS);
+  assert(__unw_init_local(&cursor, &context) == UNW_ESUCCESS);
+  uintptr_t parent = 0;
+  int result = __unw_xbox_get_seh_cleanup_parent(&cursor, &parent);
+  if (!expectedCleanupKind) {
+    assert(result == UNW_EBADFRAME && parent == 0);
+    return 0;
+  }
+  assert(result == UNW_ESUCCESS);
+  assert(parent == expectedParents[depth]);
+  if (depth) {
+    Registers_ppc64 registers(&context);
+    assert(__libunwind_xbox_seh_call(
+               &registers, reinterpret_cast<uintptr_t>(&testCleanupParent),
+               0, expectedParents[0], XBOX_SEH_CALL_CLEANUP) == 0);
+    parent = 0;
+    assert(__unw_xbox_get_seh_cleanup_parent(&cursor, &parent) ==
+           UNW_ESUCCESS);
+    assert(parent == expectedParents[1]);
+  }
+  return 0;
+}
+
 static __attribute__((noinline)) void testLoaderIntegration() {
   makeImage();
   makeImage(image2);
@@ -213,6 +244,23 @@ static __attribute__((noinline)) void testLoaderIntegration() {
   assert(__unw_get_proc_info(&cursor, &info) == UNW_ESUCCESS);
   assert(info.start_ip <= pc && pc < info.end_ip);
   assert(info.unwind_info_size == 8 && (info.format & 0x40000000));
+  uintptr_t parent = 0;
+  assert(__unw_xbox_get_seh_cleanup_parent(nullptr, &parent) == UNW_EINVAL);
+  assert(__unw_xbox_get_seh_cleanup_parent(&cursor, nullptr) == UNW_EINVAL);
+  assert(__unw_xbox_get_seh_cleanup_parent(&cursor, &parent) != UNW_ESUCCESS);
+  assert(parent == 0);
+  Registers_ppc64 registers(&context);
+  expectedParents[0] = uintptr_t(registers.getSP());
+  expectedParents[1] = space.get32(expectedParents[0]);
+  assert(expectedParents[0] && expectedParents[1] != expectedParents[0]);
+  expectedCleanupKind = 1;
+  assert(__libunwind_xbox_seh_call(
+             &registers, reinterpret_cast<uintptr_t>(&testCleanupParent),
+             1, expectedParents[1], XBOX_SEH_CALL_CLEANUP) == 0);
+  expectedCleanupKind = 0;
+  assert(__libunwind_xbox_seh_call(
+             &registers, reinterpret_cast<uintptr_t>(&testCleanupParent),
+             0, expectedParents[1], XBOX_SEH_CALL_FILTER) == 0);
   assert(__unw_step(&cursor) == 1);
   assert(__unw_get_proc_info(&cursor, &info) == UNW_ESUCCESS);
   assert(info.start_ip == reinterpret_cast<uintptr_t>(&main));

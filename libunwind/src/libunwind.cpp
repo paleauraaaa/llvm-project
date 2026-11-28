@@ -94,6 +94,19 @@ _LIBUNWIND_HIDDEN int __unw_init_local(unw_cursor_t *cursor,
 }
 _LIBUNWIND_WEAK_ALIAS(__unw_init_local, unw_init_local)
 
+#if defined(__powerpc64__) && defined(_XBOX) && _XBOX_VER == 200 &&            \
+    !defined(_LIBUNWIND_IS_BAREMETAL)
+_LIBUNWIND_HIDDEN int
+__unw_xbox_get_seh_cleanup_parent(unw_cursor_t *cursor, uintptr_t *parent) {
+  if (!cursor || !parent)
+    return UNW_EINVAL;
+  auto *co =
+      reinterpret_cast<UnwindCursor<LocalAddressSpace, Registers_ppc64> *>(
+          cursor);
+  return co->getXboxSEHCleanupParent(*parent);
+}
+#endif
+
 /// Get value of specified register at cursor position in stack frame.
 _LIBUNWIND_HIDDEN int __unw_get_reg(unw_cursor_t *cursor, unw_regnum_t regNum,
                                     unw_word_t *value) {
