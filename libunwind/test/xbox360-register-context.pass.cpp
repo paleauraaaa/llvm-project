@@ -34,7 +34,8 @@ struct alignas(16) Results {
 
 static const v128 Expected = {{0x12345678, 0x9abcdef0, 0x11223344, 0x55667788}};
 
-extern "C" int test_capture(unw_context_t *, const v128 *, const double *);
+extern "C" int test_capture(unw_context_t *, const v128 *, const double *,
+                            uint64_t *, v128 *, const v128 *);
 extern "C" void test_resume(unw_context_t *, Results *);
 extern "C" int DbgPrint(const char *, ...);
 
@@ -59,6 +60,19 @@ test_capture:
   std 0, 128(1)
   stfd 14, 96(1)
   lfd 14, 0(5)
+  mffs 0
+  stfd 0, 80(1)
+  mtfsfi 7, 1
+  mffs 0
+  stfd 0, 0(6)
+  mfvscr 0
+  addi 9, 1, 112
+  stvx 0, 0, 9
+  lvx 0, 0, 8
+  mtvscr 0
+  mfvscr 0
+  stvx 0, 0, 7
+  lfd 0, 0(5)
   addi 5, 1, 16
   stvx128 64, 0, 5
   addi 5, 1, 32
@@ -84,6 +98,11 @@ test_capture:
   lvx128 96, 0, 5
   addi 5, 1, 64
   lvx128 127, 0, 5
+  addi 5, 1, 112
+  lvx 0, 0, 5
+  mtvscr 0
+  lfd 0, 80(1)
+  mtfsf 255, 0
   lfd 14, 96(1)
   ld 0, 128(1)
   mtlr 0
@@ -150,8 +169,20 @@ int main() {
   alignas(16) v128 input = Expected;
   double inputFloat = 45.25;
   unw_context_t context;
-  assert(test_capture(&context, &input, &inputFloat) == 0);
+  memset(&context, 0xa5, sizeof(context));
+  uint64_t expectedFPSCR;
+  alignas(16) v128 expectedVSCR;
+  alignas(16) v128 inputVSCR = {{0, 0, 0, 0x10000}};
+  assert(test_capture(&context, &input, &inputFloat, &expectedFPSCR,
+                      &expectedVSCR, &inputVSCR) == 0);
   Registers_ppc64 registers(&context);
+  assert(context.data[1] == 0);
+  assert((expectedFPSCR & 3) != 0);
+  assert((expectedVSCR.vec[3] & 0x10000) != 0);
+  assert(registers.getXboxFPSCR() == expectedFPSCR);
+  v128 vscr = registers.getXboxVSCR();
+  assert(memcmp(&vscr, &expectedVSCR, sizeof(vscr)) == 0);
+  assert(registers.getFloatRegister(UNW_PPC64_F0) == inputFloat);
   assert(registers.getFloatRegister(UNW_PPC64_F14) == inputFloat);
   const int vectors[] = {UNW_PPC64_V0,       UNW_PPC64_V31,
                          UNW_PPC64_V32,      UNW_PPC64_V32 + 31,

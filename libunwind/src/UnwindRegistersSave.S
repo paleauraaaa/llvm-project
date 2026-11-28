@@ -412,6 +412,9 @@ LnoR2Fix:
   std   0,  PPC64_OFFS_VRSAVE(3)
 
 #if defined(_XBOX) && _XBOX_VER == 200
+  // MSR is not available from a problem-state context capture.
+  li    0, 0
+  std   0, 8(3)
   .irp n, 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31
     stfd \n, (PPC64_OFFS_FP + \n * 16)(3)
   .endr
@@ -425,6 +428,15 @@ LnoR2Fix:
     ld      5, 8(4)
     std     5, (PPC64_OFFS_V + \n * 16 + 8)(3)
   .endr
+  // The unused halves of the first three FPR slots hold the status registers.
+  mffs  0
+  stfd  0, PPC64_XBOX_OFFS_FPSCR(3)
+  mfvscr 0
+  stvx  0, 0, 4
+  ld    5, 0(4)
+  std   5, PPC64_XBOX_OFFS_VSCR0(3)
+  ld    5, 8(4)
+  std   5, PPC64_XBOX_OFFS_VSCR1(3)
   addi  1, 1, 64
 #elif defined(__VSX__)
   // save VS registers

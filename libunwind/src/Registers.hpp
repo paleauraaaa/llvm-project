@@ -1225,6 +1225,18 @@ public:
   void      setCR(uint64_t value) { _registers.__cr = value; }
   uint64_t  getLR() const         { return _registers.__lr; }
   void      setLR(uint64_t value) { _registers.__lr = value; }
+#if defined(_XBOX) && _XBOX_VER == 200
+  // Xbox has no VSX, so the upper halves of the FPR slots are available.
+  uint64_t getXboxFPSCR() const {
+    return _vectorScalarRegisters[0].asfloat.v2;
+  }
+  v128 getXboxVSCR() const {
+    v128 value;
+    memcpy(&value.vec[0], &_vectorScalarRegisters[1].asfloat.v2, 8);
+    memcpy(&value.vec[2], &_vectorScalarRegisters[2].asfloat.v2, 8);
+    return value;
+  }
+#endif
 
 private:
   struct ppc64_thread_state_t {
