@@ -117,6 +117,33 @@ _LIBUNWIND_HIDDEN int __unw_xbox_get_seh_scope(
   return co->getXboxSEHScope(controlPC, scopeIndex, *scope);
 }
 
+_LIBUNWIND_HIDDEN int __unw_xbox_call_seh_filter(unw_cursor_t *cursor,
+                                                 uintptr_t controlPC,
+                                                 uint32_t scopeIndex,
+                                                 void *exceptionPointers,
+                                                 int *result) {
+  if (!cursor || !exceptionPointers || !result)
+    return UNW_EINVAL;
+  auto *co =
+      reinterpret_cast<UnwindCursor<LocalAddressSpace, Registers_ppc64> *>(
+          cursor);
+  return co->callXboxSEHScope(controlPC, scopeIndex,
+                              reinterpret_cast<uintptr_t>(exceptionPointers),
+                              nullptr, result);
+}
+
+_LIBUNWIND_HIDDEN int
+__unw_xbox_call_seh_cleanup(unw_cursor_t *cursor, uintptr_t controlPC,
+                            uint32_t scopeIndex, _Unwind_Exception *exception) {
+  if (!cursor || !exception || (reinterpret_cast<uintptr_t>(exception) & 3))
+    return UNW_EINVAL;
+  auto *co =
+      reinterpret_cast<UnwindCursor<LocalAddressSpace, Registers_ppc64> *>(
+          cursor);
+  __unw_xbox_seh_cleanup_state state = {exception, cursor, scopeIndex, 0};
+  return co->callXboxSEHScope(controlPC, scopeIndex, 0, &state, nullptr);
+}
+
 _LIBUNWIND_HIDDEN int __unw_xbox_transfer_seh_handler(
     unw_cursor_t *cursor, uintptr_t controlPC, uint32_t scopeIndex,
     uint32_t exceptionCode, _Unwind_Exception *exception) {

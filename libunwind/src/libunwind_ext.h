@@ -82,6 +82,18 @@ extern int __unw_xbox_get_seh_frame(unw_cursor_t *, __unw_xbox_seh_frame *);
 // scope, whose callable target must reside in the same executable image.
 extern int __unw_xbox_get_seh_scope(unw_cursor_t *, uintptr_t, uint32_t,
                                     __unw_xbox_seh_scope *);
+// Invoke an active C SEH filter or cleanup with the target frame's
+// nonvolatile registers and parent entry SP. A filter receives an Xbox
+// EXCEPTION_POINTERS-compatible object and returns its disposition through
+// the output argument. A cleanup snapshots the exception, cursor, and scope
+// index for collision handling. On error no funclet is called and the filter
+// output is unchanged. The caller must keep the frame, module, and exception
+// alive, and the cursor unchanged, until the call returns or a collision
+// commits.
+extern int __unw_xbox_call_seh_filter(unw_cursor_t *, uintptr_t, uint32_t,
+                                      void *, int *);
+extern int __unw_xbox_call_seh_cleanup(unw_cursor_t *, uintptr_t, uint32_t,
+                                       _Unwind_Exception *);
 // The control PC is the exact instruction address, or a return address minus
 // one. Transfers to the selected active C SEH handler; returns only on error
 // without modifying the cursor. The caller must keep the frame and module

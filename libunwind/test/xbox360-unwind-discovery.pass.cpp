@@ -135,13 +135,157 @@ static __attribute__((noinline)) void testRestoredNonvolatile() {
 #if defined(LIBUNWIND_TEST_XBOX_SEH_FIXTURE)
 extern "C" [[noreturn]] int __C_specific_handler(...) { abort(); }
 extern "C" unsigned long _exception_code(void);
-#pragma intrinsic(_exception_code)
+extern "C" int _abnormal_termination(void);
+#pragma intrinsic(_exception_code, _abnormal_termination)
 extern "C" int sehFixture(volatile int *);
 extern "C" int sehTransferFixture(int);
 static _Unwind_Exception handledException;
 static bool handlerEntered;
 static unsigned exceptionReleases;
 static unsigned expectedReleases;
+static _Unwind_Exception scopeException;
+static unw_cursor_t *expectedScopeCursor;
+static uint32_t expectedScopeIndex;
+static unsigned finallyCalls;
+static unsigned abnormalFinallyCalls;
+
+struct TestExceptionRecord {
+  uint32_t code;
+};
+struct TestExceptionPointers {
+  TestExceptionRecord *record;
+  void *context;
+};
+
+static uint32_t findScope(unw_cursor_t *cursor, uintptr_t pc, bool handler) {
+  for (uint32_t index = 0;; ++index) {
+    __unw_xbox_seh_scope scope = {};
+    int result = __unw_xbox_get_seh_scope(cursor, pc, index, &scope);
+    assert(result != UNW_XBOX_SEH_SCOPE_END && result >= 0);
+    if (result == UNW_XBOX_SEH_SCOPE_ACTIVE && (scope.handler != 0) == handler)
+      return index;
+  }
+}
+
+static __attribute__((noinline)) void checkFilterScope(int expected) {
+  unw_context_t context;
+  unw_cursor_t cursor;
+  unw_word_t ip, fp;
+  assert(__unw_getcontext(&context) == UNW_ESUCCESS);
+  assert(__unw_init_local(&cursor, &context) == UNW_ESUCCESS);
+  assert(__unw_step(&cursor) == UNW_STEP_SUCCESS);
+  assert(__unw_get_reg(&cursor, UNW_REG_IP, &ip) == UNW_ESUCCESS);
+  assert(__unw_get_reg(&cursor, UNW_PPC64_R31, &fp) == UNW_ESUCCESS);
+  uint32_t index = findScope(&cursor, ip - 1, true);
+  TestExceptionRecord record = {0x20474343};
+  TestExceptionPointers pointers = {&record, nullptr};
+  int result = 77;
+  assert(__unw_xbox_call_seh_filter(nullptr, ip - 1, index, &pointers,
+                                    &result) == UNW_EINVAL);
+  assert(__unw_xbox_call_seh_filter(&cursor, ip - 1, index, nullptr, &result) ==
+         UNW_EINVAL);
+  assert(__unw_xbox_call_seh_filter(&cursor, ip - 1, index, &pointers,
+                                    nullptr) == UNW_EINVAL);
+  assert(__unw_xbox_call_seh_filter(&cursor, ip + 4, index, &pointers,
+                                    &result) == UNW_EBADFRAME);
+  assert(__unw_xbox_call_seh_filter(&cursor, ip - 1, UINT32_MAX, &pointers,
+                                    &result) == UNW_EBADFRAME);
+  assert(__unw_xbox_call_seh_cleanup(&cursor, ip - 1, index, &scopeException) ==
+         UNW_EBADFRAME);
+  assert(__unw_set_reg(&cursor, UNW_PPC64_R31, 0) == UNW_ESUCCESS);
+  assert(__unw_xbox_call_seh_filter(&cursor, ip - 1, index, &pointers,
+                                    &result) == UNW_EBADFRAME);
+  assert(result == 77);
+  assert(__unw_set_reg(&cursor, UNW_PPC64_R31, fp) == UNW_ESUCCESS);
+  assert(__unw_xbox_call_seh_filter(&cursor, ip - 1, index, &pointers,
+                                    &result) == UNW_ESUCCESS);
+  assert(result == expected);
+  record.code = 0;
+  assert(__unw_xbox_call_seh_filter(&cursor, ip - 1, index, &pointers,
+                                    &result) == UNW_ESUCCESS);
+  assert(result == 0);
+  unw_word_t value;
+  assert(__unw_get_reg(&cursor, UNW_REG_IP, &value) == UNW_ESUCCESS &&
+         value == ip);
+  assert(__unw_get_reg(&cursor, UNW_PPC64_R31, &value) == UNW_ESUCCESS &&
+         value == fp);
+}
+
+extern "C" __attribute__((noinline)) int sehFilterFixture(int choice) {
+  volatile int localChoice = choice;
+  __try {
+    checkFilterScope(choice);
+  } __except (_exception_code() == 0x20474343 ? localChoice : 0) {
+    return -1;
+  }
+  return 0;
+}
+
+static __attribute__((noinline)) void checkCleanupState() {
+  unw_context_t context;
+  unw_cursor_t cursor;
+  assert(__unw_getcontext(&context) == UNW_ESUCCESS);
+  assert(__unw_init_local(&cursor, &context) == UNW_ESUCCESS);
+  for (unsigned i = 0; i != 16; ++i) {
+    uintptr_t parent = 0;
+    __unw_xbox_seh_cleanup_state state = {};
+    if (__unw_xbox_get_seh_cleanup_state(&cursor, &parent, &state) ==
+        UNW_ESUCCESS) {
+      assert(parent && state.exception == &scopeException &&
+             state.cursor == expectedScopeCursor &&
+             state.scope_index == expectedScopeIndex && !state.abandoned);
+      return;
+    }
+    assert(__unw_step(&cursor) == UNW_STEP_SUCCESS);
+  }
+  abort();
+}
+
+static __attribute__((noinline)) void checkCleanupScope() {
+  unw_context_t context;
+  unw_cursor_t cursor;
+  unw_word_t ip;
+  assert(__unw_getcontext(&context) == UNW_ESUCCESS);
+  assert(__unw_init_local(&cursor, &context) == UNW_ESUCCESS);
+  assert(__unw_step(&cursor) == UNW_STEP_SUCCESS);
+  assert(__unw_get_reg(&cursor, UNW_REG_IP, &ip) == UNW_ESUCCESS);
+  uint32_t index = findScope(&cursor, ip - 1, false);
+  int result = 77;
+  TestExceptionRecord record = {0x20474343};
+  TestExceptionPointers pointers = {&record, nullptr};
+  assert(__unw_xbox_call_seh_cleanup(&cursor, ip - 1, index, nullptr) ==
+         UNW_EINVAL);
+  assert(__unw_xbox_call_seh_cleanup(
+             &cursor, ip - 1, index,
+             reinterpret_cast<_Unwind_Exception *>(1)) == UNW_EINVAL);
+  assert(__unw_xbox_call_seh_cleanup(&cursor, ip + 4, index, &scopeException) ==
+         UNW_EBADFRAME);
+  assert(__unw_xbox_call_seh_cleanup(&cursor, ip - 1, UINT32_MAX,
+                                     &scopeException) == UNW_EBADFRAME);
+  assert(__unw_xbox_call_seh_filter(&cursor, ip - 1, index, &pointers,
+                                    &result) == UNW_EBADFRAME);
+  assert(result == 77 && finallyCalls == 0);
+  expectedScopeCursor = &cursor;
+  expectedScopeIndex = index;
+  assert(__unw_xbox_call_seh_cleanup(&cursor, ip - 1, index, &scopeException) ==
+         UNW_ESUCCESS);
+  assert(finallyCalls == 1 && abnormalFinallyCalls == 1);
+  unw_word_t unchangedIP;
+  assert(__unw_get_reg(&cursor, UNW_REG_IP, &unchangedIP) == UNW_ESUCCESS &&
+         unchangedIP == ip);
+}
+
+extern "C" __attribute__((noinline)) void sehCleanupFixture() {
+  __try {
+    checkCleanupScope();
+  } __finally {
+    ++finallyCalls;
+    if (_abnormal_termination()) {
+      ++abnormalFinallyCalls;
+      checkCleanupState();
+    }
+  }
+}
 
 static void releaseHandledException(_Unwind_Reason_Code reason,
                                     _Unwind_Exception *exception) {
@@ -599,6 +743,10 @@ static __attribute__((noinline)) void testLoaderIntegration() {
     assert(sehTransferFixture(mode) == 0x20474343);
     assert(exceptionReleases == expectedReleases + 1);
   }
+  for (int choice = -1; choice <= 1; ++choice)
+    assert(sehFilterFixture(choice) == 0);
+  sehCleanupFixture();
+  assert(finallyCalls == 2 && abnormalFinallyCalls == 1);
 #endif
 
   makeImage();
