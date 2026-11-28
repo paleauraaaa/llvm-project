@@ -8131,6 +8131,14 @@ void SelectionDAGBuilder::visitIntrinsicCall(const CallInst &I,
     setValue(&I, N);
     return;
   }
+  case Intrinsic::eh_xbox_exceptionobject: {
+    const auto *CPI = cast<CatchPadInst>(I.getArgOperand(0));
+    MVT PtrVT = TLI.getPointerTy(DAG.getDataLayout());
+    const TargetRegisterClass *PtrRC = TLI.getRegClassFor(PtrVT);
+    Register VReg = FuncInfo.getCatchPadXboxExceptionObjectVReg(CPI, PtrRC);
+    setValue(&I, DAG.getCopyFromReg(DAG.getEntryNode(), sdl, VReg, PtrVT));
+    return;
+  }
   case Intrinsic::xray_customevent: {
     // Here we want to make sure that the intrinsic behaves as if it has a
     // specific calling convention.

@@ -6548,6 +6548,11 @@ void Verifier::visitIntrinsicCall(Intrinsic::ID ID, CallBase &Call) {
           "eh.exceptionpointer argument must be a catchpad", Call);
     break;
   }
+  case Intrinsic::eh_xbox_exceptionobject: {
+    Check(isa<CatchPadInst>(Call.getArgOperand(0)),
+          "eh.xbox.exceptionobject argument must be a catchpad", Call);
+    break;
+  }
   case Intrinsic::get_active_lane_mask: {
     Type *ElemTy = Call.getType()->getScalarType();
     Check(ElemTy->isIntegerTy(1),

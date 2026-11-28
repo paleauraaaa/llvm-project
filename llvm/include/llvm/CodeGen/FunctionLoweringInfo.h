@@ -93,6 +93,7 @@ public:
 
   /// Track virtual registers created for exception pointers.
   DenseMap<const Value *, Register> CatchPadExceptionPointers;
+  DenseMap<const Value *, Register> CatchPadXboxExceptionObjects;
 
   /// Helper object to track which of three possible relocation mechanisms are
   /// used for a particular value being relocated over a statepoint.
@@ -286,6 +287,8 @@ public:
   LLVM_ABI int getArgumentFrameIndex(const Argument *A);
 
   LLVM_ABI Register getCatchPadExceptionPointerVReg(
+      const Value *CPI, const TargetRegisterClass *RC);
+  LLVM_ABI Register getCatchPadXboxExceptionObjectVReg(
       const Value *CPI, const TargetRegisterClass *RC);
 
   /// Set the call site currently being processed.

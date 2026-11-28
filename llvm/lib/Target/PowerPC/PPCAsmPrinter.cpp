@@ -50,6 +50,7 @@
 #include "llvm/IR/EHPersonalities.h"
 #include "llvm/IR/GlobalValue.h"
 #include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/PatternMatch.h"
 #include "llvm/MC/MCAsmInfo.h"
@@ -332,6 +333,7 @@ class PPCXbox360AsmPrinter : public PPCAsmPrinter {
     CleanupFunclet = 1,
     CatchFunclet = 2,
     CSEHHandler = 4,
+    OwnedSEHException = 8,
   };
   static constexpr uint32_t LibunwindRecordVersion = 0x58534501;
 
@@ -434,6 +436,25 @@ void PPCXbox360AsmPrinter::emitFunctionBodyStart() {
   beginUnwindRange(MF->front(), MF->hasEHFunclets());
 }
 
+static bool hasOwnedXboxSEHHandlers(const Function &F) {
+  if (!F.hasFnAttribute("xbox360-libunwind-handler-ownership"))
+    return false;
+  bool HasHandler = false;
+  for (const BasicBlock &BB : F) {
+    const auto *Pad = dyn_cast<CatchPadInst>(BB.getFirstNonPHIIt());
+    if (!Pad)
+      continue;
+    HasHandler = true;
+    bool HasObject = false;
+    for (const User *U : Pad->users())
+      if (const auto *II = dyn_cast<IntrinsicInst>(U))
+        HasObject |= II->getIntrinsicID() == Intrinsic::eh_xbox_exceptionobject;
+    if (!HasObject)
+      return false;
+  }
+  return HasHandler;
+}
+
 void PPCXbox360AsmPrinter::beginUnwindRange(const MachineBasicBlock &MBB,
                                           bool Handler) {
   HasHandler = Handler;
@@ -444,8 +465,11 @@ void PPCXbox360AsmPrinter::beginUnwindRange(const MachineBasicBlock &MBB,
                                               : 0;
   if (Handler && F.hasPersonalityFn() &&
       classifyEHPersonality(F.getPersonalityFn()) ==
-          EHPersonality::MSVC_TableSEH)
+          EHPersonality::MSVC_TableSEH) {
     LibunwindFlags |= CSEHHandler;
+    if (hasOwnedXboxSEHHandlers(F))
+      LibunwindFlags |= OwnedSEHException;
+  }
   LastPrologueInst = nullptr;
   for (const MachineInstr &MI : MBB)
     if (MI.getFlag(MachineInstr::FrameSetup))

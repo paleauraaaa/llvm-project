@@ -1676,6 +1676,10 @@ def int_eh_exceptionpointer : Intrinsic<[llvm_anyptr_ty], [llvm_token_ty],
 // Gets the exception code from a catchpad token. Only used on some platforms.
 def int_eh_exceptioncode : Intrinsic<[llvm_i32_ty], [llvm_token_ty], [IntrNoMem]>;
 
+// Xbox libunwind passes the handled exception separately from its SEH code.
+def int_eh_xbox_exceptionobject : Intrinsic<[llvm_anyptr_ty], [llvm_token_ty],
+                                            [IntrNoMem]>;
+
 // __builtin_unwind_init is an undocumented GCC intrinsic that causes all
 // callee-saved registers to be saved and restored (regardless of whether they
 // are used) in the calling function. It is used by libgcc_eh.

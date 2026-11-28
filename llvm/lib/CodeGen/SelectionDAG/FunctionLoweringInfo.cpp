@@ -342,6 +342,7 @@ void FunctionLoweringInfo::clear() {
   ValueMap.clear();
   VirtReg2Value.clear();
   StaticAllocaMap.clear();
+  CatchPadXboxExceptionObjects.clear();
   LiveOutRegInfo.clear();
   VisitedBBs.clear();
   ArgDbgValues.clear();
@@ -564,6 +565,16 @@ Register FunctionLoweringInfo::getCatchPadExceptionPointerVReg(
   if (I.second)
     VReg = MRI.createVirtualRegister(RC);
   assert(VReg && "null vreg in exception pointer table!");
+  return VReg;
+}
+
+Register FunctionLoweringInfo::getCatchPadXboxExceptionObjectVReg(
+    const Value *CPI, const TargetRegisterClass *RC) {
+  auto I = CatchPadXboxExceptionObjects.insert({CPI, 0});
+  Register &VReg = I.first->second;
+  if (I.second)
+    VReg = MF->getRegInfo().createVirtualRegister(RC);
+  assert(VReg && "null vreg in Xbox exception object table!");
   return VReg;
 }
 

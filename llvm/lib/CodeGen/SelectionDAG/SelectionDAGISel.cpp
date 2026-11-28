@@ -1403,6 +1403,14 @@ static bool hasExceptionPointerOrCodeUser(const CatchPadInst *CPI) {
   return false;
 }
 
+static bool hasXboxExceptionObjectUser(const CatchPadInst *CPI) {
+  for (const User *U : CPI->users())
+    if (const auto *II = dyn_cast<IntrinsicInst>(U))
+      if (II->getIntrinsicID() == Intrinsic::eh_xbox_exceptionobject)
+        return true;
+  return false;
+}
+
 // wasm.landingpad.index intrinsic is for associating a landing pad index number
 // with a catchpad instruction. Retrieve the landing pad index in the intrinsic
 // and store the mapping in the function.
@@ -1459,6 +1467,18 @@ bool SelectionDAGISel::PrepareEHLandingPad() {
         assert(EHPhysReg && "target lacks exception pointer register");
         MBB->addLiveIn(EHPhysReg);
         Register VReg = FuncInfo->getCatchPadExceptionPointerVReg(CPI, PtrRC);
+        BuildMI(*MBB, FuncInfo->InsertPt, SDB->getCurDebugLoc(),
+                TII->get(TargetOpcode::COPY), VReg)
+            .addReg(EHPhysReg, RegState::Kill);
+      }
+      if (hasXboxExceptionObjectUser(CPI)) {
+        if (!MF->getTarget().getTargetTriple().isOSXbox360())
+          report_fatal_error("Xbox SEH exception object requires Xbox 360");
+        MCRegister EHPhysReg = TLI->getExceptionSelectorRegister(PersonalityFn);
+        assert(EHPhysReg && "target lacks exception object register");
+        MBB->addLiveIn(EHPhysReg);
+        Register VReg =
+            FuncInfo->getCatchPadXboxExceptionObjectVReg(CPI, PtrRC);
         BuildMI(*MBB, FuncInfo->InsertPt, SDB->getCurDebugLoc(),
                 TII->get(TargetOpcode::COPY), VReg)
             .addReg(EHPhysReg, RegState::Kill);
