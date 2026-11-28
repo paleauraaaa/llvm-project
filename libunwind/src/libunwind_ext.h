@@ -54,7 +54,16 @@ typedef struct {
   uint32_t scope_index;
 } __unw_xbox_seh_cleanup_state;
 
+typedef struct {
+  uintptr_t parent;
+  uint32_t parent_frame_size;
+  uint32_t flags;
+} __unw_xbox_seh_frame;
+
 #if !defined(_LIBUNWIND_IS_BAREMETAL)
+// Returns UNW_ENOINFO for frames without opt-in metadata and UNW_EBADFRAME
+// for malformed or unsupported metadata.
+extern int __unw_xbox_get_seh_frame(unw_cursor_t *, __unw_xbox_seh_frame *);
 // Requires a cursor on a cleanup directly invoked by the SEH trampoline.
 // Returns an error without modifying the cursor or output if it cannot prove
 // that relationship.

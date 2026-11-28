@@ -355,6 +355,44 @@ static __attribute__((noinline)) void testLoaderIntegration() {
          info.end_ip == imageBase + 0x430);
   assert(info.handler == pc && info.lsda == imageBase + 0xa00);
   assert(info.unwind_info == imageBase + 0x800);
+  __unw_xbox_seh_frame sehFrame = {};
+  assert(__unw_xbox_get_seh_frame(nullptr, &sehFrame) == UNW_EINVAL);
+  assert(__unw_xbox_get_seh_frame(&cursor, nullptr) == UNW_EINVAL);
+  assert(__unw_xbox_get_seh_frame(&cursor, &sehFrame) == UNW_ENOINFO);
+  put16(image + Nt + 6, 3);
+  memcpy(image + Sections + 80, ".xseh", 5);
+  put32(image + Sections + 88, 20);
+  put32(image + Sections + 92, 0x900);
+  putBE32(image + 0x900, XboxSEH::MetadataVersion);
+  putBE32(image + 0x904, imageBase + 0x420);
+  putBE32(image + 0x908, imageBase + 0x420);
+  putBE32(image + 0x90c, 16);
+  putBE32(image + 0x910, XboxSEH::CHandler);
+  assert(__unw_xbox_get_seh_frame(&cursor, &sehFrame) == UNW_ESUCCESS);
+  assert(sehFrame.parent == imageBase + 0x420 &&
+         sehFrame.parent_frame_size == 16 &&
+         sehFrame.flags == XboxSEH::CHandler);
+  put32(image + Sections + 88, 40);
+  putBE32(image + 0x808, imageBase + 0x440);
+  putBE32(image + 0x80c, 0x40000400);
+  putBE32(image + 0x914, XboxSEH::MetadataVersion);
+  putBE32(image + 0x918, imageBase + 0x440);
+  putBE32(image + 0x91c, imageBase + 0x420);
+  putBE32(image + 0x920, 16);
+  putBE32(image + 0x924, XboxSEH::CleanupFunclet);
+  assert(__unw_set_reg(&cursor, UNW_REG_IP, imageBase + 0x444) == UNW_ESUCCESS);
+  assert(__unw_xbox_get_seh_frame(&cursor, &sehFrame) == UNW_ESUCCESS);
+  assert(sehFrame.parent == imageBase + 0x420 &&
+         sehFrame.flags == XboxSEH::CleanupFunclet);
+  putBE32(image + 0x920, 32);
+  assert(__unw_xbox_get_seh_frame(&cursor, &sehFrame) == UNW_EBADFRAME);
+  putBE32(image + 0x920, 16);
+  putBE32(image + 0x91c, imageBase + 0x424);
+  assert(__unw_xbox_get_seh_frame(&cursor, &sehFrame) == UNW_EBADFRAME);
+  putBE32(image + 0x91c, imageBase + 0x420);
+  assert(__unw_set_reg(&cursor, UNW_REG_IP, imageBase + 0x424) == UNW_ESUCCESS);
+  putBE32(image + 0x900, 0);
+  assert(__unw_xbox_get_seh_frame(&cursor, &sehFrame) == UNW_EBADFRAME);
   assert(__unw_step(&cursor) == UNW_EUNSPEC);
   dwarf_eh_bases bases = {};
   assert(_Unwind_Find_FDE(reinterpret_cast<void *>(imageBase + 0x424),
@@ -402,6 +440,21 @@ int main() {
   assert(!find(ImageSize, 0x500));
   assert(!find(ImageSize, ImageSize));
   assert(!find(63, 0x400));
+
+  XboxUnwindSection pdata = {}, seh = {};
+  assert(findXboxPdata(image, ImageSize, 0x400, pdata, nullptr, &seh));
+  assert(seh.offset == 0 && seh.length == 0);
+  put16(image + Nt + 6, 3);
+  memcpy(image + Sections + 80, ".xseh", 5);
+  put32(image + Sections + 88, 20);
+  put32(image + Sections + 92, 0x900);
+  assert(findXboxPdata(image, ImageSize, 0x400, pdata, nullptr, &seh));
+  assert(seh.offset == 0x900 && seh.length == 20);
+  put16(image + Nt + 6, 4);
+  memcpy(image + Sections + 120, ".xseh", 5);
+  put32(image + Sections + 128, 20);
+  put32(image + Sections + 132, 0x940);
+  assert(!findXboxPdata(image, ImageSize, 0x400, pdata, nullptr, &seh));
 
   makeImage();
   image[0] = 0;

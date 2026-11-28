@@ -987,6 +987,7 @@ public:
   virtual void        setInfoBasedOnIPRegister(bool isReturnAddress = false);
   virtual const char *getRegisterName(int num);
 #if defined(_XBOX) && _XBOX_VER == 200 && !defined(_LIBUNWIND_IS_BAREMETAL)
+  int getXboxSEHFrame(__unw_xbox_seh_frame &frame);
   int getXboxSEHCleanupParent(uintptr_t &parent,
                               __unw_xbox_seh_cleanup_state *state = nullptr);
 #endif
@@ -3412,6 +3413,61 @@ int UnwindCursor<A, R>::stepThroughSigReturn() {
 #endif // defined(_LIBUNWIND_CHECK_HAIKU_SIGRETURN)
 
 #if defined(_XBOX) && _XBOX_VER == 200 && !defined(_LIBUNWIND_IS_BAREMETAL)
+template <typename A, typename R>
+int UnwindCursor<A, R>::getXboxSEHFrame(__unw_xbox_seh_frame &frame) {
+  if (!_isXboxPdata || _info.start_ip > UINT32_MAX)
+    return UNW_ENOINFO;
+  UnwindInfoSections sections;
+  if (!_addressSpace.template findUnwindSections<R>(_info.start_ip, sections) ||
+      sections.dso_base != _info.extra ||
+      sections.dso_base > UINT32_MAX || sections.xbox_image_size > UINT32_MAX)
+    return UNW_EBADFRAME;
+  auto *image = reinterpret_cast<const uint8_t *>(sections.dso_base);
+  XboxUnwindSection pdata, seh;
+  if (!findXboxPdata(image, sections.xbox_image_size,
+                     _info.start_ip - sections.dso_base, pdata, nullptr, &seh))
+    return UNW_EBADFRAME;
+  if (!seh.length)
+    return UNW_ENOINFO;
+  XboxRuntimeFunction function;
+  XboxPdataResult status = findXboxRuntimeFunction(
+      image, sections.xbox_image_size, uint32_t(sections.dso_base),
+      pdata.offset, pdata.length, uint32_t(_info.start_ip), function);
+  if (status != XboxPdataResult::Found || function.start != _info.start_ip)
+    return UNW_EBADFRAME;
+  XboxSEHMetadata metadata;
+  status = findXboxSEHMetadata(image, sections.xbox_image_size,
+                               uint32_t(sections.dso_base), seh.offset,
+                               seh.length, function, metadata);
+  if (status == XboxPdataResult::NotFound)
+    return UNW_ENOINFO;
+  if (status != XboxPdataResult::Found)
+    return UNW_EBADFRAME;
+  if (metadata.flags & (XboxSEH::CleanupFunclet | XboxSEH::CatchFunclet)) {
+    XboxUnwindSection parentPdata;
+    if (!findXboxPdata(image, sections.xbox_image_size,
+                       metadata.parent - sections.dso_base, parentPdata))
+      return UNW_EBADFRAME;
+    XboxRuntimeFunction parent;
+    status = findXboxRuntimeFunction(
+        image, sections.xbox_image_size, uint32_t(sections.dso_base),
+        pdata.offset, pdata.length, metadata.parent, parent);
+    if (status != XboxPdataResult::Found || parent.start != metadata.parent)
+      return UNW_EBADFRAME;
+    XboxSEHMetadata parentMetadata;
+    status = findXboxSEHMetadata(image, sections.xbox_image_size,
+                                 uint32_t(sections.dso_base), seh.offset,
+                                 seh.length, parent, parentMetadata);
+    if (status != XboxPdataResult::Found ||
+        (parentMetadata.flags &
+         (XboxSEH::CleanupFunclet | XboxSEH::CatchFunclet)) ||
+        parentMetadata.parentFrameSize != metadata.parentFrameSize)
+      return UNW_EBADFRAME;
+  }
+  frame = {metadata.parent, metadata.parentFrameSize, metadata.flags};
+  return UNW_ESUCCESS;
+}
+
 template <typename A, typename R>
 int UnwindCursor<A, R>::getXboxSEHCleanupParent(
     uintptr_t &parent, __unw_xbox_seh_cleanup_state *state) {

@@ -96,6 +96,16 @@ _LIBUNWIND_WEAK_ALIAS(__unw_init_local, unw_init_local)
 
 #if defined(__powerpc64__) && defined(_XBOX) && _XBOX_VER == 200 &&            \
     !defined(_LIBUNWIND_IS_BAREMETAL)
+_LIBUNWIND_HIDDEN int __unw_xbox_get_seh_frame(unw_cursor_t *cursor,
+                                               __unw_xbox_seh_frame *frame) {
+  if (!cursor || !frame)
+    return UNW_EINVAL;
+  auto *co =
+      reinterpret_cast<UnwindCursor<LocalAddressSpace, Registers_ppc64> *>(
+          cursor);
+  return co->getXboxSEHFrame(*frame);
+}
+
 _LIBUNWIND_HIDDEN int
 __unw_xbox_get_seh_cleanup_parent(unw_cursor_t *cursor, uintptr_t *parent) {
   if (!cursor || !parent)
@@ -592,4 +602,3 @@ bool logDWARF() {
 }
 
 #endif // NDEBUG
-

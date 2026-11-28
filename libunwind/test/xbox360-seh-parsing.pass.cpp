@@ -112,6 +112,40 @@ int main() {
                                  Base + 0x100, f) == XboxPdataResult::Invalid);
 
   makeRecords();
+  assert(find(Base + 0x200, f) == XboxPdataResult::Found);
+  put32(0x700, XboxSEH::MetadataVersion);
+  put32(0x704, Base + 0x200);
+  put32(0x708, Base + 0x100);
+  put32(0x70c, 96);
+  put32(0x710, XboxSEH::CleanupFunclet | XboxSEH::CHandler);
+  XboxSEHMetadata metadata = {};
+  assert(findXboxSEHMetadata(image, sizeof(image), Base, 0x700, 20, f,
+                             metadata) == XboxPdataResult::Found);
+  assert(metadata.parent == Base + 0x100 && metadata.parentFrameSize == 96 &&
+         metadata.flags == (XboxSEH::CleanupFunclet | XboxSEH::CHandler));
+  assert(findXboxSEHMetadata(image, sizeof(image), Base, 0x700, 19, f,
+                             metadata) == XboxPdataResult::Invalid);
+  put32(0x700, XboxSEH::MetadataVersion + 1);
+  assert(findXboxSEHMetadata(image, sizeof(image), Base, 0x700, 20, f,
+                             metadata) == XboxPdataResult::Unsupported);
+  put32(0x700, XboxSEH::MetadataVersion);
+  put32(0x710, XboxSEH::CleanupFunclet | XboxSEH::CatchFunclet);
+  assert(findXboxSEHMetadata(image, sizeof(image), Base, 0x700, 20, f,
+                             metadata) == XboxPdataResult::Invalid);
+  put32(0x710, 0);
+  assert(findXboxSEHMetadata(image, sizeof(image), Base, 0x700, 20, f,
+                             metadata) == XboxPdataResult::Invalid);
+  put32(0x710, XboxSEH::CleanupFunclet | XboxSEH::CHandler);
+  memcpy(image + 0x714, image + 0x700, XboxSEH::MetadataRecordSize);
+  assert(findXboxSEHMetadata(image, sizeof(image), Base, 0x700, 40, f,
+                             metadata) == XboxPdataResult::Invalid);
+  put32(0x704, Base + 0x100);
+  put32(0x708, Base + 0x100);
+  put32(0x710, 0);
+  assert(findXboxSEHMetadata(image, sizeof(image), Base, 0x700, 20, f,
+                             metadata) == XboxPdataResult::NotFound);
+
+  makeRecords();
   put32(0x600, 2);
   put32(0x604, Base + 0x100);
   put32(0x608, Base + 0x108);
