@@ -154,9 +154,14 @@ void WinException::endFunction(const MachineFunction *MF) {
 
     // Emit the tables appropriate to the personality function in use. If we
     // don't recognize the personality, assume it uses an Itanium-style LSDA.
-    if (Per == EHPersonality::MSVC_TableSEH)
+    if (Per == EHPersonality::MSVC_TableSEH) {
       emitCSpecificHandlerTable(MF);
-    else if (Per == EHPersonality::MSVC_X86SEH)
+      if (isXbox360)
+        for (const MachineBasicBlock &MBB : *MF)
+          if (MBB.isCleanupFuncletEntry() &&
+              hasXboxSEHCleanupActions(*MF->getWinEHFuncInfo(), MBB))
+            emitCSpecificHandlerTable(MF, &MBB);
+    } else if (Per == EHPersonality::MSVC_X86SEH)
       emitExceptHandlerTable(MF);
     else if (Per == EHPersonality::MSVC_CXX)
       emitCXXFrameHandler3Table(MF);
@@ -572,7 +577,8 @@ InvokeStateChangeIterator &InvokeStateChangeIterator::scan() {
 ///       imagerel32 LabelLPad;        // Zero means __finally.
 ///     } Entries[NumEntries];
 ///   };
-void WinException::emitCSpecificHandlerTable(const MachineFunction *MF) {
+void WinException::emitCSpecificHandlerTable(const MachineFunction *MF,
+                                              const MachineBasicBlock *Cleanup) {
   auto &OS = *Asm->OutStreamer;
   MCContext &Ctx = Asm->OutContext;
   const WinEHFuncInfo &FuncInfo = *MF->getWinEHFuncInfo();
@@ -580,7 +586,10 @@ void WinException::emitCSpecificHandlerTable(const MachineFunction *MF) {
   if (isXbox360) {
     StringRef Name = GlobalValue::dropLLVMManglingEscape(MF->getName());
     OS.emitValueToAlignment(Align(4));
-    OS.emitLabel(Ctx.getOrCreateSymbol(Twine("$sehxdata$") + Name));
+    MCSymbol *Table = Cleanup
+                          ? getXboxSEHCleanupTableSymbol(FuncInfo, *Cleanup)
+                          : Ctx.getOrCreateSymbol(Twine("$sehxdata$") + Name);
+    OS.emitLabel(Table);
   }
 
   bool VerboseAsm = OS.isVerboseAsm();
@@ -624,10 +633,11 @@ void WinException::emitCSpecificHandlerTable(const MachineFunction *MF) {
   // slightly bigger, which is OK.
   const MCSymbol *LastStartLabel = nullptr;
   int LastEHState = -1;
-  // Break out before we enter into a finally funclet.
-  // FIXME: We need to emit separate EH tables for cleanups.
+  // Each Xbox cleanup with nested actions has its own table.
   MachineFunction::const_iterator End = MF->end();
-  MachineFunction::const_iterator Stop = std::next(MF->begin());
+  MachineFunction::const_iterator Begin =
+      Cleanup ? Cleanup->getIterator() : MF->begin();
+  MachineFunction::const_iterator Stop = std::next(Begin);
   while (Stop != End && !Stop->isEHFuncletEntry())
     ++Stop;
   if (isXbox360) {
@@ -640,7 +650,7 @@ void WinException::emitCSpecificHandlerTable(const MachineFunction *MF) {
     DenseMap<const MCSymbol *, unsigned> Positions;
     SmallVector<unsigned> NonBranchCounts(1, 0);
     unsigned Position = 0;
-    for (auto MBB = MF->begin(); MBB != Stop; ++MBB) {
+    for (auto MBB = Begin; MBB != Stop; ++MBB) {
       // Do not extend a try range across an except entry, even if the
       // handler happens to consist only of a branch.
       if (MBB->isEHPad()) {
@@ -664,9 +674,13 @@ void WinException::emitCSpecificHandlerTable(const MachineFunction *MF) {
           B->second == E->second)
         continue;
       for (int State = StateAndEnd.first; State != -1;
-           State = FuncInfo.SEHUnwindMap[State].ToState)
-        Ranges[State].push_back(
-            {Begin, StateAndEnd.second, B->second, E->second});
+           State = FuncInfo.SEHUnwindMap[State].ToState) {
+        const auto &Entry = FuncInfo.SEHUnwindMap[State];
+        if (Entry.XboxCleanupOwner ==
+            (Cleanup ? Cleanup->getBasicBlock() : nullptr))
+          Ranges[State].push_back(
+              {Begin, StateAndEnd.second, B->second, E->second});
+      }
     }
     // Local unwind compares the target PC with each enclosing scope's
     // range. Denormalized per-state rows would run an enclosing finally

@@ -54,7 +54,8 @@ class LLVM_LIBRARY_VISIBILITY WinException : public EHStreamer {
   /// The list of symbols to add to the ehcont section
   std::vector<const MCSymbol *> EHContTargets;
 
-  void emitCSpecificHandlerTable(const MachineFunction *MF);
+  void emitCSpecificHandlerTable(const MachineFunction *MF,
+                                 const MachineBasicBlock *Cleanup = nullptr);
 
   void emitSEHActionsForRange(const WinEHFuncInfo &FuncInfo,
                               const MCSymbol *BeginLabel,

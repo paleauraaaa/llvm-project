@@ -20,6 +20,7 @@
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
+#include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/Passes.h"
 #include "llvm/CodeGen/WinEHFuncInfo.h"
 #include "llvm/IR/Constants.h"
@@ -304,6 +305,7 @@ void llvm::calculateCXXStateForAsynchEH(const BasicBlock *BB, int State,
 //     not affecting remaining blocks.
 void llvm::calculateSEHStateForAsynchEH(const BasicBlock *BB, int State,
                                         WinEHFuncInfo &EHInfo) {
+  bool IsXbox = BB->getModule()->getTargetTriple().isOSXbox360();
   SmallVector<struct WorkItem *, 8> WorkList;
   struct WorkItem *WI = new WorkItem(BB, State);
   WorkList.push_back(WI);
@@ -319,17 +321,27 @@ void llvm::calculateSEHStateForAsynchEH(const BasicBlock *BB, int State,
 
     BasicBlock::const_iterator It = BB->getFirstNonPHIIt();
     const llvm::Instruction *TI = BB->getTerminator();
-    if (It->isEHPad())
+    if (IsXbox && isa<CleanupPadInst>(It))
+      State = -1;
+    else if (IsXbox && isa<CatchPadInst>(It)) {
+      State = EHInfo.EHPadStateMap[&*It];
+      const Constant *FilterOrNull = cast<Constant>(
+          cast<CatchPadInst>(It)->getArgOperand(0)->stripPointerCasts());
+      const Function *Filter = dyn_cast<Function>(FilterOrNull);
+      if (!Filter || !Filter->getName().starts_with("__IsLocalUnwind"))
+        State = EHInfo.SEHUnwindMap[State].ToState;
+    } else if (It->isEHPad())
       State = EHInfo.EHPadStateMap[&*It];
     EHInfo.BlockToStateMap[BB] = State; // Record state
 
-    if (isa<CatchPadInst>(It) && isa<CatchReturnInst>(TI)) {
+    if (!IsXbox && isa<CatchPadInst>(It) && isa<CatchReturnInst>(TI)) {
       const Constant *FilterOrNull = cast<Constant>(
           cast<CatchPadInst>(It)->getArgOperand(0)->stripPointerCasts());
       const Function *Filter = dyn_cast<Function>(FilterOrNull);
       if (!Filter || !Filter->getName().starts_with("__IsLocalUnwind"))
         State = EHInfo.SEHUnwindMap[State].ToState; // Retrive next State
-    } else if ((isa<CleanupReturnInst>(TI) || isa<CatchReturnInst>(TI)) &&
+    } else if ((isa<CleanupReturnInst>(TI) ||
+                (!IsXbox && isa<CatchReturnInst>(TI))) &&
                State > 0) {
       // Retrive the new State.
       State = EHInfo.SEHUnwindMap[State].ToState; // Retrive next State
@@ -494,6 +506,19 @@ static int addSEHFinally(WinEHFuncInfo &FuncInfo, int ParentState,
   return FuncInfo.SEHUnwindMap.size() - 1;
 }
 
+static const BasicBlock *getXboxSEHCleanupOwner(const Instruction *Pad) {
+  const Value *Parent;
+  if (auto *Switch = dyn_cast<CatchSwitchInst>(Pad))
+    Parent = Switch->getParentPad();
+  else
+    Parent = cast<CleanupPadInst>(Pad)->getParentPad();
+  while (auto *Catch = dyn_cast<CatchPadInst>(Parent))
+    Parent = Catch->getCatchSwitch()->getParentPad();
+  if (auto *Cleanup = dyn_cast<CleanupPadInst>(Parent))
+    return Cleanup->getParent();
+  return nullptr;
+}
+
 // Starting from a EHPad, Backward walk through control-flow graph
 // to produce two primary outputs:
 //      FuncInfo.EHPadStateMap[] and FuncInfo.SEHUnwindMap[]
@@ -502,6 +527,7 @@ static void calculateSEHStateNumbers(WinEHFuncInfo &FuncInfo,
                                      int ParentState) {
   const BasicBlock *BB = FirstNonPHI->getParent();
   assert(BB->isEHPad() && "no a funclet!");
+  bool IsXbox = BB->getModule()->getTargetTriple().isOSXbox360();
 
   if (auto *CatchSwitch = dyn_cast<CatchSwitchInst>(FirstNonPHI)) {
     assert(FuncInfo.EHPadStateMap.count(CatchSwitch) == 0 &&
@@ -520,6 +546,9 @@ static void calculateSEHStateNumbers(WinEHFuncInfo &FuncInfo,
     assert((Filter || FilterOrNull->isNullValue()) &&
            "unexpected filter value");
     int TryState = addSEHExcept(FuncInfo, ParentState, Filter, CatchPadBB);
+    if (IsXbox)
+      FuncInfo.SEHUnwindMap[TryState].XboxCleanupOwner =
+          getXboxSEHCleanupOwner(FirstNonPHI);
 
     // Everything in the __try block uses TryState as its parent state.
     FuncInfo.EHPadStateMap[CatchSwitch] = TryState;
@@ -560,6 +589,9 @@ static void calculateSEHStateNumbers(WinEHFuncInfo &FuncInfo,
       return;
 
     int CleanupState = addSEHFinally(FuncInfo, ParentState, BB);
+    if (IsXbox)
+      FuncInfo.SEHUnwindMap[CleanupState].XboxCleanupOwner =
+          getXboxSEHCleanupOwner(FirstNonPHI);
     It->second = CleanupState;
     LLVM_DEBUG(dbgs() << "Assigning state #" << CleanupState << " to BB "
                       << BB->getName() << '\n');
@@ -570,11 +602,36 @@ static void calculateSEHStateNumbers(WinEHFuncInfo &FuncInfo,
                                  CleanupState);
     for (const User *U : CleanupPad->users()) {
       const auto *UserI = cast<Instruction>(U);
-      if (UserI->isEHPad())
+      if (!UserI->isEHPad())
+        continue;
+      if (!IsXbox)
         report_fatal_error("Cleanup funclets for the SEH personality cannot "
                            "contain exceptional actions");
+      const BasicBlock *UnwindDest;
+      if (auto *Switch = dyn_cast<CatchSwitchInst>(UserI))
+        UnwindDest = Switch->getUnwindDest();
+      else
+        UnwindDest = getCleanupRetUnwindDest(cast<CleanupPadInst>(UserI));
+      if (!UnwindDest || UnwindDest == getCleanupRetUnwindDest(CleanupPad))
+        calculateSEHStateNumbers(FuncInfo, UserI, -1);
     }
   }
+}
+
+bool llvm::hasXboxSEHCleanupActions(const WinEHFuncInfo &FuncInfo,
+                                    const MachineBasicBlock &MBB) {
+  return llvm::any_of(FuncInfo.SEHUnwindMap, [&](const SEHUnwindMapEntry &E) {
+    return E.XboxCleanupOwner && E.XboxCleanupOwner == MBB.getBasicBlock();
+  });
+}
+
+MCSymbol *llvm::getXboxSEHCleanupTableSymbol(const WinEHFuncInfo &FuncInfo,
+                                              const MachineBasicBlock &MBB) {
+  auto [It, Inserted] = FuncInfo.XboxCleanupTables.try_emplace(&MBB);
+  if (Inserted)
+    It->second = MBB.getParent()->getContext().createTempSymbol(
+        "xbox_seh_cleanup", /*AlwaysAddSuffix=*/true);
+  return It->second;
 }
 
 static bool isTopLevelPadForMSVC(const Instruction *EHPad) {
@@ -603,6 +660,12 @@ void llvm::calculateSEHStateNumbers(const Function *Fn,
       continue;
     ::calculateSEHStateNumbers(FuncInfo, FirstNonPHI, -1);
   }
+
+  if (Fn->getParent()->getTargetTriple().isOSXbox360())
+    for (const BasicBlock &BB : *Fn)
+      if (BB.isEHPad() &&
+          !FuncInfo.EHPadStateMap.count(&*BB.getFirstNonPHIIt()))
+        report_fatal_error("Xbox SEH pad has no representable unwind state");
 
   calculateStateNumbersForInvokes(Fn, FuncInfo);
 

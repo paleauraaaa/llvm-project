@@ -55,6 +55,9 @@ struct SEHUnwindMapEntry {
 
   /// Holds the __except or __finally basic block.
   MBBOrBasicBlock Handler;
+
+  /// Xbox cleanup funclet containing this scope, or null for the parent.
+  const BasicBlock *XboxCleanupOwner = nullptr;
 };
 
 struct WinEHHandlerType {
@@ -97,6 +100,7 @@ struct WinEHFuncInfo {
   SmallVector<WinEHTryBlockMapEntry, 4> TryBlockMap;
   SmallVector<SEHUnwindMapEntry, 4> SEHUnwindMap;
   SmallVector<ClrEHUnwindMapEntry, 4> ClrEHUnwindMap;
+  mutable DenseMap<const MachineBasicBlock *, MCSymbol *> XboxCleanupTables;
   int UnwindHelpFrameIdx = std::numeric_limits<int>::max();
   int PSPSymFrameIdx = std::numeric_limits<int>::max();
 
@@ -124,6 +128,11 @@ LLVM_ABI void calculateWinCXXEHStateNumbers(const Function *ParentFn,
 
 LLVM_ABI void calculateSEHStateNumbers(const Function *ParentFn,
                                        WinEHFuncInfo &FuncInfo);
+
+LLVM_ABI bool hasXboxSEHCleanupActions(const WinEHFuncInfo &FuncInfo,
+                                       const MachineBasicBlock &MBB);
+LLVM_ABI MCSymbol *getXboxSEHCleanupTableSymbol(const WinEHFuncInfo &FuncInfo,
+                                               const MachineBasicBlock &MBB);
 
 LLVM_ABI void calculateClrEHStateNumbers(const Function *Fn,
                                          WinEHFuncInfo &FuncInfo);

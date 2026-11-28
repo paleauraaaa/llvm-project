@@ -16,6 +16,7 @@
 #include "llvm/CodeGen/TargetInstrInfo.h"
 #include "llvm/CodeGen/TargetLowering.h"
 #include "llvm/CodeGen/TargetSubtargetInfo.h"
+#include "llvm/CodeGen/WinEHFuncInfo.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Function.h"
@@ -806,9 +807,27 @@ llvm::getEHScopeMembership(const MachineFunction &MF) {
   // Next, identify all the blocks inside the scopes.
   for (const MachineBasicBlock *MBB : EHScopeBlocks)
     collectEHScopeMembers(EHScopeMembership, MBB->getNumber(), MBB);
-  // SEH CatchPads aren't really scopes, handle them separately.
-  for (const MachineBasicBlock *MBB : SEHCatchPads)
-    collectEHScopeMembers(EHScopeMembership, EntryBBNumber, MBB);
+  // SEH catch pads execute in their enclosing function or cleanup frame.
+  for (const MachineBasicBlock *MBB : SEHCatchPads) {
+    int Scope = EntryBBNumber;
+    if (MF.getTarget().getTargetTriple().isOSXbox360()) {
+      const WinEHFuncInfo &Info = *MF.getWinEHFuncInfo();
+      for (const SEHUnwindMapEntry &Entry : Info.SEHUnwindMap) {
+        if (Entry.IsFinally || !Entry.XboxCleanupOwner ||
+            Entry.Handler.dyn_cast<MachineBasicBlock *>() != MBB)
+          continue;
+        auto Owner = llvm::find_if(MF, [&](const MachineBasicBlock &Block) {
+          return Block.isCleanupFuncletEntry() &&
+                 Block.getBasicBlock() == Entry.XboxCleanupOwner;
+        });
+        if (Owner == MF.end())
+          report_fatal_error("Xbox SEH cleanup scope owner is missing");
+        Scope = Owner->getNumber();
+        break;
+      }
+    }
+    collectEHScopeMembers(EHScopeMembership, Scope, MBB);
+  }
   // Finally, identify all the targets of a catchret.
   for (std::pair<const MachineBasicBlock *, int> CatchRetPair :
        CatchRetSuccessors)

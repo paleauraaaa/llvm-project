@@ -333,7 +333,8 @@ class PPCXbox360AsmPrinter : public PPCAsmPrinter {
   const MachineInstr *LastPrologueInst = nullptr;
   bool HasHandler = false;
 
-  void emitHandlerPrefix(Align Alignment);
+  void emitHandlerPrefix(Align Alignment,
+                         const MachineBasicBlock *Cleanup = nullptr);
   void beginUnwindRange(const MachineBasicBlock &MBB, bool Handler);
   void endUnwindRange();
 
@@ -371,7 +372,8 @@ void PPCXbox360AsmPrinter::emitEndOfAsmFile(Module &M) {
   PPCAsmPrinter::emitEndOfAsmFile(M);
 }
 
-void PPCXbox360AsmPrinter::emitHandlerPrefix(Align Alignment) {
+void PPCXbox360AsmPrinter::emitHandlerPrefix(
+    Align Alignment, const MachineBasicBlock *Cleanup) {
   Alignment = std::max(Alignment, Align(8));
   emitAlignment(Alignment);
   OutStreamer->emitZeros(Alignment.value() - 8);
@@ -382,9 +384,11 @@ void PPCXbox360AsmPrinter::emitHandlerPrefix(Align Alignment) {
                                   F.getPersonalityFn()->stripPointerCasts())),
                               4);
   StringRef Name = GlobalValue::dropLLVMManglingEscape(MF->getName());
-  OutStreamer->emitSymbolValue(
-      OutContext.getOrCreateSymbol(Twine(IsSEH ? "$sehxdata$" : "$cppxdata$") +
-                                   Name), 4);
+  MCSymbol *Table =
+      Cleanup ? getXboxSEHCleanupTableSymbol(*MF->getWinEHFuncInfo(), *Cleanup)
+              : OutContext.getOrCreateSymbol(
+                    Twine(IsSEH ? "$sehxdata$" : "$cppxdata$") + Name);
+  OutStreamer->emitSymbolValue(Table, 4);
 }
 
 void PPCXbox360AsmPrinter::emitFunctionEntryLabel() {
@@ -485,14 +489,20 @@ void PPCXbox360AsmPrinter::beginUnwindRange(const MachineBasicBlock &MBB,
 }
 
 void PPCXbox360AsmPrinter::emitBasicBlockStart(const MachineBasicBlock &MBB) {
+  bool CleanupHandler =
+      MBB.isCleanupFuncletEntry() &&
+      classifyEHPersonality(MF->getFunction().getPersonalityFn()) ==
+          EHPersonality::MSVC_TableSEH &&
+      hasXboxSEHCleanupActions(*MF->getWinEHFuncInfo(), MBB);
   if (MBB.isEHFuncletEntry()) {
     endUnwindRange();
-    if (!MBB.isCleanupFuncletEntry())
-      emitHandlerPrefix(std::max(MF->getAlignment(), MBB.getAlignment()));
+    if (!MBB.isCleanupFuncletEntry() || CleanupHandler)
+      emitHandlerPrefix(std::max(MF->getAlignment(), MBB.getAlignment()),
+                        CleanupHandler ? &MBB : nullptr);
   }
   PPCAsmPrinter::emitBasicBlockStart(MBB);
   if (MBB.isEHFuncletEntry())
-    beginUnwindRange(MBB, !MBB.isCleanupFuncletEntry());
+    beginUnwindRange(MBB, !MBB.isCleanupFuncletEntry() || CleanupHandler);
 }
 
 void PPCXbox360AsmPrinter::emitInstruction(const MachineInstr *MI) {
