@@ -153,7 +153,15 @@ _Unwind_Backtrace(_Unwind_Trace_Fn callback, void *ref) {
 #if !defined(_LIBUNWIND_ARM_EHABI)
     // ask libunwind to get next frame (skip over first frame which is
     // _Unwind_Backtrace())
-    if (__unw_step(&cursor) <= 0) {
+    int stepResult = __unw_step(&cursor);
+#if defined(_XBOX) && _XBOX_VER == 200
+    if (stepResult < 0) {
+      _LIBUNWIND_TRACE_UNWINDING(" _backtrace: Xbox unwind step failed: %d",
+                                 stepResult);
+      return _URC_FATAL_PHASE1_ERROR;
+    }
+#endif
+    if (stepResult <= 0) {
       _LIBUNWIND_TRACE_UNWINDING(" _backtrace: ended because cursor reached "
                                  "bottom of stack, returning %d",
                                  _URC_END_OF_STACK);
@@ -219,7 +227,13 @@ _LIBUNWIND_EXPORT const void *_Unwind_Find_FDE(const void *pc,
   __unw_getcontext(&uc);
   __unw_init_local(&cursor, &uc);
   __unw_set_reg(&cursor, UNW_REG_IP, (unw_word_t)(intptr_t)pc);
-  __unw_get_proc_info(&cursor, &info);
+  if (__unw_get_proc_info(&cursor, &info) != UNW_ESUCCESS)
+    return NULL;
+#if defined(_XBOX) && _XBOX_VER == 200
+  // Xbox packed runtime functions are not DWARF FDEs.
+  if (info.format & 0x40000000)
+    return NULL;
+#endif
   bases->tbase = (uintptr_t)info.extra;
   bases->dbase = 0; // dbase not used on Mac OS X
   bases->func = (uintptr_t)info.start_ip;

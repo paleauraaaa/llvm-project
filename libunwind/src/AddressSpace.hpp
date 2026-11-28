@@ -187,6 +187,7 @@ struct UnwindInfoSections {
 #if defined(_XBOX) && _XBOX_VER == 200
   uintptr_t       xbox_pdata_section = 0;
   size_t          xbox_pdata_section_length = 0;
+  size_t          xbox_image_size = 0;
 #endif
 };
 
@@ -630,6 +631,7 @@ inline bool LocalAddressSpace::findUnwindSections(
   info.dso_base = module->imageBase;
   info.xbox_pdata_section = module->imageBase + pdata.offset;
   info.xbox_pdata_section_length = pdata.length;
+  info.xbox_image_size = module->imageSize;
   return true;
 #elif defined(_LIBUNWIND_SUPPORT_DWARF_UNWIND) && defined(_WIN32)
   HMODULE mods[1024];

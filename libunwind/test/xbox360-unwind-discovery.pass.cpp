@@ -16,6 +16,7 @@
 #if defined(_XBOX) && _XBOX_VER == 200
 #include "../src/AddressSpace.hpp"
 #include "../src/RWMutex.hpp"
+#include <unwind.h>
 #endif
 
 using namespace libunwind;
@@ -93,11 +94,25 @@ int __unw_getcontext(unw_context_t *);
 int __unw_init_local(unw_cursor_t *, unw_context_t *);
 int __unw_get_proc_info(unw_cursor_t *, unw_proc_info_t *);
 int __unw_step(unw_cursor_t *);
+int __unw_set_reg(unw_cursor_t *, unw_regnum_t, unw_word_t);
 }
 
 #if defined(LIBUNWIND_TEST_XBOX_FAIL_FAST_STACK_PROBE)
 // This test must not execute DWARF parsing, which needs a stack-probe helper.
 extern "C" [[noreturn]] void _RtlCheckStack12() { abort(); }
+#endif
+
+#if defined(LIBUNWIND_TEST_XBOX_SEH_FIXTURE)
+extern "C" [[noreturn]] int __C_specific_handler(...) { abort(); }
+static _Unwind_Reason_Code failIfTraced(_Unwind_Context *, void *) { abort(); }
+extern "C" __attribute__((noinline)) int sehFixture(volatile int *value) {
+  __try {
+    ++*value;
+  } __except (1) {
+    return -1;
+  }
+  return 0;
+}
 #endif
 
 struct TestRegisters {
@@ -150,8 +165,58 @@ static void testLoaderIntegration() {
   unw_proc_info_t info;
   assert(__unw_getcontext(&context) == UNW_ESUCCESS);
   assert(__unw_init_local(&cursor, &context) == UNW_ESUCCESS);
+  assert(__unw_get_proc_info(&cursor, &info) == UNW_ESUCCESS);
+  assert(info.start_ip <= pc && pc < info.end_ip);
+  assert(info.unwind_info_size == 8 && (info.format & 0x40000000));
+  assert(__unw_step(&cursor) == UNW_EUNSPEC);
+
+#if defined(LIBUNWIND_TEST_XBOX_SEH_FIXTURE)
+  uintptr_t sehPC = reinterpret_cast<uintptr_t>(&sehFixture);
+  assert(__unw_set_reg(&cursor, UNW_REG_IP, sehPC) == UNW_ESUCCESS);
+  assert(__unw_get_proc_info(&cursor, &info) == UNW_ESUCCESS);
+  assert(info.start_ip == sehPC &&
+         info.handler == reinterpret_cast<uintptr_t>(&__C_specific_handler));
+  assert(info.lsda >= modules[0].imageBase &&
+         info.lsda - modules[0].imageBase < modules[0].imageSize);
+  XboxSEHScope scope;
+  assert(readXboxSEHScope(
+      reinterpret_cast<const uint8_t *>(info.lsda),
+      modules[0].imageSize - (info.lsda - modules[0].imageBase), 0, scope));
+  assert(scope.begin >= info.start_ip && scope.end <= info.end_ip);
+  assert(scope.filterOrFinally && scope.handler);
+  _Unwind_Exception exception = {};
+  assert(_Unwind_RaiseException(&exception) == _URC_FATAL_PHASE1_ERROR);
+  assert(_Unwind_Backtrace(failIfTraced, nullptr) == _URC_FATAL_PHASE1_ERROR);
+#endif
+
+  makeImage();
+  uintptr_t imageBase = reinterpret_cast<uintptr_t>(image);
+  modules[0].imageBase = imageBase;
+  modules[0].imageSize = ImageSize;
+  auto putBE32 = [](uint8_t *p, uint32_t value) {
+    p[0] = uint8_t(value >> 24);
+    p[1] = uint8_t(value >> 16);
+    p[2] = uint8_t(value >> 8);
+    p[3] = uint8_t(value);
+  };
+  putBE32(image + 0x800, imageBase + 0x420);
+  putBE32(image + 0x804, 0xc0000402);
+  putBE32(image + 0x418, pc);
+  putBE32(image + 0x41c, imageBase + 0xa00);
+  assert(__unw_set_reg(&cursor, UNW_REG_IP, imageBase + 0x424) == UNW_ESUCCESS);
+  assert(__unw_get_proc_info(&cursor, &info) == UNW_ESUCCESS);
+  assert(info.start_ip == imageBase + 0x420 &&
+         info.end_ip == imageBase + 0x430);
+  assert(info.handler == pc && info.lsda == imageBase + 0xa00);
+  assert(info.unwind_info == imageBase + 0x800);
+  assert(__unw_step(&cursor) == UNW_EUNSPEC);
+  dwarf_eh_bases bases = {};
+  assert(_Unwind_Find_FDE(reinterpret_cast<void *>(imageBase + 0x424),
+                          &bases) == nullptr);
+  putBE32(image + 0x804, 0x40000000);
+  assert(__unw_set_reg(&cursor, UNW_REG_IP, imageBase + 0x424) == UNW_ESUCCESS);
   assert(__unw_get_proc_info(&cursor, &info) == UNW_ENOINFO);
-  assert(__unw_step(&cursor) == UNW_STEP_END);
+  assert(__unw_step(&cursor) == UNW_EBADFRAME);
 }
 #endif
 

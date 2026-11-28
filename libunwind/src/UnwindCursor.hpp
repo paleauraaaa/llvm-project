@@ -1374,6 +1374,10 @@ private:
   unw_proc_info_t  _info;
   bool             _unwindInfoMissing;
   bool             _isSignalFrame;
+#if defined(_XBOX) && _XBOX_VER == 200 && !defined(_LIBUNWIND_IS_BAREMETAL)
+  bool             _isXboxPdata = false;
+  bool             _xboxPdataError = false;
+#endif
 #if defined(_LIBUNWIND_CHECK_LINUX_SIGRETURN) ||                               \
     defined(_LIBUNWIND_CHECK_HAIKU_SIGRETURN)
   bool             _isSigReturn = false;
@@ -2836,6 +2840,11 @@ int UnwindCursor<A, R>::stepWithTBTable(pint_t pc, tbtable *TBTable,
 
 template <typename A, typename R>
 void UnwindCursor<A, R>::setInfoBasedOnIPRegister(bool isReturnAddress) {
+#if defined(_XBOX) && _XBOX_VER == 200 && !defined(_LIBUNWIND_IS_BAREMETAL)
+  _unwindInfoMissing = false;
+  _isXboxPdata = false;
+  _xboxPdataError = false;
+#endif
 #if defined(_LIBUNWIND_CHECK_LINUX_SIGRETURN) ||                               \
     defined(_LIBUNWIND_CHECK_HAIKU_SIGRETURN)
   _isSigReturn = false;
@@ -2889,6 +2898,35 @@ void UnwindCursor<A, R>::setInfoBasedOnIPRegister(bool isReturnAddress) {
   // Ask address space object to find unwind sections for this pc.
   UnwindInfoSections sects;
   if (_addressSpace.template findUnwindSections<R>(pc, sects)) {
+#if defined(_XBOX) && _XBOX_VER == 200 && !defined(_LIBUNWIND_IS_BAREMETAL)
+    if (sects.xbox_pdata_section != 0) {
+      XboxRuntimeFunction function;
+      XboxPdataResult status = findXboxRuntimeFunction(
+          reinterpret_cast<const uint8_t *>(sects.dso_base),
+          sects.xbox_image_size, static_cast<uint32_t>(sects.dso_base),
+          sects.xbox_pdata_section - sects.dso_base,
+          sects.xbox_pdata_section_length, static_cast<uint32_t>(pc), function);
+      if (status == XboxPdataResult::Found) {
+        memset(static_cast<void *>(&_info), 0, sizeof(_info));
+        _info.start_ip = function.start;
+        _info.end_ip = function.end;
+        _info.handler = function.handler;
+        _info.lsda = function.handlerData;
+        _info.format = function.packed;
+        _info.unwind_info = sects.dso_base + function.recordOffset;
+        _info.unwind_info_size = XboxPdata::RecordSize;
+        _info.extra = sects.dso_base;
+        _isXboxPdata = true;
+        return;
+      }
+      if (status != XboxPdataResult::NotFound) {
+        _LIBUNWIND_TRACE_UNWINDING("invalid or unsupported Xbox .pdata");
+        _unwindInfoMissing = true;
+        _xboxPdataError = true;
+        return;
+      }
+    }
+#endif
 #if defined(_LIBUNWIND_SUPPORT_COMPACT_UNWIND)
     // If there is a compact unwind encoding table, look there first.
     if (sects.compact_unwind_section != 0) {
@@ -3368,6 +3406,12 @@ int UnwindCursor<A, R>::stepThroughSigReturn() {
 
 template <typename A, typename R> int UnwindCursor<A, R>::step(bool stage2) {
   (void)stage2;
+#if defined(_XBOX) && _XBOX_VER == 200 && !defined(_LIBUNWIND_IS_BAREMETAL)
+  if (_xboxPdataError)
+    return UNW_EBADFRAME;
+  if (_isXboxPdata)
+    return UNW_EUNSPEC;
+#endif
   // Bottom of stack is defined when unwind info cannot be found.
   if (_unwindInfoMissing)
     return UNW_STEP_END;
@@ -3402,6 +3446,13 @@ template <typename A, typename R> int UnwindCursor<A, R>::step(bool stage2) {
   // update info based on new PC
   if (result == UNW_STEP_SUCCESS) {
     this->setInfoBasedOnIPRegister(true);
+#if defined(_XBOX) && _XBOX_VER == 200 && !defined(_LIBUNWIND_IS_BAREMETAL)
+    // Native handlers do not use the Itanium personality ABI.
+    if (_xboxPdataError)
+      return UNW_EBADFRAME;
+    if (_isXboxPdata)
+      return UNW_EUNSPEC;
+#endif
     if (_unwindInfoMissing)
       return UNW_STEP_END;
   }
