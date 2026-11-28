@@ -101,7 +101,11 @@ void WinException::beginFunction(const MachineFunction *MF) {
   if (!Asm->MAI.usesWindowsCFI()) {
     if (isXbox360) {
       shouldEmitMoves = false;
-      shouldEmitPersonality = shouldEmitLSDA = hasEHFunclets;
+      bool HasItaniumLandingPads =
+          F.hasFnAttribute("xbox360-libunwind") &&
+          PerFn && PerFn->getName() == "__gxx_personality_v0" && hasLandingPads;
+      shouldEmitPersonality = shouldEmitLSDA =
+          hasEHFunclets || HasItaniumLandingPads;
       return;
     }
     if (Per == EHPersonality::MSVC_X86SEH && !hasEHFunclets) {

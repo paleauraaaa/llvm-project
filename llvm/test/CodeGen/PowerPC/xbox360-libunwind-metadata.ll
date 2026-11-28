@@ -5,9 +5,38 @@
 
 declare i32 @__C_specific_handler(...)
 declare i32 @__CxxFrameHandler(...)
+declare i32 @__gxx_personality_v0(...)
 declare void @risky()
 declare void @observe()
 @int_type = external global i8
+
+; CHECK: .long __gxx_personality_v0
+; CHECK-NEXT: .long [[LSDA:Lexception[0-9]+]]
+; CHECK-NEXT: itanium_cleanup:
+; CHECK: .section .xseh
+; CHECK: .long 1481852161
+; CHECK-NEXT: .long Lxbox_begin
+; CHECK-NEXT: .long itanium_cleanup
+; CHECK-NEXT: .long {{[0-9]+}}
+; CHECK-NEXT: .long 16
+; CHECK: [[LSDA]]:
+; CHECK-NEXT: .byte 255
+; CHECK: .uleb128 {{.*}} # >> Call Site 1 <<
+; CHECK-NEXT: .uleb128 {{.*}}
+; CHECK-NEXT: .byte 0
+; CHECK-NEXT: .byte 0
+; CHECK: .uleb128 {{.*}} # >> Call Site 2 <<
+define void @itanium_cleanup() #0 personality ptr @__gxx_personality_v0 {
+entry:
+  call void @risky()
+  invoke void @risky() to label %done unwind label %cleanup
+done:
+  ret void
+cleanup:
+  %pad = landingpad { ptr, i32 } cleanup
+  call void @observe()
+  resume { ptr, i32 } %pad
+}
 
 ; CHECK-LABEL: opted_in:
 ; CHECK: .section .xseh

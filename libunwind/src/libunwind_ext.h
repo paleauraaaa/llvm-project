@@ -76,6 +76,7 @@ typedef struct {
 #define UNW_XBOX_SEH_CATCH_FUNCLET 2
 #define UNW_XBOX_SEH_C_HANDLER 4
 #define UNW_XBOX_SEH_HANDLER_OWNERSHIP 8
+#define UNW_XBOX_ITANIUM_HANDLER 16
 
 #if !defined(_LIBUNWIND_IS_BAREMETAL)
 // Returns UNW_ENOINFO for frames without opt-in metadata and UNW_EBADFRAME

@@ -334,6 +334,7 @@ class PPCXbox360AsmPrinter : public PPCAsmPrinter {
     CatchFunclet = 2,
     CSEHHandler = 4,
     OwnedSEHException = 8,
+    ItaniumHandler = 16,
   };
   static constexpr uint32_t LibunwindRecordVersion = 0x58534501;
 
@@ -383,6 +384,12 @@ void PPCXbox360AsmPrinter::emitEndOfAsmFile(Module &M) {
   PPCAsmPrinter::emitEndOfAsmFile(M);
 }
 
+static bool isXboxItaniumPersonality(const Function &F) {
+  return F.hasPersonalityFn() && F.hasFnAttribute("xbox360-libunwind") &&
+         F.getPersonalityFn()->stripPointerCasts()->getName() ==
+             "__gxx_personality_v0";
+}
+
 void PPCXbox360AsmPrinter::emitHandlerPrefix(
     Align Alignment, const MachineBasicBlock *Cleanup) {
   Alignment = std::max(Alignment, Align(8));
@@ -391,28 +398,34 @@ void PPCXbox360AsmPrinter::emitHandlerPrefix(
   const Function &F = MF->getFunction();
   bool IsSEH =
       classifyEHPersonality(F.getPersonalityFn()) == EHPersonality::MSVC_TableSEH;
+  bool IsItanium = isXboxItaniumPersonality(F);
   OutStreamer->emitSymbolValue(getSymbol(cast<Function>(
                                   F.getPersonalityFn()->stripPointerCasts())),
                               4);
   StringRef Name = GlobalValue::dropLLVMManglingEscape(MF->getName());
-  MCSymbol *Table =
-      Cleanup ? getXboxSEHCleanupTableSymbol(*MF->getWinEHFuncInfo(), *Cleanup)
-              : OutContext.getOrCreateSymbol(
-                    Twine(IsSEH ? "$sehxdata$" : "$cppxdata$") + Name);
+  MCSymbol *Table = IsItanium
+                        ? getMBBExceptionSym(MF->front())
+                    : Cleanup
+                        ? getXboxSEHCleanupTableSymbol(*MF->getWinEHFuncInfo(),
+                                                      *Cleanup)
+                        : OutContext.getOrCreateSymbol(
+                              Twine(IsSEH ? "$sehxdata$" : "$cppxdata$") +
+                              Name);
   OutStreamer->emitSymbolValue(Table, 4);
 }
 
 void PPCXbox360AsmPrinter::emitFunctionEntryLabel() {
   const Function &F = MF->getFunction();
+  bool IsItanium = isXboxItaniumPersonality(F);
   if (F.hasPersonalityFn() &&
       cast<Function>(F.getPersonalityFn()->stripPointerCasts())->getName() !=
           "__CxxFrameHandler" &&
       cast<Function>(F.getPersonalityFn()->stripPointerCasts())->getName() !=
-          "__C_specific_handler")
+          "__C_specific_handler" && !IsItanium)
     report_fatal_error(
         "Xbox 360 handler-bearing unwind records require __CxxFrameHandler "
-        "or __C_specific_handler");
-  if (MF->hasEHFunclets())
+        "or __C_specific_handler, or opted-in __gxx_personality_v0");
+  if (MF->hasEHFunclets() || (IsItanium && !MF->getLandingPads().empty()))
     emitHandlerPrefix(MF->getAlignment());
   PPCAsmPrinter::emitFunctionEntryLabel();
 }
@@ -433,7 +446,9 @@ void PPCXbox360AsmPrinter::emitFunctionBodyStart() {
         if (MI.getFlag(MachineInstr::FrameSetup))
           report_fatal_error(
               "Xbox 360 unwind prologue must be in an entry block");
-  beginUnwindRange(MF->front(), MF->hasEHFunclets());
+  bool HasItaniumHandler =
+      isXboxItaniumPersonality(F) && !MF->getLandingPads().empty();
+  beginUnwindRange(MF->front(), MF->hasEHFunclets() || HasItaniumHandler);
 }
 
 static bool hasOwnedXboxSEHHandlers(const Function &F) {
@@ -470,6 +485,8 @@ void PPCXbox360AsmPrinter::beginUnwindRange(const MachineBasicBlock &MBB,
     if (hasOwnedXboxSEHHandlers(F))
       LibunwindFlags |= OwnedSEHException;
   }
+  if (Handler && isXboxItaniumPersonality(F))
+    LibunwindFlags |= ItaniumHandler;
   LastPrologueInst = nullptr;
   for (const MachineInstr &MI : MBB)
     if (MI.getFlag(MachineInstr::FrameSetup))

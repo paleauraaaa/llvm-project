@@ -26,6 +26,7 @@
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/LEB128.h"
 #include "llvm/Target/TargetLoweringObjectFile.h"
+#include "llvm/Target/TargetMachine.h"
 #include <algorithm>
 #include <cassert>
 #include <cstdint>
@@ -245,6 +246,9 @@ void EHStreamer::computeCallSiteTable(
   bool PreviousIsInvoke = false;
 
   bool IsSJLJ = Asm->MAI.getExceptionHandlingType() == ExceptionHandling::SjLj;
+  bool IsXboxItanium = Asm->TM.getTargetTriple().isOSXbox360() &&
+                       Asm->MF->getFunction().hasFnAttribute(
+                           "xbox360-libunwind");
 
   // Visit all instructions in order of address.
   for (const auto &MBB : *Asm->MF) {
@@ -291,7 +295,7 @@ void EHStreamer::computeCallSiteTable(
       // throw, create a call-site entry with no landing pad for the region
       // between the try-ranges.
       if (SawPotentiallyThrowing &&
-          (Asm->MAI.usesCFIForEH() ||
+          (Asm->MAI.usesCFIForEH() || IsXboxItanium ||
            Asm->MAI.getExceptionHandlingType() == ExceptionHandling::AIX)) {
         CallSites.push_back({LastLabel, BeginLabel, nullptr, 0});
         PreviousIsInvoke = false;

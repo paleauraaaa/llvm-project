@@ -22,6 +22,7 @@
 #include "llvm/MC/MCSymbol.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Target/TargetLoweringObjectFile.h"
+#include "llvm/Target/TargetMachine.h"
 #include <cstdint>
 using namespace llvm;
 
@@ -107,6 +108,8 @@ unsigned AsmPrinter::GetSizeOfEncodedValue(unsigned Encoding) const {
   default:
     llvm_unreachable("Invalid encoded value.");
   case dwarf::DW_EH_PE_absptr:
+    if (TM.getTargetTriple().isOSXbox360())
+      return getDataLayout().getPointerSize();
     return MAI.getCodePointerSize();
   case dwarf::DW_EH_PE_udata2:
     return 2;

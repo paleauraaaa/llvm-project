@@ -37,8 +37,9 @@ constexpr uint32_t CleanupFunclet = 1;
 constexpr uint32_t CatchFunclet = 2;
 constexpr uint32_t CHandler = 4;
 constexpr uint32_t HandlerOwnership = 8;
+constexpr uint32_t ItaniumHandler = 16;
 constexpr uint32_t KnownFlags =
-    CleanupFunclet | CatchFunclet | CHandler | HandlerOwnership;
+    CleanupFunclet | CatchFunclet | CHandler | HandlerOwnership | ItaniumHandler;
 } // namespace XboxSEH
 
 namespace XboxPE {
@@ -189,6 +190,9 @@ inline XboxPdataResult findXboxSEHMetadata(const uint8_t *image,
         xboxReadBE32(record + 4), xboxReadBE32(record + 8),
         xboxReadBE32(record + 12), xboxReadBE32(record + 16)};
     if ((entry.flags & ~XboxSEH::KnownFlags) ||
+        ((entry.flags & XboxSEH::ItaniumHandler) &&
+         (entry.flags & (XboxSEH::CHandler | XboxSEH::CleanupFunclet |
+                         XboxSEH::CatchFunclet))) ||
         ((entry.flags & XboxSEH::HandlerOwnership) &&
          !(entry.flags & XboxSEH::CHandler)) ||
         (entry.flags & (XboxSEH::CleanupFunclet | XboxSEH::CatchFunclet)) ==
@@ -201,7 +205,9 @@ inline XboxPdataResult findXboxSEHMetadata(const uint8_t *image,
          entry.start != entry.parent))
       return XboxPdataResult::Invalid;
     if (entry.start == function.start) {
-      if (found || ((entry.flags & XboxSEH::CHandler) && !function.handler))
+      if (found ||
+          ((entry.flags & (XboxSEH::CHandler | XboxSEH::ItaniumHandler)) &&
+           !function.handler))
         return XboxPdataResult::Invalid;
       candidate = entry;
       found = true;

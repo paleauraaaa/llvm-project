@@ -155,7 +155,8 @@ static int xbox_seh_frame(unw_cursor_t *cursor, unw_proc_info_t *info,
   if (status == UNW_ENOINFO && !info->handler)
     return UNW_ESUCCESS;
   if (status != UNW_ESUCCESS ||
-      (info->handler && !(frame->flags & UNW_XBOX_SEH_C_HANDLER)))
+      (info->handler && !(frame->flags & (UNW_XBOX_SEH_C_HANDLER |
+                                         UNW_XBOX_ITANIUM_HANDLER))))
     return UNW_EBADFRAME;
   return UNW_ESUCCESS;
 }
@@ -374,7 +375,8 @@ unwind_phase1(unw_context_t *uc, unw_cursor_t *cursor, _Unwind_Exception *except
     // this frame.
     if (frameInfo.handler != 0) {
 #if defined(_XBOX) && _XBOX_VER == 200 && !defined(_LIBUNWIND_IS_BAREMETAL)
-      if (frameInfo.format & UNW_INFO_FORMAT_XBOX_PDATA_POWERPC) {
+      if ((frameInfo.format & UNW_INFO_FORMAT_XBOX_PDATA_POWERPC) &&
+          (xbox_frame.flags & UNW_XBOX_SEH_C_HANDLER)) {
         int found = xbox_seh_search(cursor, pc, first_scope, &xbox_frame,
                                     &pointers, exception_object);
         if (found < 0)
@@ -574,7 +576,8 @@ unwind_phase2(unw_context_t *uc, unw_cursor_t *cursor,
     // If there is a personality routine, tell it we are unwinding.
     if (frameInfo.handler != 0) {
 #if defined(_XBOX) && _XBOX_VER == 200 && !defined(_LIBUNWIND_IS_BAREMETAL)
-      if (frameInfo.format & UNW_INFO_FORMAT_XBOX_PDATA_POWERPC) {
+      if ((frameInfo.format & UNW_INFO_FORMAT_XBOX_PDATA_POWERPC) &&
+          (xbox_frame.flags & UNW_XBOX_SEH_C_HANDLER)) {
         bool target = __libunwind_xbox_has_seh_target(exception_object) &&
                       sp == exception_object->private_2;
         uint32_t scope = target ? (uint32_t)__libunwind_xbox_seh_target_scope(
@@ -776,7 +779,8 @@ unwind_phase2_forced(unw_context_t *uc, unw_cursor_t *cursor,
     // If there is a personality routine, tell it we are unwinding.
     if (frameInfo.handler != 0) {
 #if defined(_XBOX) && _XBOX_VER == 200 && !defined(_LIBUNWIND_IS_BAREMETAL)
-      if (frameInfo.format & UNW_INFO_FORMAT_XBOX_PDATA_POWERPC) {
+      if ((frameInfo.format & UNW_INFO_FORMAT_XBOX_PDATA_POWERPC) &&
+          (xbox_frame.flags & UNW_XBOX_SEH_C_HANDLER)) {
         if (xbox_seh_cleanup(cursor, pc, first_scope, false, 0,
                              exception_object) != UNW_ESUCCESS)
           return xbox_phase2_error(committed, _URC_FATAL_PHASE2_ERROR);
