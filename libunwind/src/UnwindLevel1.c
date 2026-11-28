@@ -111,15 +111,192 @@ static _Unwind_Personality_Fn get_handler_function(unw_proc_info_t *frameInfo) {
   return handler;
 }
 
+#if defined(_XBOX) && _XBOX_VER == 200 && !defined(_LIBUNWIND_IS_BAREMETAL)
+#define XBOX_SEH_EXCEPTION_CODE 0x20474343U
+#define XBOX_UNWIND_NOINLINE __attribute__((noinline))
+
+// These layouts match the Xbox 360 EXCEPTION_RECORD and CONTEXT ABI.
+typedef struct {
+  uint32_t flags, msr, iar, lr;
+  uint64_t ctr, gpr[32];
+  uint32_t cr, xer;
+  double fpscr, fpr[32];
+  uint32_t user_control, fill;
+  float vscr[4], vr[128][4];
+} xbox_seh_context;
+
+typedef struct {
+  uint32_t code, flags;
+  void *nested, *address;
+  uint32_t parameter_count;
+  uintptr_t parameters[15];
+} xbox_seh_exception_record;
+
+typedef struct {
+  xbox_seh_exception_record *record;
+  xbox_seh_context *context;
+} xbox_seh_exception_pointers;
+
+static int xbox_seh_control_pc(unw_cursor_t *cursor, uintptr_t *pc) {
+  unw_word_t ip;
+  if (__unw_get_reg(cursor, UNW_REG_IP, &ip) != UNW_ESUCCESS || !ip ||
+      ip > UINT32_MAX)
+    return UNW_EBADFRAME;
+  *pc = (uintptr_t)ip - 1;
+  return UNW_ESUCCESS;
+}
+
+static int xbox_seh_frame(unw_cursor_t *cursor, unw_proc_info_t *info,
+                          __unw_xbox_seh_frame *frame) {
+  memset(frame, 0, sizeof(*frame));
+  if (!(info->format & UNW_INFO_FORMAT_XBOX_PDATA_POWERPC))
+    return UNW_ESUCCESS;
+  int status = __unw_xbox_get_seh_frame(cursor, frame);
+  if (status == UNW_ENOINFO && !info->handler)
+    return UNW_ESUCCESS;
+  if (status != UNW_ESUCCESS ||
+      (info->handler && !(frame->flags & UNW_XBOX_SEH_C_HANDLER)))
+    return UNW_EBADFRAME;
+  return UNW_ESUCCESS;
+}
+
+// A boundary is encountered either at the cleanup itself, after processing
+// its local scopes, or at the marked displaced-exception callback.
+static int xbox_seh_boundary(unw_cursor_t *cursor, bool cleanup,
+                             __unw_xbox_seh_cleanup_state *state) {
+  uintptr_t parent;
+  if (cleanup)
+    return __unw_xbox_get_seh_cleanup_state(cursor, &parent, state);
+  return __unw_xbox_get_seh_collision_state(cursor, &parent, state);
+}
+
+static int xbox_seh_continue(unw_cursor_t *cursor,
+                             __unw_xbox_seh_cleanup_state *state,
+                             _Unwind_Exception *replacement, bool commit,
+                             uint32_t *next_scope) {
+  uintptr_t pc;
+  unw_cursor_t continuation;
+  uint32_t next;
+  if (xbox_seh_control_pc(state->cursor, &pc) != UNW_ESUCCESS ||
+      __unw_xbox_continue_seh_cleanup(state, pc, &continuation, &next) !=
+          UNW_ESUCCESS)
+    return UNW_EBADFRAME;
+  if (commit) {
+    uintptr_t parent;
+    __unw_xbox_seh_cleanup_state transferred;
+    if (__unw_xbox_replace_seh_cleanup_exception(
+            cursor, state->exception, replacement, &parent, &transferred) !=
+        UNW_ESUCCESS)
+      return UNW_EBADFRAME;
+    *state = transferred;
+  }
+  // The committed callback may have changed control flow; never return into
+  // the abandoned unwind if the saved continuation cannot be reconstructed.
+  if (__unw_xbox_continue_seh_cleanup(state, pc, cursor, &next) != UNW_ESUCCESS) {
+    if (commit)
+      _LIBUNWIND_ABORT("invalid Xbox collided-unwind continuation");
+    return UNW_EBADFRAME;
+  }
+  *next_scope = next;
+  return UNW_ESUCCESS;
+}
+
+static int xbox_seh_search(unw_cursor_t *cursor, uintptr_t pc, uint32_t first,
+                           __unw_xbox_seh_frame *frame,
+                           xbox_seh_exception_pointers *pointers,
+                           _Unwind_Exception *exception) {
+  for (uint32_t index = first;; ++index) {
+    __unw_xbox_seh_scope scope;
+    int status = __unw_xbox_get_seh_scope(cursor, pc, index, &scope);
+    if (status == UNW_XBOX_SEH_SCOPE_END)
+      return 0;
+    if (status < 0)
+      return -1;
+    if (status == UNW_XBOX_SEH_SCOPE_ACTIVE && scope.handler) {
+      int disposition;
+      if (__unw_xbox_call_seh_filter(cursor, pc, index, pointers,
+                                     &disposition) != UNW_ESUCCESS ||
+          disposition < 0)
+        return -1;
+      if (disposition > 0) {
+        unw_word_t sp;
+        if (!(frame->flags & UNW_XBOX_SEH_HANDLER_OWNERSHIP) ||
+            __unw_get_reg(cursor, UNW_REG_SP, &sp) != UNW_ESUCCESS ||
+            !__libunwind_xbox_set_seh_target(exception, (uintptr_t)sp, index))
+          return -1;
+        return 1;
+      }
+    }
+    if (index == UINT32_MAX)
+      return -1;
+  }
+}
+
+static int xbox_seh_cleanup(unw_cursor_t *cursor, uintptr_t pc, uint32_t first,
+                            bool target, uint32_t target_scope,
+                            _Unwind_Exception *exception) {
+  for (uint32_t index = first;; ++index) {
+    __unw_xbox_seh_scope scope;
+    int status = __unw_xbox_get_seh_scope(cursor, pc, index, &scope);
+    if (status == UNW_XBOX_SEH_SCOPE_END)
+      return target ? UNW_EBADFRAME : UNW_ESUCCESS;
+    if (status < 0)
+      return UNW_EBADFRAME;
+    if (target && index == target_scope) {
+      if (status != UNW_XBOX_SEH_SCOPE_ACTIVE || !scope.handler)
+        return UNW_EBADFRAME;
+      return __unw_xbox_transfer_seh_handler(
+          cursor, pc, index, XBOX_SEH_EXCEPTION_CODE, exception);
+    }
+    if (status == UNW_XBOX_SEH_SCOPE_ACTIVE && !scope.handler &&
+        __unw_xbox_call_seh_cleanup(cursor, pc, index, exception) !=
+            UNW_ESUCCESS)
+      return UNW_EBADFRAME;
+    if (index == UINT32_MAX)
+      return UNW_EBADFRAME;
+  }
+}
+
+static _Unwind_Reason_Code xbox_phase2_error(bool committed,
+                                              _Unwind_Reason_Code result) {
+  if (committed)
+    _LIBUNWIND_ABORT("Xbox collided unwind cannot return to abandoned frames");
+  return result;
+}
+#endif
+
+#if !defined(XBOX_UNWIND_NOINLINE)
+#define XBOX_UNWIND_NOINLINE
+#endif
+XBOX_UNWIND_NOINLINE
 static _Unwind_Reason_Code
 unwind_phase1(unw_context_t *uc, unw_cursor_t *cursor, _Unwind_Exception *exception_object) {
   __unw_init_local(cursor, uc);
 
+#if defined(_XBOX) && _XBOX_VER == 200 && !defined(_LIBUNWIND_IS_BAREMETAL)
+  xbox_seh_context context = {0};
+  xbox_seh_exception_record record = {0};
+  xbox_seh_exception_pointers pointers = {&record, &context};
+  record.code = XBOX_SEH_EXCEPTION_CODE;
+  record.flags = 1; // A libunwind exception cannot continue execution.
+  record.parameter_count = 1;
+  record.parameters[0] = (uintptr_t)exception_object;
+  bool have_origin = false;
+  bool process_current = false;
+  uint32_t first_scope = 0;
+#endif
   // Walk each frame looking for a place to stop.
   while (true) {
     // Ask libunwind to get next frame (skip over first which is
     // _Unwind_RaiseException).
-    int stepResult = __unw_step(cursor);
+    int stepResult;
+#if defined(_XBOX) && _XBOX_VER == 200 && !defined(_LIBUNWIND_IS_BAREMETAL)
+    if (process_current) {
+      process_current = false;
+      stepResult = UNW_STEP_SUCCESS;
+    } else
+#endif
+      stepResult = __unw_step(cursor);
     if (stepResult == 0) {
       _LIBUNWIND_TRACE_UNWINDING(
           "unwind_phase1(ex_obj=%p): __unw_step() reached "
@@ -134,6 +311,29 @@ unwind_phase1(unw_context_t *uc, unw_cursor_t *cursor, _Unwind_Exception *except
       return _URC_FATAL_PHASE1_ERROR;
     }
 
+#if defined(_XBOX) && _XBOX_VER == 200 && !defined(_LIBUNWIND_IS_BAREMETAL)
+    uintptr_t pc;
+    if (xbox_seh_control_pc(cursor, &pc) != UNW_ESUCCESS)
+      return _URC_FATAL_PHASE1_ERROR;
+    if (!have_origin) {
+      // The captured call-site state is not a full fault context. A zero
+      // ContextFlags explicitly marks all register groups unavailable.
+      context.iar = (uint32_t)(pc & ~(uintptr_t)3);
+      record.address = (void *)(uintptr_t)context.iar;
+      have_origin = true;
+    }
+    __unw_xbox_seh_cleanup_state boundary;
+    int boundary_status = xbox_seh_boundary(cursor, false, &boundary);
+    if (boundary_status != UNW_ESUCCESS && boundary_status != UNW_ENOINFO)
+      return _URC_FATAL_PHASE1_ERROR;
+    if (boundary_status == UNW_ESUCCESS) {
+      if (xbox_seh_continue(cursor, &boundary, exception_object, false,
+                            &first_scope) != UNW_ESUCCESS)
+        return _URC_FATAL_PHASE1_ERROR;
+      process_current = true;
+      continue;
+    }
+#endif
     // See if frame has code to run (has personality routine).
     unw_proc_info_t frameInfo;
     unw_word_t sp;
@@ -145,6 +345,11 @@ unwind_phase1(unw_context_t *uc, unw_cursor_t *cursor, _Unwind_Exception *except
       return _URC_FATAL_PHASE1_ERROR;
     }
 
+#if defined(_XBOX) && _XBOX_VER == 200 && !defined(_LIBUNWIND_IS_BAREMETAL)
+    __unw_xbox_seh_frame xbox_frame;
+    if (xbox_seh_frame(cursor, &frameInfo, &xbox_frame) != UNW_ESUCCESS)
+      return _URC_FATAL_PHASE1_ERROR;
+#endif
 #ifndef NDEBUG
     // When tracing, print state information.
     if (_LIBUNWIND_TRACING_UNWINDING) {
@@ -168,12 +373,20 @@ unwind_phase1(unw_context_t *uc, unw_cursor_t *cursor, _Unwind_Exception *except
     // If there is a personality routine, ask it if it will want to stop at
     // this frame.
     if (frameInfo.handler != 0) {
-#if defined(_XBOX) && _XBOX_VER == 200
+#if defined(_XBOX) && _XBOX_VER == 200 && !defined(_LIBUNWIND_IS_BAREMETAL)
       if (frameInfo.format & UNW_INFO_FORMAT_XBOX_PDATA_POWERPC) {
-        _LIBUNWIND_TRACE_UNWINDING("Xbox native SEH dispatch is unsupported");
+        int found = xbox_seh_search(cursor, pc, first_scope, &xbox_frame,
+                                    &pointers, exception_object);
+        if (found < 0)
+          return _URC_FATAL_PHASE1_ERROR;
+        if (found > 0)
+          return _URC_NO_REASON;
+      } else
+#elif defined(_XBOX) && _XBOX_VER == 200
+      if (frameInfo.format & UNW_INFO_FORMAT_XBOX_PDATA_POWERPC)
         return _URC_FATAL_PHASE1_ERROR;
-      }
 #endif
+      {
       _Unwind_Personality_Fn p = get_handler_function(&frameInfo);
       _LIBUNWIND_TRACE_UNWINDING(
           "unwind_phase1(ex_obj=%p): calling personality function %p",
@@ -206,7 +419,18 @@ unwind_phase1(unw_context_t *uc, unw_cursor_t *cursor, _Unwind_Exception *except
             (void *)exception_object);
         return _URC_FATAL_PHASE1_ERROR;
       }
+      }
     }
+#if defined(_XBOX) && _XBOX_VER == 200 && !defined(_LIBUNWIND_IS_BAREMETAL)
+    first_scope = 0;
+    if (xbox_frame.flags & UNW_XBOX_SEH_CLEANUP_FUNCLET) {
+      if (xbox_seh_boundary(cursor, true, &boundary) != UNW_ESUCCESS ||
+          xbox_seh_continue(cursor, &boundary, exception_object, false,
+                            &first_scope) != UNW_ESUCCESS)
+        return _URC_FATAL_PHASE1_ERROR;
+      process_current = true;
+    }
+#endif
   }
   return _URC_NO_REASON;
 }
@@ -217,6 +441,7 @@ __attribute__((target("+gcs")))
 #else
 _LIBUNWIND_TRACE_NO_INLINE
 #endif
+XBOX_UNWIND_NOINLINE
 static _Unwind_Reason_Code
 unwind_phase2(unw_context_t *uc, unw_cursor_t *cursor,
               _Unwind_Exception *exception_object) {
@@ -228,6 +453,11 @@ unwind_phase2(unw_context_t *uc, unw_cursor_t *cursor,
   // uc is initialized by __unw_getcontext in the parent frame. The first stack
   // frame walked is unwind_phase2.
   unsigned framesWalked = 1;
+#if defined(_XBOX) && _XBOX_VER == 200 && !defined(_LIBUNWIND_IS_BAREMETAL)
+  bool process_current = false;
+  bool committed = false;
+  uint32_t first_scope = 0;
+#endif
 #if defined(_LIBUNWIND_USE_CET)
   unsigned long shadowStackTop = _get_ssp();
 #elif defined(_LIBUNWIND_USE_GCS)
@@ -240,21 +470,50 @@ unwind_phase2(unw_context_t *uc, unw_cursor_t *cursor,
 
     // Ask libunwind to get next frame (skip over first which is
     // _Unwind_RaiseException).
-    int stepResult = __unw_step_stage2(cursor);
+    int stepResult;
+#if defined(_XBOX) && _XBOX_VER == 200 && !defined(_LIBUNWIND_IS_BAREMETAL)
+    if (process_current) {
+      process_current = false;
+      stepResult = UNW_STEP_SUCCESS;
+    } else
+#endif
+      stepResult = __unw_step_stage2(cursor);
     if (stepResult == 0) {
       _LIBUNWIND_TRACE_UNWINDING(
           "unwind_phase2(ex_obj=%p): __unw_step_stage2() reached "
           "bottom => _URC_END_OF_STACK",
           (void *)exception_object);
+#if defined(_XBOX) && _XBOX_VER == 200 && !defined(_LIBUNWIND_IS_BAREMETAL)
+      return xbox_phase2_error(committed, _URC_END_OF_STACK);
+#else
       return _URC_END_OF_STACK;
+#endif
     } else if (stepResult < 0) {
       _LIBUNWIND_TRACE_UNWINDING(
           "unwind_phase2(ex_obj=%p): __unw_step_stage2 failed => "
           "_URC_FATAL_PHASE1_ERROR",
           (void *)exception_object);
+#if defined(_XBOX) && _XBOX_VER == 200 && !defined(_LIBUNWIND_IS_BAREMETAL)
+      return xbox_phase2_error(committed, _URC_FATAL_PHASE2_ERROR);
+#else
       return _URC_FATAL_PHASE2_ERROR;
+#endif
     }
 
+#if defined(_XBOX) && _XBOX_VER == 200 && !defined(_LIBUNWIND_IS_BAREMETAL)
+    __unw_xbox_seh_cleanup_state boundary;
+    int boundary_status = xbox_seh_boundary(cursor, false, &boundary);
+    if (boundary_status != UNW_ESUCCESS && boundary_status != UNW_ENOINFO)
+      return xbox_phase2_error(true, _URC_FATAL_PHASE2_ERROR);
+    if (boundary_status == UNW_ESUCCESS) {
+      if (xbox_seh_continue(cursor, &boundary, exception_object, true,
+                            &first_scope) != UNW_ESUCCESS)
+        return xbox_phase2_error(committed, _URC_FATAL_PHASE2_ERROR);
+      committed = true;
+      process_current = true;
+      continue;
+    }
+#endif
     // Get info about this frame.
     unw_word_t sp;
     unw_proc_info_t frameInfo;
@@ -264,9 +523,20 @@ unwind_phase2(unw_context_t *uc, unw_cursor_t *cursor,
           "unwind_phase2(ex_obj=%p): __unw_get_proc_info "
           "failed => _URC_FATAL_PHASE1_ERROR",
           (void *)exception_object);
+#if defined(_XBOX) && _XBOX_VER == 200 && !defined(_LIBUNWIND_IS_BAREMETAL)
+      return xbox_phase2_error(committed, _URC_FATAL_PHASE2_ERROR);
+#else
       return _URC_FATAL_PHASE2_ERROR;
+#endif
     }
 
+#if defined(_XBOX) && _XBOX_VER == 200 && !defined(_LIBUNWIND_IS_BAREMETAL)
+    __unw_xbox_seh_frame xbox_frame;
+    uintptr_t pc;
+    if (xbox_seh_control_pc(cursor, &pc) != UNW_ESUCCESS ||
+        xbox_seh_frame(cursor, &frameInfo, &xbox_frame) != UNW_ESUCCESS)
+      return xbox_phase2_error(committed, _URC_FATAL_PHASE2_ERROR);
+#endif
 #ifndef NDEBUG
     // When tracing, print state information.
     if (_LIBUNWIND_TRACING_UNWINDING) {
@@ -303,12 +573,22 @@ unwind_phase2(unw_context_t *uc, unw_cursor_t *cursor,
     ++framesWalked;
     // If there is a personality routine, tell it we are unwinding.
     if (frameInfo.handler != 0) {
-#if defined(_XBOX) && _XBOX_VER == 200
+#if defined(_XBOX) && _XBOX_VER == 200 && !defined(_LIBUNWIND_IS_BAREMETAL)
       if (frameInfo.format & UNW_INFO_FORMAT_XBOX_PDATA_POWERPC) {
-        _LIBUNWIND_TRACE_UNWINDING("Xbox native SEH dispatch is unsupported");
+        bool target = __libunwind_xbox_has_seh_target(exception_object) &&
+                      sp == exception_object->private_2;
+        uint32_t scope = target ? (uint32_t)__libunwind_xbox_seh_target_scope(
+                                      exception_object)
+                                : 0;
+        if (xbox_seh_cleanup(cursor, pc, first_scope, target, scope,
+                             exception_object) != UNW_ESUCCESS || target)
+          return xbox_phase2_error(committed, _URC_FATAL_PHASE2_ERROR);
+      } else
+#elif defined(_XBOX) && _XBOX_VER == 200
+      if (frameInfo.format & UNW_INFO_FORMAT_XBOX_PDATA_POWERPC)
         return _URC_FATAL_PHASE2_ERROR;
-      }
 #endif
+      {
       _Unwind_Personality_Fn p = get_handler_function(&frameInfo);
       _Unwind_Action action = _UA_CLEANUP_PHASE;
       if (sp == exception_object->private_2) {
@@ -349,14 +629,34 @@ unwind_phase2(unw_context_t *uc, unw_cursor_t *cursor,
 
         __unw_phase2_resume(cursor, framesWalked);
         // __unw_phase2_resume() only returns if there was an error.
+#if defined(_XBOX) && _XBOX_VER == 200 && !defined(_LIBUNWIND_IS_BAREMETAL)
+        return xbox_phase2_error(committed, _URC_FATAL_PHASE2_ERROR);
+#else
         return _URC_FATAL_PHASE2_ERROR;
+#endif
       default:
         // Personality routine returned an unknown result code.
         _LIBUNWIND_DEBUG_LOG("personality function returned unknown result %d",
                              personalityResult);
+#if defined(_XBOX) && _XBOX_VER == 200 && !defined(_LIBUNWIND_IS_BAREMETAL)
+        return xbox_phase2_error(committed, _URC_FATAL_PHASE2_ERROR);
+#else
         return _URC_FATAL_PHASE2_ERROR;
+#endif
+      }
       }
     }
+#if defined(_XBOX) && _XBOX_VER == 200 && !defined(_LIBUNWIND_IS_BAREMETAL)
+    first_scope = 0;
+    if (xbox_frame.flags & UNW_XBOX_SEH_CLEANUP_FUNCLET) {
+      if (xbox_seh_boundary(cursor, true, &boundary) != UNW_ESUCCESS ||
+          xbox_seh_continue(cursor, &boundary, exception_object, true,
+                            &first_scope) != UNW_ESUCCESS)
+        return xbox_phase2_error(committed, _URC_FATAL_PHASE2_ERROR);
+      committed = true;
+      process_current = true;
+    }
+#endif
   }
 
   // Clean up phase did not resume at the frame that the search phase
@@ -370,6 +670,7 @@ __attribute__((target("+gcs")))
 #else
 _LIBUNWIND_TRACE_NO_INLINE
 #endif
+XBOX_UNWIND_NOINLINE
 static _Unwind_Reason_Code
 unwind_phase2_forced(unw_context_t *uc, unw_cursor_t *cursor,
                      _Unwind_Exception *exception_object, _Unwind_Stop_Fn stop,
@@ -379,9 +680,38 @@ unwind_phase2_forced(unw_context_t *uc, unw_cursor_t *cursor,
   // uc is initialized by __unw_getcontext in the parent frame. The first stack
   // frame walked is unwind_phase2_forced.
   unsigned framesWalked = 1;
+#if defined(_XBOX) && _XBOX_VER == 200 && !defined(_LIBUNWIND_IS_BAREMETAL)
+  bool process_current = false;
+  bool committed = false;
+  uint32_t first_scope = 0;
+#endif
   // Walk each frame until we reach where search phase said to stop
   int stepResult;
-  while ((stepResult = __unw_step_stage2(cursor)) > 0) {
+  while (true) {
+#if defined(_XBOX) && _XBOX_VER == 200 && !defined(_LIBUNWIND_IS_BAREMETAL)
+    if (process_current) {
+      process_current = false;
+      stepResult = UNW_STEP_SUCCESS;
+    } else
+#endif
+      stepResult = __unw_step_stage2(cursor);
+    if (stepResult <= 0)
+      break;
+
+#if defined(_XBOX) && _XBOX_VER == 200 && !defined(_LIBUNWIND_IS_BAREMETAL)
+    __unw_xbox_seh_cleanup_state boundary;
+    int boundary_status = xbox_seh_boundary(cursor, false, &boundary);
+    if (boundary_status != UNW_ESUCCESS && boundary_status != UNW_ENOINFO)
+      return xbox_phase2_error(true, _URC_FATAL_PHASE2_ERROR);
+    if (boundary_status == UNW_ESUCCESS) {
+      if (xbox_seh_continue(cursor, &boundary, exception_object, true,
+                            &first_scope) != UNW_ESUCCESS)
+        return xbox_phase2_error(committed, _URC_FATAL_PHASE2_ERROR);
+      committed = true;
+      process_current = true;
+      continue;
+    }
+#endif
 
     // Update info about this frame.
     unw_proc_info_t frameInfo;
@@ -390,9 +720,20 @@ unwind_phase2_forced(unw_context_t *uc, unw_cursor_t *cursor,
           "unwind_phase2_forced(ex_obj=%p): __unw_get_proc_info "
           "failed => _URC_END_OF_STACK",
           (void *)exception_object);
+#if defined(_XBOX) && _XBOX_VER == 200 && !defined(_LIBUNWIND_IS_BAREMETAL)
+      return xbox_phase2_error(committed, _URC_FATAL_PHASE2_ERROR);
+#else
       return _URC_FATAL_PHASE2_ERROR;
+#endif
     }
 
+#if defined(_XBOX) && _XBOX_VER == 200 && !defined(_LIBUNWIND_IS_BAREMETAL)
+    __unw_xbox_seh_frame xbox_frame;
+    uintptr_t pc;
+    if (xbox_seh_control_pc(cursor, &pc) != UNW_ESUCCESS ||
+        xbox_seh_frame(cursor, &frameInfo, &xbox_frame) != UNW_ESUCCESS)
+      return xbox_phase2_error(committed, _URC_FATAL_PHASE2_ERROR);
+#endif
 #ifndef NDEBUG
     // When tracing, print state information.
     if (_LIBUNWIND_TRACING_UNWINDING) {
@@ -424,18 +765,27 @@ unwind_phase2_forced(unw_context_t *uc, unw_cursor_t *cursor,
       _LIBUNWIND_TRACE_UNWINDING(
           "unwind_phase2_forced(ex_obj=%p): stopped by stop function",
           (void *)exception_object);
+#if defined(_XBOX) && _XBOX_VER == 200 && !defined(_LIBUNWIND_IS_BAREMETAL)
+      return xbox_phase2_error(committed, _URC_FATAL_PHASE2_ERROR);
+#else
       return _URC_FATAL_PHASE2_ERROR;
+#endif
     }
 
     ++framesWalked;
     // If there is a personality routine, tell it we are unwinding.
     if (frameInfo.handler != 0) {
-#if defined(_XBOX) && _XBOX_VER == 200
+#if defined(_XBOX) && _XBOX_VER == 200 && !defined(_LIBUNWIND_IS_BAREMETAL)
       if (frameInfo.format & UNW_INFO_FORMAT_XBOX_PDATA_POWERPC) {
-        _LIBUNWIND_TRACE_UNWINDING("Xbox native SEH dispatch is unsupported");
+        if (xbox_seh_cleanup(cursor, pc, first_scope, false, 0,
+                             exception_object) != UNW_ESUCCESS)
+          return xbox_phase2_error(committed, _URC_FATAL_PHASE2_ERROR);
+      } else
+#elif defined(_XBOX) && _XBOX_VER == 200
+      if (frameInfo.format & UNW_INFO_FORMAT_XBOX_PDATA_POWERPC)
         return _URC_FATAL_PHASE2_ERROR;
-      }
 #endif
+      {
       _Unwind_Personality_Fn p = get_handler_function(&frameInfo);
       _LIBUNWIND_TRACE_UNWINDING(
           "unwind_phase2_forced(ex_obj=%p): calling personality function %p",
@@ -465,14 +815,34 @@ unwind_phase2_forced(unw_context_t *uc, unw_cursor_t *cursor,
                                    "personality returned %d, "
                                    "_URC_FATAL_PHASE2_ERROR",
                                    (void *)exception_object, personalityResult);
+#if defined(_XBOX) && _XBOX_VER == 200 && !defined(_LIBUNWIND_IS_BAREMETAL)
+        return xbox_phase2_error(committed, _URC_FATAL_PHASE2_ERROR);
+#else
         return _URC_FATAL_PHASE2_ERROR;
+#endif
+      }
       }
     }
+#if defined(_XBOX) && _XBOX_VER == 200 && !defined(_LIBUNWIND_IS_BAREMETAL)
+    first_scope = 0;
+    if (xbox_frame.flags & UNW_XBOX_SEH_CLEANUP_FUNCLET) {
+      if (xbox_seh_boundary(cursor, true, &boundary) != UNW_ESUCCESS ||
+          xbox_seh_continue(cursor, &boundary, exception_object, true,
+                            &first_scope) != UNW_ESUCCESS)
+        return xbox_phase2_error(committed, _URC_FATAL_PHASE2_ERROR);
+      committed = true;
+      process_current = true;
+    }
+#endif
   }
 
 #if defined(_XBOX) && _XBOX_VER == 200
   if (stepResult < 0)
+#if !defined(_LIBUNWIND_IS_BAREMETAL)
+    return xbox_phase2_error(committed, _URC_FATAL_PHASE2_ERROR);
+#else
     return _URC_FATAL_PHASE2_ERROR;
+#endif
 #endif
   // Call stop function one last time and tell it we've reached the end
   // of the stack.
@@ -486,7 +856,11 @@ unwind_phase2_forced(unw_context_t *uc, unw_cursor_t *cursor,
 
   // Clean up phase did not resume at the frame that the search phase said it
   // would.
+#if defined(_XBOX) && _XBOX_VER == 200 && !defined(_LIBUNWIND_IS_BAREMETAL)
+  return xbox_phase2_error(committed, _URC_FATAL_PHASE2_ERROR);
+#else
   return _URC_FATAL_PHASE2_ERROR;
+#endif
 }
 
 /// Called by __cxa_throw.  Only returns if there is a fatal error.

@@ -17,6 +17,7 @@
 #include "../src/AddressSpace.hpp"
 #include "../src/Registers.hpp"
 #include "../src/RWMutex.hpp"
+#include "../src/XboxSEHCallFrame.h"
 #include "../src/libunwind_ext.h"
 #include <setjmp.h>
 #include <unwind.h>
@@ -136,7 +137,8 @@ static __attribute__((noinline)) void testRestoredNonvolatile() {
 extern "C" [[noreturn]] int __C_specific_handler(...) { abort(); }
 extern "C" unsigned long _exception_code(void);
 extern "C" int _abnormal_termination(void);
-#pragma intrinsic(_exception_code, _abnormal_termination)
+extern "C" void *_exception_info(void);
+#pragma intrinsic(_exception_code, _abnormal_termination, _exception_info)
 extern "C" int sehFixture(volatile int *);
 extern "C" int sehTransferFixture(int);
 static _Unwind_Exception handledException;
@@ -151,6 +153,11 @@ static unsigned abnormalFinallyCalls;
 
 struct TestExceptionRecord {
   uint32_t code;
+  uint32_t flags;
+  void *nested;
+  void *address;
+  uint32_t count;
+  uintptr_t parameters[15];
 };
 struct TestExceptionPointers {
   TestExceptionRecord *record;
@@ -378,27 +385,191 @@ done:
   return result;
 }
 
-static _Unwind_Reason_Code stopAtNativeFrame(
-    int, _Unwind_Action, _Unwind_Exception_Class, _Unwind_Exception *,
-    _Unwind_Context *context, void *arg) {
-  if (_Unwind_GetRegionStart(context) ==
-      reinterpret_cast<uintptr_t>(&sehFixture))
-    *static_cast<bool *>(arg) = true;
-  return _URC_NO_REASON;
+static _Unwind_Exception dispatchException;
+static unsigned dispatchEvents[16];
+static unsigned dispatchEventCount;
+
+static void dispatchEvent(unsigned value) {
+  assert(dispatchEventCount < 16);
+  dispatchEvents[dispatchEventCount++] = value;
 }
+
+static void releaseDispatchException(_Unwind_Reason_Code reason,
+                                     _Unwind_Exception *exception) {
+  assert(reason == _URC_FOREIGN_EXCEPTION_CAUGHT &&
+         exception == &dispatchException);
+  dispatchEvent(4);
+}
+
+static int dispatchFilter(void *info, int disposition) {
+  auto *pointers = static_cast<TestExceptionPointers *>(info);
+  assert(pointers && pointers->record && pointers->context);
+  assert(pointers->record->code == 0x20474343 &&
+         pointers->record->flags == 1 && pointers->record->address &&
+         pointers->record->count == 1 &&
+         pointers->record->parameters[0] ==
+             reinterpret_cast<uintptr_t>(&dispatchException));
+  assert(*static_cast<uint32_t *>(pointers->context) == 0);
+  dispatchEvent(1);
+  return disposition;
+}
+
 extern "C" __attribute__((noinline)) int sehFixture(volatile int *value) {
   __try {
-    ++*value;
-    _Unwind_Exception exception = {};
-    assert(_Unwind_RaiseException(&exception) == _URC_FATAL_PHASE1_ERROR);
-    bool seenNative = false;
-    assert(_Unwind_ForcedUnwind(&exception, stopAtNativeFrame, &seenNative) ==
-           _URC_FATAL_PHASE2_ERROR);
-    assert(seenNative);
-  } __except (1) {
-    return -1;
+    __try {
+      ++*value;
+      _Unwind_RaiseException(&dispatchException);
+      abort();
+    } __finally {
+      assert(_abnormal_termination());
+      dispatchEvent(2);
+    }
+  } __except (dispatchFilter(_exception_info(), 1)) {
+    assert(_exception_code() == 0x20474343);
+    dispatchEvent(3);
   }
   return 0;
+}
+
+static __attribute__((noinline)) void checkRejectedContinuation() {
+  __try {
+    assert(_Unwind_RaiseException(&dispatchException) ==
+           _URC_FATAL_PHASE1_ERROR);
+  } __except (dispatchFilter(_exception_info(), -1)) {
+    abort();
+  }
+}
+
+static _Unwind_Exception collisionExceptions[3];
+static unsigned collisionEvents[16];
+static unsigned collisionEventCount;
+static int collisionMode;
+static _Unwind_Exception *selectedCollision;
+static bool forcedStopSeen;
+static jmp_buf forcedEscape;
+static void collisionFixture();
+
+static void collisionEvent(unsigned value) {
+  assert(collisionEventCount < 16);
+  collisionEvents[collisionEventCount++] = value;
+}
+
+static void releaseCollisionException(_Unwind_Reason_Code reason,
+                                      _Unwind_Exception *exception) {
+  assert(reason == _URC_FOREIGN_EXCEPTION_CAUGHT);
+  unsigned index = unsigned(exception - collisionExceptions);
+  assert(index < 3);
+  collisionEvent(20 + index);
+  if (index == 0 && collisionMode == 2) {
+    _Unwind_RaiseException(&collisionExceptions[2]);
+    abort();
+  }
+}
+
+static int collisionFilter(void *info) {
+  auto *pointers = static_cast<TestExceptionPointers *>(info);
+  assert(pointers && pointers->record && pointers->record->count == 1);
+  selectedCollision = reinterpret_cast<_Unwind_Exception *>(
+      pointers->record->parameters[0]);
+  return 1;
+}
+
+static _Unwind_Reason_Code collisionStop(
+    int, _Unwind_Action action, _Unwind_Exception_Class,
+    _Unwind_Exception *exception, _Unwind_Context *context, void *) {
+  assert(action & _UA_FORCE_UNWIND);
+  forcedStopSeen = true;
+  if (collisionMode == 4 && collisionEventCount >= 2 &&
+      _Unwind_GetRegionStart(context) ==
+          reinterpret_cast<uintptr_t>(&collisionFixture)) {
+    assert(exception == &collisionExceptions[1]);
+    collisionEvent(13);
+    _Unwind_DeleteException(exception);
+    longjmp(forcedEscape, 1);
+  }
+  return _URC_NO_REASON;
+}
+
+static __attribute__((noinline)) void raiseInCleanup() {
+  __try {
+    if (collisionMode == 4)
+      _Unwind_ForcedUnwind(&collisionExceptions[1], collisionStop, nullptr);
+    else
+      _Unwind_RaiseException(&collisionExceptions[1]);
+    abort();
+  } __except (collisionMode == 0 ? 1 : 0) {
+    collisionEvent(11);
+  }
+}
+
+static __attribute__((noinline)) void collisionFixture() {
+  __try {
+    __try {
+      if (collisionMode == 3)
+        _Unwind_ForcedUnwind(&collisionExceptions[0], collisionStop, nullptr);
+      else
+        _Unwind_RaiseException(&collisionExceptions[0]);
+      abort();
+    } __finally {
+      if (_abnormal_termination()) {
+        collisionEvent(10);
+        raiseInCleanup();
+        collisionEvent(12);
+      }
+    }
+  } __except (collisionFilter(_exception_info())) {
+    collisionEvent(13);
+  }
+}
+
+static void testDispatcherCollisions() {
+  for (int mode = 0; mode != 5; ++mode) {
+    memset(collisionExceptions, 0, sizeof(collisionExceptions));
+    for (auto &exception : collisionExceptions)
+      exception.exception_cleanup = releaseCollisionException;
+    collisionEventCount = 0;
+    collisionMode = mode;
+    selectedCollision = nullptr;
+    forcedStopSeen = false;
+    if (mode != 4 || setjmp(forcedEscape) == 0)
+      collisionFixture();
+    if (mode == 0) {
+      assert(selectedCollision == &collisionExceptions[0]);
+      assert(collisionEventCount == 6 && collisionEvents[0] == 10 &&
+             collisionEvents[1] == 11 && collisionEvents[2] == 21 &&
+             collisionEvents[3] == 12 && collisionEvents[4] == 13 &&
+             collisionEvents[5] == 20);
+    } else if (mode == 2) {
+      assert(selectedCollision == &collisionExceptions[2]);
+      assert(collisionEventCount == 5 && collisionEvents[0] == 10 &&
+             collisionEvents[1] == 20 && collisionEvents[2] == 21 &&
+             collisionEvents[3] == 13 && collisionEvents[4] == 22);
+    } else {
+      assert(selectedCollision == &collisionExceptions[mode == 4 ? 0 : 1]);
+      assert(collisionEventCount == 4 && collisionEvents[0] == 10 &&
+             collisionEvents[1] == 20 && collisionEvents[2] == 13 &&
+             collisionEvents[3] == 21);
+      assert((mode != 3 && mode != 4) || forcedStopSeen);
+    }
+  }
+}
+
+static __attribute__((noinline)) void testDispatcher() {
+  const uint8_t *base = &__ImageBase;
+  uint32_t nt = xboxReadLE32(base + 0x3c);
+  modules[0].imageBase = reinterpret_cast<uintptr_t>(base);
+  modules[0].imageSize = xboxReadLE32(base + nt + 24 + 56);
+  volatile int value = 0;
+  dispatchException.exception_cleanup = releaseDispatchException;
+  dispatchEventCount = 0;
+  assert(sehFixture(&value) == 0 && value == 1);
+  assert(dispatchEventCount == 4 && dispatchEvents[0] == 1 &&
+         dispatchEvents[1] == 2 && dispatchEvents[2] == 3 &&
+         dispatchEvents[3] == 4);
+  dispatchEventCount = 0;
+  checkRejectedContinuation();
+  assert(dispatchEventCount == 1 && dispatchEvents[0] == 1);
+  testDispatcherCollisions();
 }
 #endif
 
@@ -443,6 +614,15 @@ static void checkCollisionBoundary(unsigned depth,
       assert(parent == expectedParents[0] && state.exception == expected &&
              state.abandoned && state.cursor == expectedStates[0].cursor &&
              state.scope_index == expectedStates[0].scope_index);
+      unw_word_t sp;
+      assert(__unw_get_reg(cursor, UNW_REG_SP, &sp) == UNW_ESUCCESS);
+      volatile uint32_t *savedCursor = reinterpret_cast<volatile uint32_t *>(
+          uintptr_t(sp) + XBOX_SEH_CALL_CURSOR_OFFSET);
+      uint32_t originalCursor = *savedCursor;
+      *savedCursor = 0;
+      assert(__unw_xbox_get_seh_collision_state(cursor, &parent, &state) ==
+             UNW_EBADFRAME);
+      *savedCursor = originalCursor;
       if (continuationControlPC)
         checkContinuation(state);
       return;
@@ -660,7 +840,7 @@ static __attribute__((noinline)) void testLoaderIntegration() {
   assert(__unw_xbox_get_seh_collision_state(nullptr, &parent, &saved) ==
          UNW_EINVAL);
   assert(__unw_xbox_get_seh_collision_state(&cursor, &parent, &saved) ==
-         UNW_EBADFRAME);
+         UNW_ENOINFO);
   assert(parent == 0);
   Registers_ppc64 registers(&context);
   expectedParents[0] = uintptr_t(registers.getSP());
@@ -734,8 +914,6 @@ static __attribute__((noinline)) void testLoaderIntegration() {
       modules[0].imageSize - (info.lsda - modules[0].imageBase), 0, scope));
   assert(scope.begin >= info.start_ip && scope.end <= info.end_ip);
   assert(scope.filterOrFinally && scope.handler);
-  volatile int value = 0;
-  assert(sehFixture(&value) == 0 && value == 1);
   handledException.exception_cleanup = releaseHandledException;
   for (int mode = 0; mode != 3; ++mode) {
     handlerEntered = false;
@@ -1070,6 +1248,9 @@ int main() {
   assert(!find(ImageSize, 0x400));
 #if defined(_XBOX) && _XBOX_VER == 200
   testLoaderIntegration();
+#if defined(LIBUNWIND_TEST_XBOX_SEH_FIXTURE)
+  testDispatcher();
+#endif
   DbgPrint("xbox360 unwind discovery: PASS\n");
 #endif
   return 0;

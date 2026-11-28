@@ -3696,7 +3696,15 @@ int UnwindCursor<A, R>::getXboxSEHCollisionState(
           reinterpret_cast<uintptr_t>(&__libunwind_xbox_seh_call) ||
       _registers.getIP() !=
           reinterpret_cast<uintptr_t>(&__libunwind_xbox_seh_call_return))
+    return UNW_ENOINFO;
+  uint64_t sp = _registers.getSP();
+  if (!sp || sp > UINT32_MAX - XBOX_SEH_CALL_CLEANUP_OFFSET -
+                      (XboxFrame::WordSize - 1) ||
+      sp % XboxFrame::StackAlignment)
     return UNW_EBADFRAME;
+  if (_addressSpace.get32(uint32_t(sp) + XBOX_SEH_CALL_CLEANUP_OFFSET) !=
+      XBOX_SEH_CALL_COLLISION)
+    return UNW_ENOINFO;
   uint32_t value;
   XboxFrame::CleanupState saved;
   if (!XboxFrame::getCallState(

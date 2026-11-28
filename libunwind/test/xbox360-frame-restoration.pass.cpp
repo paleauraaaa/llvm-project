@@ -259,6 +259,27 @@ static void testEpilogue() {
     assert(regs.ip == ReturnPC && regs.gpr[1] == CallerSP);
     assert(regs.gpr[31] == 0x12345678);
   }
+
+  const uint32_t alternate[] = {
+      0x7d8802a6, // mflr r12
+      0x9181fff8, // stw r12,-8(r1)
+      0x9421ff80, // stwu r1,-128(r1)
+      0x40820014, // conditional branch to second body
+      0x38210080, // addi r1,r1,128
+      0x8181fff8, // lwz r12,-8(r1)
+      0x7d8803a6, // mtlr r12
+      0x4e800020, // blr
+      0x48000101, // second body call
+      0x60000000, // nop
+      0x4e800020,
+  };
+  putInstructions(memory, alternate, 11);
+  Registers regs;
+  regs.gpr[1] = CallerSP - 128;
+  regs.ip = Code + 36;
+  regs.lr = regs.ip;
+  assert(step(memory, regs, function(11, 3)) == UNW_STEP_SUCCESS);
+  assert(regs.ip == ReturnPC && regs.gpr[1] == CallerSP);
 }
 
 static void testCleanupParentFramePointer() {

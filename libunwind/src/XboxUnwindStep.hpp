@@ -770,8 +770,15 @@ int Interpreter<A, R>::step(bool requireEstablished,
       Instruction ins{as.get32(address)};
       if ((!hasFramePointer && mayWriteRegister(ins, SP)) ||
           ((hasFramePointer || (requireEstablished && !parentFrameSize)) &&
-           mayWriteRegister(ins, FP)))
-        return UNW_EUNSPEC;
+           mayWriteRegister(ins, FP))) {
+        // A complete earlier return path cannot reach the current PC.
+        uint32_t end = address;
+        while (end < bodyEnd && isEpilogueInstruction({as.get32(end)}))
+          end += XboxPdata::InstructionSize;
+        if (end >= bodyEnd || !isTerminal({as.get32(end)}, end))
+          return UNW_EUNSPEC;
+        address = end;
+      }
     }
   }
   if (parentFrameSize && (values[FP].kind != Value::Stack ||

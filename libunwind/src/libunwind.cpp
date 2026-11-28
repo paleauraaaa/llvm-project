@@ -96,6 +96,11 @@ _LIBUNWIND_WEAK_ALIAS(__unw_init_local, unw_init_local)
 
 #if defined(__powerpc64__) && defined(_XBOX) && _XBOX_VER == 200 &&            \
     !defined(_LIBUNWIND_IS_BAREMETAL)
+static_assert(UNW_XBOX_SEH_CLEANUP_FUNCLET == XboxSEH::CleanupFunclet &&
+                  UNW_XBOX_SEH_CATCH_FUNCLET == XboxSEH::CatchFunclet &&
+                  UNW_XBOX_SEH_C_HANDLER == XboxSEH::CHandler &&
+                  UNW_XBOX_SEH_HANDLER_OWNERSHIP == XboxSEH::HandlerOwnership,
+              "Xbox SEH frame flags must agree");
 _LIBUNWIND_HIDDEN int __unw_xbox_get_seh_frame(unw_cursor_t *cursor,
                                                __unw_xbox_seh_frame *frame) {
   if (!cursor || !frame)
@@ -229,7 +234,7 @@ _LIBUNWIND_HIDDEN int __unw_xbox_replace_seh_cleanup_exception(
   uintptr_t parentValue, slot;
   __unw_xbox_seh_cleanup_state saved;
   int result = co->getXboxSEHCollisionState(parentValue, saved, &slot);
-  if (result != UNW_ESUCCESS)
+  if (result == UNW_ENOINFO)
     result = co->getXboxSEHCleanupParent(parentValue, &saved, &slot);
   if (result != UNW_ESUCCESS)
     return result;
